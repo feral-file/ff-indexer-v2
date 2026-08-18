@@ -4,6 +4,7 @@ package workflows
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -117,7 +118,10 @@ func (e *renderProbeExecutor) gated(prev *schema.MediaRenderProbe) bool {
 // Reason: the debounce state machine lives here, not in SQL — fingerprint gates
 // immediately (unambiguous), blank/stalled gate only at FailureGateThreshold consecutive
 // failures because slow WebGL under software GL and intentionally dark works produce
-// false blanks on a single observation. Trade-offs: a URL gated by the probe is healed
+// false blanks on a single observation. Outcomes that carry no evidence about the
+// artwork never touch that counter: a browser that failed to launch reschedules the job
+// (worker-host failure), and a main document served non-2xx or an SSRF refusal is
+// recorded via recordNoEvidence. Trade-offs: a URL gated by the probe is healed
 // only by the probe (L0 excludes render_% rows), so BrokenRecheckInterval bounds how long
 // a false gate can last. Constraints: baseline_phash is passed on every successful
 // capture but the store upsert never overwrites an existing baseline (capture-only
@@ -139,30 +143,8 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 	// here avoids launching a browser context at all.
 	if e.ssrfValidator != nil {
 		if err := e.ssrfValidator.ValidateHTTPURL(ctx, url); err != nil {
-			errMsg := fmt.Sprintf("ssrf policy refused render: %v", err)
 			logger.WarnCtx(ctx, "Render probe refused by SSRF policy", zap.String("url", url), zap.Error(err))
-			// Record the refusal without disturbing the render verdict: a policy block
-			// is not evidence about what the artwork renders, and overwriting a prior
-			// gate's verdict/counter here would strand a gated URL as permanently
-			// broken (a later successful render would not recognize it as gated and so
-			// would never heal the health row).
-			refusal := schema.MediaRenderProbe{
-				MediaURL:    url,
-				Verdict:     schema.RenderProbeVerdictStalled,
-				LastError:   &errMsg,
-				NextCheckAt: now.Add(e.cfg.BrokenRecheckInterval),
-			}
-			if prev != nil {
-				refusal.Verdict = prev.Verdict
-				refusal.ConsecutiveFailures = prev.ConsecutiveFailures
-				refusal.HealthGated = prev.HealthGated
-				refusal.Phash = prev.Phash
-				refusal.BaselinePhash = prev.BaselinePhash
-				refusal.EngineVersion = prev.EngineVersion
-				refusal.Viewport = prev.Viewport
-				refusal.CapturedAt = prev.CapturedAt
-			}
-			return e.store.UpsertMediaRenderProbe(ctx, refusal)
+			return e.recordNoEvidence(ctx, url, fmt.Sprintf("ssrf policy refused render: %v", err), prev, now)
 		}
 	}
 
@@ -213,12 +195,39 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			)
 			return ctxErr
 		}
+		// A browser that never started is a worker-host failure, not render evidence:
+		// leave all probe state untouched and retry the job after a short delay.
+		// Recording it as stalled would let a host incident march healthy URLs to the
+		// gate threshold — the 2026-08-17 fork-exhaustion incident drove ~2,100 URLs
+		// to would-gate counters exactly that way.
+		if errors.Is(renderErr, probe.ErrBrowserUnavailable) {
+			logger.WarnCtx(ctx, "Render probe browser unavailable, rescheduling job",
+				zap.String("url", url),
+				zap.Error(renderErr),
+			)
+			return fmt.Errorf("browser unavailable (%w); rescheduling: %w",
+				renderErr, jobs.ErrReschedule(now.Add(browserUnavailableRetryDelay)))
+		}
 		// Load/timeout failure: the "stalled" verdict.
 		errMsg := renderErr.Error()
 		row.Verdict = schema.RenderProbeVerdictStalled
 		row.LastError = &errMsg
 		row.ConsecutiveFailures++
 		return e.finishFailure(ctx, url, row, wasGated, now)
+	}
+
+	// A non-2xx main document means the server sent an error body instead of the
+	// artwork; chromium paints it like any page, so the frame must not be classified.
+	// Measured in production: ipfs.io's HTTP 410 bot-block page (one line of text on
+	// white) classified 1,692 healthy artworks as blank. L0 owns byte-level judgment of
+	// HTTP failures on its own cadence — L1 records the attempt and moves on.
+	if capture.MainStatus != 0 && (capture.MainStatus < 200 || capture.MainStatus >= 300) {
+		logger.WarnCtx(ctx, "Render probe main document returned non-2xx, frame not classified",
+			zap.String("url", url),
+			zap.Int("main_status", capture.MainStatus),
+		)
+		return e.recordNoEvidence(ctx, url,
+			fmt.Sprintf("main document returned HTTP %d; frame not classified", capture.MainStatus), prev, now)
 	}
 
 	classification, err := probe.Classify(capture.Image, e.cfg.Fingerprints, e.cfg.BlankVarianceThreshold)
@@ -373,6 +382,47 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 		return fmt.Errorf("failed to acquire render gate: %w", err)
 	}
 	return e.propagateViewability(ctx, tokenIDs)
+}
+
+// browserUnavailableRetryDelay is how long a probe job waits before retrying after the
+// browser failed to launch. Long enough that a host under fork/memory pressure is not
+// hammered by immediate retries, short enough that a transient blip costs one delay.
+const browserUnavailableRetryDelay = 5 * time.Minute
+
+// recordNoEvidence persists a probe attempt that produced no evidence about the artwork
+// (SSRF policy refusal, or a main document served with a non-2xx status): the attempt
+// and its reason are recorded, but verdict, failure counter, gate marker, and the last
+// successful capture's metadata are preserved from the previous row.
+//
+// Reason: overwriting a prior gate's verdict/counter here would strand a gated URL as
+// permanently broken — a later successful render would not recognize it as gated and so
+// would never heal the health row. First-ever attempts record a stalled verdict (the
+// closest existing category; a new enum value is not worth a migration) with the counter
+// still at zero, so no-evidence outcomes can never accumulate toward the gate threshold.
+// Constraints: next_check_at moves a full BrokenRecheckInterval out — for persistent
+// conditions (ipfs.io's bot-block of headless browsers) hourly retries would only burn
+// render capacity, and for gated rows this matches their existing recheck cadence.
+func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, now time.Time) error {
+	row := schema.MediaRenderProbe{
+		MediaURL:    url,
+		Verdict:     schema.RenderProbeVerdictStalled,
+		LastError:   &errMsg,
+		NextCheckAt: now.Add(e.cfg.BrokenRecheckInterval),
+	}
+	if prev != nil {
+		row.Verdict = prev.Verdict
+		row.ConsecutiveFailures = prev.ConsecutiveFailures
+		row.HealthGated = prev.HealthGated
+		row.Phash = prev.Phash
+		row.BaselinePhash = prev.BaselinePhash
+		row.EngineVersion = prev.EngineVersion
+		row.Viewport = prev.Viewport
+		row.CapturedAt = prev.CapturedAt
+	}
+	if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
+		return fmt.Errorf("failed to upsert render probe: %w", err)
+	}
+	return nil
 }
 
 // reconcileRetryDelay is how long a probe job waits before retrying after a

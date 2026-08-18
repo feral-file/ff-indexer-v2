@@ -5,6 +5,7 @@ package workflows_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"testing"
@@ -755,6 +756,108 @@ func TestExecuteRenderProbe_stallAfterCapturePreservesCaptureMetadata(t *testing
 			assert.Equal(t, prevViewport, *row.Viewport)
 			require.NotNil(t, row.CapturedAt)
 			assert.Equal(t, prevCaptured, *row.CapturedAt)
+			return nil
+		})
+
+	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+}
+
+// TestExecuteRenderProbe_browserUnavailableReschedulesJob pins the infrastructure/
+// evidence split for launch failures: a browser that never started (fork exhaustion,
+// startup crash) says nothing about the artwork, so no probe row is written, no counter
+// advances, and the job is rescheduled to retry after the backoff delay. Recording these
+// as stalled let the 2026-08-17 host incident march ~2,100 healthy URLs to would-gate
+// counters.
+func TestExecuteRenderProbe_browserUnavailableReschedulesJob(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/work.html"
+
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	m.renderer.EXPECT().
+		RenderProbe(gomock.Any(), url, 0).
+		Return(nil, fmt.Errorf("render probe browser launch failed for %s: %w: fork/exec /usr/bin/chromium: resource temporarily unavailable",
+			url, probe.ErrBrowserUnavailable))
+
+	// No UpsertMediaRenderProbe, no health write: the strict mock enforces that probe
+	// state stays untouched.
+	err := exec.ExecuteRenderProbe(context.Background(), url)
+	require.Error(t, err)
+	var re *jobs.RescheduleError
+	require.ErrorAs(t, err, &re, "launch failure must reschedule the job, not fail it")
+	assert.Equal(t, m.now.Add(5*time.Minute), re.At)
+}
+
+// TestExecuteRenderProbe_non2xxMainStatusRecordsWithoutCounting pins the no-evidence
+// contract for served error pages: chromium paints an HTTP error body like a normal page
+// (production measurement: ipfs.io's 410 bot-block page classified 1,692 healthy
+// artworks as blank), so a non-2xx main document must never be classified — no phash, no
+// baseline seeding, no counter movement — only recorded with its status.
+func TestExecuteRenderProbe_non2xxMainStatusRecordsWithoutCounting(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/bot-blocked.html"
+
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	blocked := contentFrame()
+	blocked.MainStatus = 410
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(blocked, nil)
+
+	m.store.EXPECT().
+		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+			assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict)
+			assert.Equal(t, 0, row.ConsecutiveFailures, "a served error page is not render evidence")
+			assert.Nil(t, row.Phash, "an error page's frame must not be hashed")
+			assert.Nil(t, row.BaselinePhash, "an error page must never seed the baseline")
+			require.NotNil(t, row.LastError)
+			assert.Contains(t, *row.LastError, "HTTP 410")
+			assert.Equal(t, m.now.Add(renderProbeTestConfig.BrokenRecheckInterval), row.NextCheckAt)
+			return nil
+		})
+
+	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+}
+
+// TestExecuteRenderProbe_non2xxMainStatusPreservesExistingState mirrors the SSRF-refusal
+// preservation contract: a gateway serving an error page must not erase the verdict,
+// counter, or capture metadata that identify the URL's real probe history — losing them
+// would strand a gated URL with no healer.
+func TestExecuteRenderProbe_non2xxMainStatusPreservesExistingState(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/blocked-after-history.html"
+
+	prevPhash := int64(1234)
+	baseline := int64(4242)
+	captured := m.now.Add(-24 * time.Hour)
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+		MediaURL:            url,
+		Verdict:             schema.RenderProbeVerdictBlank,
+		ConsecutiveFailures: 2, // gated
+		HealthGated:         true,
+		Phash:               &prevPhash,
+		BaselinePhash:       &baseline,
+		CapturedAt:          &captured,
+	}, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	blocked := contentFrame()
+	blocked.MainStatus = 429
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(blocked, nil)
+
+	m.store.EXPECT().
+		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+			assert.Equal(t, schema.RenderProbeVerdictBlank, row.Verdict, "prior verdict retained")
+			assert.Equal(t, 2, row.ConsecutiveFailures, "gate counter retained")
+			assert.True(t, row.HealthGated, "gate marker retained")
+			require.NotNil(t, row.Phash)
+			assert.Equal(t, prevPhash, *row.Phash, "last successful capture retained")
+			require.NotNil(t, row.BaselinePhash)
+			assert.Equal(t, baseline, *row.BaselinePhash)
+			require.NotNil(t, row.CapturedAt)
+			assert.Equal(t, captured, *row.CapturedAt)
+			require.NotNil(t, row.LastError)
+			assert.Contains(t, *row.LastError, "HTTP 429")
 			return nil
 		})
 

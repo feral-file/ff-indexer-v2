@@ -170,6 +170,17 @@ func TestChromiumSmoke(t *testing.T) {
 		atomic.AddInt32(&popupHits, 1)
 		w.WriteHeader(http.StatusOK)
 	})
+	// The production shape that motivated main-document status capture: ipfs.io's 410
+	// bot-block body — one line of text on white — renders as a normal page and
+	// classified 1,692 healthy artworks as blank.
+	mux.HandleFunc("/gone", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusGone)
+		_, _ = w.Write([]byte(`Gone, see https://docs.ipfs.tech/how-to/replace-public-gateways-with-self-hosted-ipfs/`))
+	})
+	mux.HandleFunc("/redirect", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/content", http.StatusMovedPermanently)
+	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -197,6 +208,7 @@ func TestChromiumSmoke(t *testing.T) {
 
 		assert.Equal(t, "512x512", capture.Viewport)
 		assert.Contains(t, capture.EngineVersion, "Chrome", "engine version is recorded with every capture")
+		assert.Equal(t, http.StatusOK, capture.MainStatus, "a healthy page records its 200")
 		bounds := capture.Image.Bounds()
 		assert.LessOrEqual(t, bounds.Dx(), 512*4, "capture must be viewport-bounded, not full-document")
 
@@ -294,6 +306,24 @@ func TestChromiumSmoke(t *testing.T) {
 	t.Run("startup self-check passes against real chromium", func(t *testing.T) {
 		require.NoError(t, probe.SelfCheck(ctx, renderer, 0.001),
 			"a failing self-check here means deploys would refuse to start with these flags")
+	})
+
+	// Chromium reports an HTTP error response as a successful navigation — the body
+	// paints and screenshots like any page — so the recorded status is the executor's
+	// only way to tell a served error page from the artwork.
+	t.Run("records the main document status of a served error page", func(t *testing.T) {
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/gone", 0)
+		require.NoError(t, err, "an HTTP error body still renders; only the status reveals it")
+		assert.Equal(t, http.StatusGone, capture.MainStatus)
+	})
+
+	// Kubo gateways 301 directory CIDs to their trailing-slash form; the final response
+	// of the chain, not the hop, must be recorded or every directory-rooted artwork
+	// would read as non-2xx.
+	t.Run("records the final status of a redirect chain", func(t *testing.T) {
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/redirect", 0)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, capture.MainStatus)
 	})
 
 	t.Run("prevents a popup from opening a new uncovered target", func(t *testing.T) {
