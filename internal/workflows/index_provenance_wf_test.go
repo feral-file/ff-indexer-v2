@@ -41,3 +41,37 @@ func TestIndexTokenProvenances_ActivityError(t *testing.T) {
 	err := wf.IndexTokenProvenances(ctx, tokenCID, nil)
 	require.ErrorIs(t, err, expectedError)
 }
+
+// TestIndexTokenProvenances_EVMSkippedWhenFullProvenanceDisabled pins the credit
+// guard: with EthereumFullProvenanceDisabled, an EVM token's full provenance
+// indexing is a silent no-op. The executor mock has no expectation, so any
+// history replay fails the test.
+func TestIndexTokenProvenances_EVMSkippedWhenFullProvenanceDisabled(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	err := d.Wf.IndexTokenProvenances(d.Ctx, tokenCID, nil)
+	require.NoError(t, err)
+}
+
+// TestIndexTokenProvenances_TezosUnaffectedByEVMGuard pins the guard's scope:
+// Tezos provenance is TzKT-backed (no Ethereum RPC credits), so the EVM guard
+// must not gate it.
+func TestIndexTokenProvenances_TezosUnaffectedByEVMGuard(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton", "1")
+	d.Exec.EXPECT().IndexTokenWithFullProvenancesByTokenCID(gomock.Any(), tokenCID).Return(nil)
+	err := d.Wf.IndexTokenProvenances(d.Ctx, tokenCID, nil)
+	require.NoError(t, err)
+}

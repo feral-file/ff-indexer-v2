@@ -64,6 +64,21 @@ type EthereumConfig struct {
 	BlockHeadTTL         time.Duration `mapstructure:"block_head_ttl"`
 	BlockHeadStaleWindow time.Duration `mapstructure:"block_head_stale_window"`
 	BlockFlushTimeout    time.Duration `mapstructure:"block_flush_timeout"`
+
+	// Credit guards against a metered RPC provider. Zero values disable each guard.
+	// See ethereum.ClientGuards for full semantics; the short version:
+	//
+	// GetLogsSpanCap: the provider's eth_getLogs block-range cap as max
+	// toBlock-fromBlock (10000 for Infura). Seeds pagination at the cap instead of
+	// paying a halving cascade of rejected calls per walk.
+	GetLogsSpanCap uint64 `mapstructure:"getlogs_span_cap"`
+	// GetLogsCallBudget: max FilterLogs calls per pagination walk; exceeding it
+	// aborts the walk. Size above ceil(chain head / span cap) — mainnet at a 10k cap
+	// needs ~2,600 calls per full-history walk.
+	GetLogsCallBudget int `mapstructure:"getlogs_call_budget"`
+	// FullProvenanceDisabled: skip per-token history walks (full provenance and the
+	// ERC-1155 owner event replay); tokens keep minimal provenance until backfilled.
+	FullProvenanceDisabled bool `mapstructure:"full_provenance_disabled"`
 }
 
 // TezosConfig holds Tezos-specific configuration
@@ -845,6 +860,11 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("ethereum.block_head_ttl", 12)
 	v.SetDefault("ethereum.block_head_stale_window", 60)
 	v.SetDefault("ethereum.block_flush_timeout", 36*time.Second)
+	// Credit guards default off (0/false = unguarded, pre-guard behavior);
+	// production enables them via deploy config.
+	v.SetDefault("ethereum.getlogs_span_cap", 0)
+	v.SetDefault("ethereum.getlogs_call_budget", 0)
+	v.SetDefault("ethereum.full_provenance_disabled", false)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("tezos.block_head_ttl", 10)
