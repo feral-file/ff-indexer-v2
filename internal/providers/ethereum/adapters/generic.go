@@ -524,8 +524,14 @@ func buildCustomOwnerTransferQueries(
 	ownerHash common.Hash,
 	fromBlock, toBlock uint64,
 ) []ethereum.FilterQuery {
-	var queries []ethereum.FilterQuery
-
+	// Group event signatures by the topic position where the owner address appears,
+	// then issue one query per position with all signatures OR'd in topics[0]. Each
+	// query walks the full block range regardless of matches on a span-capped
+	// provider, so fewer queries directly cuts RPC cost (CryptoPunks: 5 -> 3).
+	// Grouping cannot change results: a (signature, position) pair lands in exactly
+	// one grouped query, and OR'd topics[0] returns the union the per-signature
+	// queries returned.
+	sigsByOwnerIndex := make(map[int][]common.Hash)
 	for _, eventCfg := range provenanceEvents {
 		if !isOwnershipAffectingEvent(eventCfg.MapToStandardEvent) {
 			continue
@@ -535,11 +541,21 @@ func buildCustomOwnerTransferQueries(
 		fromIndex, toIndex := indexedAddressTopicIndices(eventCfg)
 
 		if fromIndex > 0 {
-			queries = append(queries, buildCustomOwnerQuery(eventSig, contractAddr, ownerHash, fromIndex, fromBlock, toBlock))
+			sigsByOwnerIndex[fromIndex] = append(sigsByOwnerIndex[fromIndex], eventSig)
 		}
-		if toIndex > 0 {
-			queries = append(queries, buildCustomOwnerQuery(eventSig, contractAddr, ownerHash, toIndex, fromBlock, toBlock))
+		if toIndex > 0 && toIndex != fromIndex {
+			sigsByOwnerIndex[toIndex] = append(sigsByOwnerIndex[toIndex], eventSig)
 		}
+	}
+
+	// Topic positions are 1..3; iterate in order for deterministic query layout.
+	var queries []ethereum.FilterQuery
+	for ownerTopicIndex := 1; ownerTopicIndex <= 3; ownerTopicIndex++ {
+		sigs := sigsByOwnerIndex[ownerTopicIndex]
+		if len(sigs) == 0 {
+			continue
+		}
+		queries = append(queries, buildCustomOwnerQuery(sigs, contractAddr, ownerHash, ownerTopicIndex, fromBlock, toBlock))
 	}
 
 	return queries
@@ -575,18 +591,19 @@ func indexedAddressTopicIndices(eventCfg EventConfig) (fromIndex, toIndex int) {
 	return fromIndex, toIndex
 }
 
-// buildCustomOwnerQuery constructs a filter query for a specific event signature and topic position.
-// The owner hash is placed at the specified topic index to filter for events where the owner
-// is the sender or recipient.
+// buildCustomOwnerQuery constructs a filter query for a set of event signatures sharing
+// one owner topic position. The owner hash is placed at the specified topic index to
+// filter for events where the owner is the sender or recipient; the signatures are
+// OR'd in topics[0].
 func buildCustomOwnerQuery(
-	eventSig common.Hash,
+	eventSigs []common.Hash,
 	contractAddr common.Address,
 	ownerHash common.Hash,
 	ownerTopicIndex int,
 	fromBlock, toBlock uint64,
 ) ethereum.FilterQuery {
 	topics := make([][]common.Hash, ownerTopicIndex+1)
-	topics[0] = []common.Hash{eventSig}
+	topics[0] = eventSigs
 	topics[ownerTopicIndex] = []common.Hash{ownerHash}
 
 	return ethereum.FilterQuery{

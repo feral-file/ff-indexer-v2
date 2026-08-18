@@ -221,40 +221,32 @@ func (a *ERC1155Adapter) GetOwnerLogs(
 	owner := common.HexToAddress(ownerAddress)
 	ownerHash := common.BytesToHash(owner.Bytes())
 
+	// TransferSingle and TransferBatch share the (operator, from, to) indexed-topic
+	// layout, so one query per owner position covers both event types: entries in
+	// topics[0] are OR'd by the node. Two queries instead of four halves the walk
+	// cost against span-capped providers, where each query walks the entire block
+	// range regardless of how many logs it matches.
+	transferSigs := []common.Hash{
+		helpers.ERC1155TransferSingleEventSignature,
+		helpers.ERC1155TransferBatchEventSignature,
+	}
 	queries := []ethereum.FilterQuery{
+		// Owner as sender (topic[2]).
 		{
 			FromBlock: new(big.Int).SetUint64(fromBlock),
 			ToBlock:   new(big.Int).SetUint64(toBlock),
 			Topics: [][]common.Hash{
-				{helpers.ERC1155TransferSingleEventSignature},
+				transferSigs,
 				nil,
 				{ownerHash},
 			},
 		},
+		// Owner as recipient (topic[3]).
 		{
 			FromBlock: new(big.Int).SetUint64(fromBlock),
 			ToBlock:   new(big.Int).SetUint64(toBlock),
 			Topics: [][]common.Hash{
-				{helpers.ERC1155TransferSingleEventSignature},
-				nil,
-				nil,
-				{ownerHash},
-			},
-		},
-		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
-			Topics: [][]common.Hash{
-				{helpers.ERC1155TransferBatchEventSignature},
-				nil,
-				{ownerHash},
-			},
-		},
-		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
-			Topics: [][]common.Hash{
-				{helpers.ERC1155TransferBatchEventSignature},
+				transferSigs,
 				nil,
 				nil,
 				{ownerHash},
