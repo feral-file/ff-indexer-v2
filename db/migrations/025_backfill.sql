@@ -27,6 +27,17 @@
 -- Successful full provenance clears provenance_deferred_at, so re-runs shrink to the
 -- not-yet-processed remainder.
 --
+-- Queue parameter (REQUIRED)
+-- --------------------------
+-- Jobs must land on the deployment's configured jobs.token_queue or workers
+-- never pick them up. The queue is a required psql variable — running this file
+-- without it fails loudly instead of inserting into the wrong queue:
+--
+--   psql ... -v queue=token_index -f db/migrations/025_backfill.sql
+--
+-- Use the exact value of jobs.token_queue from the deployment config
+-- (default: token_index).
+--
 -- Fresh installs
 -- --------------
 -- Fresh installs have no deferred tokens; this INSERT produces no rows.
@@ -35,7 +46,7 @@ BEGIN;
 
 INSERT INTO jobs (queue, kind, payload, status, unique_key)
 SELECT
-    'token_index'                                    AS queue,
+    :'queue'                                         AS queue,
     'IndexTokenProvenances'                          AS kind,
     jsonb_build_array(t.token_cid, null)             AS payload,
     'pending'                                        AS status,

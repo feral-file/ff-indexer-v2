@@ -229,7 +229,23 @@ func (w *coreWorkflows) IndexTokenFromEvent(ctx context.Context, event *domain.B
 	// ERC1155 event-driven indexing already captures balance deltas from the triggering event.
 	if event.Standard != domain.StandardERC1155 {
 		if shouldIndexFullProvenance(event.TokenCID(), nil, w.executor) {
-			w.startIndexTokenProvenancesAsync(ctx, event.TokenCID(), nil)
+			if w.guardDefersEVMProvenance(event.TokenCID()) {
+				// Under the guard the enqueued job would only no-op and write the
+				// deferred marker — but the enqueue itself is fire-and-forget, so a
+				// transient queue failure would silently lose the marker. Mark
+				// synchronously instead (propagating failure so the job retries)
+				// and skip the pointless enqueue.
+				if err := w.executor.MarkTokenProvenanceDeferred(ctx, event.TokenCID()); err != nil {
+					logger.ErrorCtx(ctx,
+						fmt.Errorf("failed to mark event-driven token provenance deferred"),
+						zap.Error(err),
+						zap.String("tokenCID", event.TokenCID().String()),
+					)
+					return err
+				}
+			} else {
+				w.startIndexTokenProvenancesAsync(ctx, event.TokenCID(), nil)
+			}
 		} else {
 			logger.InfoCtx(ctx, "Skipping full provenance indexing; adapter does not support it",
 				zap.String("tokenCID", event.TokenCID().String()),
@@ -442,6 +458,19 @@ func (w *coreWorkflows) guardDefersERC1155History(tokenCID domain.TokenCID) bool
 	}
 	chain, standard, _, _ := tokenCID.Parse()
 	return chain.IsEVM() && standard == domain.StandardERC1155
+}
+
+// guardDefersEVMProvenance reports whether the EVM credit guard would skip full
+// provenance for this token (any standard). Paths that would normally hand the
+// deferral marking to an asynchronously enqueued IndexTokenProvenances job must
+// instead mark synchronously: the enqueue is fire-and-forget, so its failure
+// would silently lose the marker.
+func (w *coreWorkflows) guardDefersEVMProvenance(tokenCID domain.TokenCID) bool {
+	if !w.config.EthereumFullProvenanceDisabled {
+		return false
+	}
+	chain, _, _, _ := tokenCID.Parse()
+	return chain.IsEVM()
 }
 
 func (w *coreWorkflows) startIndexTokenMetadataAsync(ctx context.Context, tokenCID domain.TokenCID, address *string) {

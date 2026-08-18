@@ -594,3 +594,77 @@ func TestIndexTokens_AddresslessERC1155_GuardDefersProvenance(t *testing.T) {
 	err := wf.IndexTokens(ctx, []domain.TokenCID{tcid}, nil)
 	require.NoError(t, err)
 }
+
+// TestIndexTokenFromEvent_ERC721_GuardMarksDeferredSynchronously pins round-7
+// durability on the event path for supported non-ERC-1155 tokens: under the
+// guard, the deferral must be persisted synchronously — not delegated to the
+// fire-and-forget IndexTokenProvenances enqueue, whose failure is swallowed.
+// The job-queue mock rejects any provenance enqueue to prove the async path is
+// not taken.
+func TestIndexTokenFromEvent_ERC721_GuardMarksDeferredSynchronously(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	d.MockJQ.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			require.NotEqual(t, "IndexTokenProvenances", opts.Kind,
+				"guarded event path must not rely on the fire-and-forget provenance enqueue")
+			return nil, true, nil
+		}).
+		AnyTimes()
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tcid := event.TokenCID()
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(nil)
+
+	err := wf.IndexTokenFromEvent(ctx, event)
+	require.NoError(t, err)
+}
+
+// TestIndexTokenFromEvent_ERC721_GuardMarkingFailureFailsWorkflow pins that a
+// synchronous marking failure on the supported event path fails the workflow so
+// the job retries — the marker cannot be silently lost.
+func TestIndexTokenFromEvent_ERC721_GuardMarkingFailureFailsWorkflow(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tcid := event.TokenCID()
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
+	markErr := errors.New("db unavailable")
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(markErr)
+
+	err := wf.IndexTokenFromEvent(ctx, event)
+	require.ErrorIs(t, err, markErr)
+}
