@@ -160,21 +160,25 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	c.errCh = make(chan error, 1)
 	c.liveStreamActive.Store(false)
 
-	// The negotiate POST and websocket handshake are api.tzkt.io requests like any REST
-	// call, so acquire a "tzkt" limiter token before connecting — unthrottled connection
-	// attempts were part of the traffic mix behind the 2026-08-18 429 crash-loop (each
-	// restart re-negotiated instantly against a fresh in-process token bucket).
+	// Connection startup performs two HTTP exchanges against api.tzkt.io — the SignalR
+	// negotiate POST and the websocket upgrade — so acquire one "tzkt" limiter token for
+	// each before connecting. Unthrottled connection attempts were part of the traffic
+	// mix behind the 2026-08-18 429 crash-loop (each restart re-negotiated instantly
+	// against a fresh in-process token bucket).
 	//
-	// The token is acquired with a no-op callback rather than by running NewClient
-	// inside Do: the limiter cancels its callback context when Do returns, and the
-	// SignalR client stores its construction context for the connection's whole
-	// lifetime — a client built on the callback context would start life canceled.
-	if _, err := ratelimit.Do(subscriptionCtx, c.rateLimiter, PROVIDER_NAME,
-		func(context.Context) (struct{}, error) { return struct{}{}, nil },
-	); err != nil {
-		cancel()
-		c.cancel = nil
-		return fmt.Errorf("failed to acquire tzkt rate limit token for SignalR connect: %w", err)
+	// Tokens are acquired with no-op callbacks rather than by running NewClient inside
+	// Do: the limiter cancels its callback context when Do returns, and the SignalR
+	// client stores its construction context for the connection's whole lifetime — a
+	// client built on the callback context would start life canceled.
+	const connectStartupExchanges = 2
+	for range connectStartupExchanges {
+		if _, err := ratelimit.Do(subscriptionCtx, c.rateLimiter, PROVIDER_NAME,
+			func(context.Context) (struct{}, error) { return struct{}{}, nil },
+		); err != nil {
+			cancel()
+			c.cancel = nil
+			return fmt.Errorf("failed to acquire tzkt rate limit token for SignalR connect: %w", err)
+		}
 	}
 
 	// Create SignalR client with connection, on the long-lived subscription context.

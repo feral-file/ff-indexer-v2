@@ -592,6 +592,7 @@ func TestSubscribeEvents_negotiateIsChargedToTzktLimiter(t *testing.T) {
 	tzkt := mocks.NewMockTzKTClient(ctrl)
 	limiter := mocks.NewMockLimiter(ctrl)
 
+	// One token per startup HTTP exchange: the negotiate POST and the websocket upgrade.
 	acquire := limiter.EXPECT().
 		Do(gomock.Any(), "tzkt", gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ string, fn ratelimit.Func) (any, error) {
@@ -600,7 +601,8 @@ func TestSubscribeEvents_negotiateIsChargedToTzktLimiter(t *testing.T) {
 			queueCtx, cancel := context.WithCancel(context.Background())
 			cancel()
 			return fn(queueCtx)
-		})
+		}).
+		Times(2)
 	connect := signalR.EXPECT().
 		NewClient(gomock.Any(), "wss://tzkt.example/ws", gomock.Any()).
 		DoAndReturn(func(ctx context.Context, _ string, _ any) (adapter.SignalRClient, error) {
