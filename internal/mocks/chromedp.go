@@ -187,6 +187,20 @@ func (mr *MockChromedpClientMockRecorder) Navigate(url any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Navigate", reflect.TypeOf((*MockChromedpClient)(nil).Navigate), url)
 }
 
+// NetworkEnable mocks base method.
+func (m *MockChromedpClient) NetworkEnable() chromedp.Action {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "NetworkEnable")
+	ret0, _ := ret[0].(chromedp.Action)
+	return ret0
+}
+
+// NetworkEnable indicates an expected call of NetworkEnable.
+func (mr *MockChromedpClientMockRecorder) NetworkEnable() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NetworkEnable", reflect.TypeOf((*MockChromedpClient)(nil).NetworkEnable))
+}
+
 // NewContext mocks base method.
 func (m *MockChromedpClient) NewContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	m.ctrl.T.Helper()

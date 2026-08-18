@@ -14,9 +14,13 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"os"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
@@ -78,6 +82,35 @@ const (
 
 // ErrRequestBlocked reports that the SSRF policy refused a browser-initiated request.
 var ErrRequestBlocked = errors.New("browser request blocked by SSRF policy")
+
+// ErrBrowserUnavailable reports that chromium never came up for this render: the process
+// could not be forked, failed during startup, or never exposed its DevTools socket.
+//
+// Reason: a browser that never started says nothing about the artwork, and the
+// distinction is load-bearing for the caller — the 2026-08-17 incident recorded ~2,100
+// launch failures (host fork exhaustion) as "stalled" verdicts, driving healthy URLs to
+// the gate threshold. Callers must treat this as an infrastructure failure (retry the
+// job) and never as render evidence.
+var ErrBrowserUnavailable = errors.New("browser unavailable")
+
+// isBrowserLaunchFailure reports whether a chromedp Run error means the browser never
+// started, as opposed to a page-level load failure.
+//
+// Reason: chromedp does not type launch failures, so detection is structural where
+// possible (fork/exec surfaces as *os.PathError from os.StartProcess) and textual where
+// not ("chrome failed to start" and "websocket url timeout" are chromedp's literal
+// allocator messages). Trade-offs: string matching is fragile against chromedp upgrades,
+// but a missed match only degrades to the old behavior (a stalled verdict debounced over
+// FailureGateThreshold probes), never to a false gate on its own.
+func isBrowserLaunchFailure(err error) bool {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) && pathErr.Op == "fork/exec" {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "chrome failed to start") ||
+		strings.Contains(msg, "websocket url timeout")
+}
 
 // egressGuardScript neutralizes browser egress APIs the CDP Fetch domain cannot
 // intercept, before any page script runs.
@@ -160,6 +193,14 @@ type Capture struct {
 	// non-zero count means the page tried to reach a disallowed destination; the frame
 	// is still classified (a blocked subresource usually just fails to paint).
 	BlockedRequests int
+	// MainStatus is the HTTP status of the main document's final response (after
+	// redirects), or 0 when it could not be observed. Chromium renders any HTTP error
+	// body it receives — a 4xx/5xx page paints and screenshots like a normal page — so
+	// classification alone cannot tell an artwork frame from a served error page. The
+	// caller uses a non-2xx status as "this frame is not evidence about the artwork":
+	// measured in production, ipfs.io's HTTP 410 bot-block page classified 1,692
+	// distinct artworks as blank.
+	MainStatus int
 }
 
 // Renderer drives headless chromium to capture what a URL paints.
@@ -168,7 +209,11 @@ type Capture struct {
 type Renderer interface {
 	// RenderProbe loads the URL, waits for it to settle, and screenshots the viewport.
 	// Errors (navigation failure, timeout, cancellation) are the caller's "stalled"
-	// signal.
+	// signal — except errors matching ErrBrowserUnavailable (the browser never
+	// started), which are infrastructure failures the caller must retry rather than
+	// record as render evidence. A successful capture carries the main document's HTTP
+	// status; callers must not classify the frame when it is not 2xx (chromium paints
+	// error bodies like normal pages).
 	//
 	// settleMs overrides the configured settle window for this render; <= 0 keeps the
 	// configured default. The caller owns class knowledge (static images paint on decode
@@ -344,6 +389,10 @@ func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string, settleMs
 	browserCtx, browserCancel := r.chromedpClient.NewContext(timeoutCtx)
 	defer browserCancel()
 
+	// Install the status tracker before interception so both listeners observe the
+	// navigation from its first event; chromedp broadcasts every target event to every
+	// registered listener.
+	tracker := r.trackMainDocument(browserCtx)
 	blocked := r.interceptRequests(browserCtx)
 
 	settle := r.settleMs
@@ -354,6 +403,9 @@ func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string, settleMs
 	var screenshot []byte
 	var userAgent string
 	actions := []chromedp.Action{
+		// Network events (main-document status) are needed on every render, with or
+		// without SSRF interception.
+		r.chromedpClient.NetworkEnable(),
 		r.chromedpClient.EmulateViewport(int64(r.viewportWidth), int64(r.viewportHeight)),
 		r.chromedpClient.Navigate(url),
 		// ":root" matches the document element in both HTML and SVG documents. "body"
@@ -382,6 +434,13 @@ func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string, settleMs
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("render probe canceled for %s: %w", url, ctxErr)
 		}
+		// A browser that never started is an infrastructure failure, not render
+		// evidence; the sentinel lets the executor retry the job instead of recording a
+		// stalled verdict.
+		if isBrowserLaunchFailure(err) {
+			return nil, fmt.Errorf("render probe browser launch failed for %s: %w: %w",
+				url, ErrBrowserUnavailable, err)
+		}
 		return nil, fmt.Errorf("render probe failed for %s: %w", url, err)
 	}
 
@@ -391,10 +450,12 @@ func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string, settleMs
 	}
 
 	blockedCount := blocked.count()
+	mainStatus := tracker.mainStatus()
 	logger.InfoCtx(ctx, "Render probe captured frame",
 		zap.String("url", url),
 		zap.String("engine", userAgent),
 		zap.Int("blocked_requests", blockedCount),
+		zap.Int("main_status", mainStatus),
 		zap.Duration("duration", time.Since(start)),
 	)
 
@@ -403,7 +464,69 @@ func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string, settleMs
 		EngineVersion:   userAgent,
 		Viewport:        fmt.Sprintf("%dx%d", r.viewportWidth, r.viewportHeight),
 		BlockedRequests: blockedCount,
+		MainStatus:      mainStatus,
 	}, nil
+}
+
+// mainDocTracker observes Network events to record the HTTP status of the main
+// document's final response.
+type mainDocTracker struct {
+	mu sync.Mutex
+	// mainFrame is the frame of the first document request — the navigation itself.
+	// Iframe documents arrive on other frame IDs and must not overwrite the main
+	// status (a 404 ad-frame inside a healthy artwork page is not the artwork's status).
+	mainFrame cdp.FrameID
+	status    int
+}
+
+// handle processes one target event. Redirect hops re-fire EventRequestWillBeSent on the
+// same frame and report their 3xx inside the redirectResponse field, so the single
+// EventResponseReceived seen for the main frame is the final response of the chain.
+func (t *mainDocTracker) handle(ev any) {
+	switch e := ev.(type) {
+	case *network.EventRequestWillBeSent:
+		if e.Type != network.ResourceTypeDocument {
+			return
+		}
+		t.mu.Lock()
+		if t.mainFrame == "" {
+			t.mainFrame = e.FrameID
+		}
+		t.mu.Unlock()
+	case *network.EventResponseReceived:
+		if e.Type != network.ResourceTypeDocument || e.Response == nil {
+			return
+		}
+		t.mu.Lock()
+		if e.FrameID == t.mainFrame {
+			t.status = int(e.Response.Status)
+		}
+		t.mu.Unlock()
+	}
+}
+
+// mainStatus returns the recorded status, or 0 when no main-document response was seen
+// (non-HTTP navigations, or event delivery raced probe teardown — callers treat 0 as
+// unknown, never as failure).
+func (t *mainDocTracker) mainStatus() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.status
+}
+
+// trackMainDocument installs the Network-event listener recording the main document's
+// response status for this render.
+//
+// Reason: chromium reports HTTP error responses as successful navigations — the error
+// body paints and screenshots normally — so without the status the classifier grades
+// whatever page the server chose to send. Production measurement: ipfs.io's 410
+// bot-block page (one line of text on white, variance ~0.00096) classified 1,692
+// distinct healthy artworks as blank. The status lets the executor refuse to treat such
+// frames as evidence.
+func (r *chromedpRenderer) trackMainDocument(browserCtx context.Context) *mainDocTracker {
+	tracker := &mainDocTracker{}
+	r.chromedpClient.ListenTarget(browserCtx, tracker.handle)
+	return tracker
 }
 
 // decodeScreenshot enforces encoded and decoded size bounds before returning the frame.

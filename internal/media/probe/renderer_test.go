@@ -8,10 +8,12 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
@@ -35,9 +37,18 @@ type rendererHarness struct {
 	chromedp *mocks.MockChromedpClient
 	ssrf     *mocks.MockSSRFValidator
 	renderer probe.Renderer
-	// listener captures the Fetch event handler the renderer installs, so tests can
-	// drive paused-request decisions without a browser.
-	listener func(ev any)
+	// listeners captures every event handler the renderer installs (the main-document
+	// status tracker and, with a validator, the Fetch interception handler); emit
+	// broadcasts to all of them, mirroring chromedp's target event delivery.
+	listeners []func(ev any)
+}
+
+// emit delivers an event to every installed listener, like chromedp broadcasts target
+// events.
+func (h *rendererHarness) emit(ev any) {
+	for _, fn := range h.listeners {
+		fn(ev)
+	}
 }
 
 func newMockedRenderer(t *testing.T, validator *mocks.MockSSRFValidator) *rendererHarness {
@@ -60,14 +71,16 @@ func newMockedRenderer(t *testing.T, validator *mocks.MockSSRFValidator) *render
 		TimeoutMs:      5000,
 		SettleMs:       10,
 	}
+	// The status tracker is installed on every render, validator or not.
+	h.chromedp.EXPECT().NetworkEnable().Return(nil).AnyTimes()
+	h.chromedp.EXPECT().
+		ListenTarget(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, fn func(ev any)) { h.listeners = append(h.listeners, fn) }).
+		AnyTimes()
 	if validator != nil {
 		cfg.SSRFValidator = validator
 		h.chromedp.EXPECT().FetchEnable().Return(nil).AnyTimes()
 		h.chromedp.EXPECT().AddScriptToEvaluateOnNewDocument(gomock.Any()).Return(nil).AnyTimes()
-		h.chromedp.EXPECT().
-			ListenTarget(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(_ context.Context, fn func(ev any)) { h.listener = fn }).
-			AnyTimes()
 	}
 
 	h.renderer = probe.NewRenderer(h.chromedp, cfg)
@@ -109,7 +122,7 @@ func TestRenderProbe_capturesViewportFrameAndEngine(t *testing.T) {
 
 	h.expectRenderActions(t, url, encodePNG(t))
 	h.chromedp.EXPECT().
-		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
@@ -119,6 +132,7 @@ func TestRenderProbe_capturesViewportFrameAndEngine(t *testing.T) {
 	assert.Equal(t, "640x480", capture.Viewport)
 	require.NotNil(t, capture.Image)
 	assert.Equal(t, 0, capture.BlockedRequests)
+	assert.Equal(t, 0, capture.MainStatus, "no network events observed means status unknown")
 }
 
 // TestRenderProbe_usesViewportCaptureNotFullPage pins the bound: an untrusted page can
@@ -130,7 +144,7 @@ func TestRenderProbe_usesViewportCaptureNotFullPage(t *testing.T) {
 
 	h.expectRenderActions(t, url, encodePNG(t))
 	h.chromedp.EXPECT().
-		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	_, err := h.renderer.RenderProbe(context.Background(), url, 0)
@@ -153,7 +167,7 @@ func TestRenderProbe_runErrorIsStalledSignal(t *testing.T) {
 	h.chromedp.EXPECT().Sleep(gomock.Any()).Return(nil)
 	h.chromedp.EXPECT().CaptureScreenshot(gomock.Any()).Return(nil)
 	h.chromedp.EXPECT().
-		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(context.DeadlineExceeded)
 
 	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
@@ -189,7 +203,7 @@ func TestRenderProbe_callerCancellationSurfaces(t *testing.T) {
 	h.chromedp.EXPECT().CaptureScreenshot(gomock.Any()).Return(nil)
 	// Real chromedp returns the context error once its context is done.
 	h.chromedp.EXPECT().
-		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("chromedp: context canceled"))
 
 	capture, err := h.renderer.RenderProbe(ctx, url, 0)
@@ -209,7 +223,7 @@ func TestRenderProbe_undecodableScreenshotErrors(t *testing.T) {
 
 	h.expectRenderActions(t, url, []byte("not a png"))
 	h.chromedp.EXPECT().
-		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
@@ -233,7 +247,7 @@ func TestRenderProbe_rejectsOversizedScreenshot(t *testing.T) {
 
 	h.expectRenderActions(t, url, buf.Bytes())
 	h.chromedp.EXPECT().
-		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
@@ -290,12 +304,12 @@ func TestRenderProbe_interceptsBrowserRequests(t *testing.T) {
 	h.chromedp.EXPECT().
 		Sleep(gomock.Any()).
 		DoAndReturn(func(time.Duration) chromedp.Action {
-			require.NotNil(t, h.listener, "Fetch interception must be installed before navigation")
-			h.listener(&fetch.EventRequestPaused{
+			require.NotEmpty(t, h.listeners, "Fetch interception must be installed before navigation")
+			h.emit(&fetch.EventRequestPaused{
 				RequestID: "allowed",
 				Request:   &network.Request{URL: "https://cdn.example.com/lib.js"},
 			})
-			h.listener(&fetch.EventRequestPaused{
+			h.emit(&fetch.EventRequestPaused{
 				RequestID: "blocked",
 				Request:   &network.Request{URL: "http://169.254.169.254/latest/meta-data/"},
 			})
@@ -308,7 +322,7 @@ func TestRenderProbe_interceptsBrowserRequests(t *testing.T) {
 		CaptureScreenshot(gomock.Any()).
 		DoAndReturn(func(res *[]byte) chromedp.Action { *res = pngBytes; return nil })
 	h.chromedp.EXPECT().
-		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
@@ -376,9 +390,9 @@ func TestRenderProbe_boundsConcurrentRequestDecisions(t *testing.T) {
 	h.chromedp.EXPECT().
 		Sleep(gomock.Any()).
 		DoAndReturn(func(time.Duration) chromedp.Action {
-			require.NotNil(t, h.listener)
+			require.NotEmpty(t, h.listeners)
 			for i := range flood {
-				h.listener(&fetch.EventRequestPaused{
+				h.emit(&fetch.EventRequestPaused{
 					RequestID: fetch.RequestID(fmt.Sprintf("req-%d", i)),
 					Request:   &network.Request{URL: fmt.Sprintf("https://cdn.example.com/a%d.js", i)},
 				})
@@ -399,7 +413,7 @@ func TestRenderProbe_boundsConcurrentRequestDecisions(t *testing.T) {
 		CaptureScreenshot(gomock.Any()).
 		DoAndReturn(func(res *[]byte) chromedp.Action { *res = pngBytes; return nil })
 	h.chromedp.EXPECT().
-		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
@@ -412,4 +426,123 @@ func TestRenderProbe_boundsConcurrentRequestDecisions(t *testing.T) {
 	assert.LessOrEqual(t, decided.Load(), int64(maxAccepted),
 		"the flood's excess must be dropped, not queued or decided")
 	assert.Equal(t, validated.Load(), decided.Load(), "every decision came through validation")
+}
+
+// expectFailingRun sets up the builder expectations for a render whose Run fails with
+// runErr before any action executes.
+func (h *rendererHarness) expectFailingRun(runErr error) {
+	h.chromedp.EXPECT().
+		NewContext(gomock.Any()).
+		DoAndReturn(func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return context.WithCancel(ctx)
+		})
+	h.chromedp.EXPECT().EmulateViewport(gomock.Any(), gomock.Any()).Return(nil)
+	h.chromedp.EXPECT().Navigate(gomock.Any()).Return(nil)
+	h.chromedp.EXPECT().WaitReady(":root").Return(nil)
+	h.chromedp.EXPECT().Evaluate(gomock.Any(), gomock.Any()).Return(nil)
+	h.chromedp.EXPECT().Sleep(gomock.Any()).Return(nil)
+	h.chromedp.EXPECT().CaptureScreenshot(gomock.Any()).Return(nil)
+	h.chromedp.EXPECT().
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(runErr)
+}
+
+// TestRenderProbe_launchFailureIsBrowserUnavailable pins the infrastructure/evidence
+// split: a browser that never started must surface as ErrBrowserUnavailable so the
+// executor retries the job instead of recording a stalled verdict. The fixture errors
+// are the literal shapes observed in the 2026-08-17 fork-exhaustion incident, which
+// recorded ~2,100 launch failures as artwork evidence.
+func TestRenderProbe_launchFailureIsBrowserUnavailable(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"fork failure", &os.PathError{Op: "fork/exec", Path: "/usr/bin/chromium", Err: errors.New("resource temporarily unavailable")}},
+		{"startup failure", errors.New("chrome failed to start:\n/usr/bin/chromium: line 12: can't fork: Resource temporarily unavailable")},
+		{"devtools socket timeout", errors.New("websocket url timeout reached")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newMockedRenderer(t, nil)
+			h.expectFailingRun(tc.err)
+
+			capture, err := h.renderer.RenderProbe(context.Background(), "https://example.com/work.html", 0)
+			require.Error(t, err)
+			assert.Nil(t, capture)
+			assert.ErrorIs(t, err, probe.ErrBrowserUnavailable)
+		})
+	}
+}
+
+// TestRenderProbe_pageLoadFailureIsNotBrowserUnavailable keeps the boundary honest in
+// the other direction: an in-page load failure stays a plain error (the executor's
+// stalled signal) and must never be mistaken for browser unavailability, or genuinely
+// broken URLs would be retried forever without ever recording a verdict.
+func TestRenderProbe_pageLoadFailureIsNotBrowserUnavailable(t *testing.T) {
+	h := newMockedRenderer(t, nil)
+	h.expectFailingRun(errors.New("page load error net::ERR_ABORTED"))
+
+	capture, err := h.renderer.RenderProbe(context.Background(), "https://example.com/download.bin", 0)
+	require.Error(t, err)
+	assert.Nil(t, capture)
+	assert.NotErrorIs(t, err, probe.ErrBrowserUnavailable)
+}
+
+// TestRenderProbe_recordsMainDocumentStatus pins main-document status capture: the final
+// response of the navigated frame is recorded, while iframe documents and subresources —
+// whose statuses say nothing about what the server sent for the artwork itself — must
+// not overwrite it. Chromium paints HTTP error bodies like normal pages (production
+// measurement: ipfs.io's 410 bot-block page classified 1,692 healthy artworks as
+// blank), so this status is the executor's only signal that the frame is not the
+// artwork.
+func TestRenderProbe_recordsMainDocumentStatus(t *testing.T) {
+	h := newMockedRenderer(t, nil)
+	url := "https://example.com/blocked.html"
+
+	h.chromedp.EXPECT().
+		NewContext(gomock.Any()).
+		DoAndReturn(func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return context.WithCancel(ctx)
+		})
+	h.chromedp.EXPECT().EmulateViewport(gomock.Any(), gomock.Any()).Return(nil)
+	h.chromedp.EXPECT().Navigate(url).Return(nil)
+	h.chromedp.EXPECT().WaitReady(":root").Return(nil)
+	h.chromedp.EXPECT().
+		Evaluate("navigator.userAgent", gomock.Any()).
+		DoAndReturn(func(_ string, res any, _ ...chromedp.EvaluateOption) chromedp.EvaluateAction {
+			*(res.(*string)) = "HeadlessChrome/123.0"
+			return nil
+		})
+	// Network events are emitted from the Sleep builder, after the tracker's listener is
+	// installed and before Run executes — same trick as the interception tests.
+	h.chromedp.EXPECT().
+		Sleep(gomock.Any()).
+		DoAndReturn(func(time.Duration) chromedp.Action {
+			require.NotEmpty(t, h.listeners, "status tracker must be installed before navigation")
+			mainFrame := cdp.FrameID("main-frame")
+			iframe := cdp.FrameID("child-frame")
+			// The navigation's document request pins the main frame.
+			h.emit(&network.EventRequestWillBeSent{Type: network.ResourceTypeDocument, FrameID: mainFrame})
+			h.emit(&network.EventResponseReceived{Type: network.ResourceTypeDocument, FrameID: mainFrame,
+				Response: &network.Response{Status: 410}})
+			// An iframe's document and a failing subresource must not overwrite it.
+			h.emit(&network.EventRequestWillBeSent{Type: network.ResourceTypeDocument, FrameID: iframe})
+			h.emit(&network.EventResponseReceived{Type: network.ResourceTypeDocument, FrameID: iframe,
+				Response: &network.Response{Status: 200}})
+			h.emit(&network.EventResponseReceived{Type: network.ResourceTypeStylesheet, FrameID: mainFrame,
+				Response: &network.Response{Status: 500}})
+			return nil
+		})
+	pngBytes := encodePNG(t)
+	h.chromedp.EXPECT().
+		CaptureScreenshot(gomock.Any()).
+		DoAndReturn(func(res *[]byte) chromedp.Action { *res = pngBytes; return nil })
+	h.chromedp.EXPECT().
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
+	require.NoError(t, err)
+	require.NotNil(t, capture)
+	assert.Equal(t, 410, capture.MainStatus, "main frame's final document status wins")
 }

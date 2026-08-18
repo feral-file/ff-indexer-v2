@@ -188,6 +188,27 @@ fixed viewport, waits for the page to settle, screenshots, and classifies:
 - **rendered_ok** — resets the failure counter; if the URL was render-gated, heals it
   (the probe is the *only* healer of `render_*` rows — see the ownership rule).
 
+**Not every probe attempt is a verdict.** Two outcomes are recorded as *no evidence about
+the artwork* and never advance the failure counter, because both were measured in
+production (2026-08-17/18) marching healthy URLs toward the gate threshold when they were
+still counted as `stalled`/`blank`:
+
+- **Browser launch failure** (`probe.ErrBrowserUnavailable`: fork/exec exhaustion,
+  chromium startup crash, DevTools socket timeout) is a worker-host failure. The job is
+  rescheduled after a short backoff with all probe state untouched — a host incident
+  must not write artwork verdicts. The 2026-08-17 fork-exhaustion incident recorded
+  ~2,100 launch failures as `stalled`, driving healthy URLs to would-gate counters.
+- **A non-2xx main document.** Chromium reports an HTTP error response as a successful
+  navigation — the error body paints and screenshots like a normal page — so the
+  renderer records the main document's final status (`Capture.MainStatus`, redirect
+  hops excluded, iframe documents ignored) and the executor refuses to classify the
+  frame when it is not 2xx: the attempt is recorded with the status in `last_error`,
+  the previous verdict/counter/gate/capture state is preserved (same contract as an
+  SSRF policy refusal), and `next_check_at` moves a `broken_recheck_interval` out.
+  Measured production shape: ipfs.io's HTTP 410 bot-block page — one line of text on
+  white, variance ~0.00096 — classified 1,692 distinct healthy artworks as `blank`,
+  all sharing pHash `0xb636363636363634`.
+
 The settle window is per-class. `settle_ms` (default 15s) is sized for generative works
 that keep painting after load — the blank debounce only protects against *transient*
 blanks, so a work that deterministically needs longer than the window would gate on its
@@ -258,6 +279,29 @@ renderable class, so a URL that has since failed L0 stops consuming render capac
 
 Job cancellation and worker shutdown are bridged into the browser context and leave all
 probe state untouched: a cancelled probe is not evidence about the artwork.
+
+**Accepted L1 coverage gap: public IPFS gateways block headless browsers.** ipfs.io and
+dweb.link (same operator, Interplanetary Shipyard) serve every request from the probe's
+chromium an HTTP 410 page ("Gone, see
+https://docs.ipfs.tech/how-to/replace-public-gateways-with-self-hosted-ipfs/") — their
+documented policy of refusing automated traffic on the public gateways. The block keys on
+TLS/client fingerprinting of real headless Chrome, not on the User-Agent string or
+request rate (curl from the same IP with a HeadlessChrome UA receives full content), so
+pacing, UA changes, or retries cannot lift it, and it is persistent rather than
+burst-triggered. **Decision (2026-08-18): the gap is accepted.** Consequences:
+
+- URLs on these gateways record no-evidence attempts (`last_error` = "main document
+  returned HTTP 410; frame not classified") on the `broken_recheck_interval` cadence.
+  L1 neither gates nor heals them; L0's byte-level probe (Go HTTP client, not
+  fingerprinted as a browser) remains their only health judgment.
+- The shadow-mode watch and the delta measurement's "actually renders" number exclude
+  this population by construction; they measure only URLs whose gateway serves the
+  probe.
+- Ways to close the gap later, if wanted: a self-hosted IPFS gateway for probe traffic
+  (what the 410 page itself recommends), or an identified User-Agent plus an operator
+  whitelisting arrangement. Do **not** fingerprint the 410 page into
+  `known_bad_fingerprints` — that class gates on first sight, and a gateway's refusal
+  to serve a bot says nothing about the artwork.
 
 Every capture stores `phash` + `engine_version` + `viewport` in `media_render_probes`
 (see `docs/schema.md`); `baseline_phash` keeps the first successful capture and is never
@@ -471,3 +515,21 @@ agreed on #3485: previously-reported healthy, validated healthy, actually render
 - Rollout: enforcement is immediate by design (user decision on #3485 follow-up). If a
   validation rule misfires in production, the per-reason breakdown identifies affected
   rows exactly; the next sweep after a fix re-heals them.
+- One-time cleanup after deploying the no-evidence changes (2026-08-18): the first
+  shadow-mode dataset was polluted by the 2026-08-17 fork-exhaustion incident (launch
+  failures recorded as `stalled`) and by ipfs.io/dweb.link's 410 bot-block page
+  (recorded as `blank`, shared pHash `0xb636363636363634`). Reset those rows so the
+  shadow watch restarts on honest data — counters cleared, due immediately, baselines
+  seeded from an error page dropped:
+
+  ```sql
+  UPDATE media_render_probes
+  SET consecutive_failures = 0, next_check_at = now(),
+      phash = NULL, baseline_phash = NULL
+  WHERE (verdict = 'stalled' AND (last_error LIKE '%chrome failed to start%'
+                                  OR last_error LIKE '%fork/exec%'))
+     OR (verdict = 'blank' AND phash = -5317002703598635468);
+  ```
+
+  The shadow watch clock (~2 weeks before the enforce decision) starts after this
+  reset, not at first deploy.

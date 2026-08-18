@@ -38,6 +38,10 @@ type ChromedpClient interface {
 	// browser is about to make (navigations, redirects, subresources) is paused for a
 	// policy decision.
 	FetchEnable() chromedp.Action
+	// NetworkEnable returns an action enabling the Network domain so response events
+	// (EventRequestWillBeSent, EventResponseReceived) reach ListenTarget handlers — used
+	// by the render probe to observe the main document's HTTP status.
+	NetworkEnable() chromedp.Action
 	// ListenTarget registers fn for target events on ctx; fn receives paused requests.
 	ListenTarget(ctx context.Context, fn func(ev any))
 	// ContinueRequest allows a paused request to proceed.
@@ -101,6 +105,10 @@ func (c *RealChromedpClient) AddScriptToEvaluateOnNewDocument(source string) chr
 
 func (c *RealChromedpClient) FetchEnable() chromedp.Action {
 	return fetch.Enable()
+}
+
+func (c *RealChromedpClient) NetworkEnable() chromedp.Action {
+	return network.Enable()
 }
 
 func (c *RealChromedpClient) ListenTarget(ctx context.Context, fn func(ev any)) {
