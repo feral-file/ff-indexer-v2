@@ -27,6 +27,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 )
 
 const (
@@ -97,6 +98,7 @@ type tzSubscriber struct {
 	signalR          adapter.SignalR
 	clock            adapter.Clock
 	tzktClient       TzKTClient
+	rateLimiter      ratelimit.Limiter
 	config           Config
 	streamCh         chan streamMessage
 	errCh            chan error
@@ -116,14 +118,15 @@ type levelBuffer struct {
 }
 
 // NewSubscriber builds a Tezos EventSource backed by TzKT SignalR.
-func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzktClient TzKTClient) (blockchain.EventSource, error) {
+func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzktClient TzKTClient, rateLimiter ratelimit.Limiter) (blockchain.EventSource, error) {
 	return &tzSubscriber{
-		wsURL:      cfg.WebSocketURL,
-		chainID:    cfg.ChainID,
-		signalR:    signalR,
-		clock:      clock,
-		tzktClient: tzktClient,
-		config:     cfg,
+		wsURL:       cfg.WebSocketURL,
+		chainID:     cfg.ChainID,
+		signalR:     signalR,
+		clock:       clock,
+		tzktClient:  tzktClient,
+		rateLimiter: rateLimiter,
+		config:      cfg,
 	}, nil
 }
 
@@ -157,7 +160,28 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	c.errCh = make(chan error, 1)
 	c.liveStreamActive.Store(false)
 
-	// Create SignalR client with connection
+	// Connection startup performs two HTTP exchanges against api.tzkt.io — the SignalR
+	// negotiate POST and the websocket upgrade — so acquire one "tzkt" limiter token for
+	// each before connecting. Unthrottled connection attempts were part of the traffic
+	// mix behind the 2026-08-18 429 crash-loop (each restart re-negotiated instantly
+	// against a fresh in-process token bucket).
+	//
+	// Tokens are acquired with no-op callbacks rather than by running NewClient inside
+	// Do: the limiter cancels its callback context when Do returns, and the SignalR
+	// client stores its construction context for the connection's whole lifetime — a
+	// client built on the callback context would start life canceled.
+	const connectStartupExchanges = 2
+	for range connectStartupExchanges {
+		if _, err := ratelimit.Do(subscriptionCtx, c.rateLimiter, PROVIDER_NAME,
+			func(context.Context) (struct{}, error) { return struct{}{}, nil },
+		); err != nil {
+			cancel()
+			c.cancel = nil
+			return fmt.Errorf("failed to acquire tzkt rate limit token for SignalR connect: %w", err)
+		}
+	}
+
+	// Create SignalR client with connection, on the long-lived subscription context.
 	client, err := c.signalR.NewClient(subscriptionCtx, c.wsURL, c)
 	if err != nil {
 		cancel()

@@ -17,6 +17,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 )
 
 // tzktSignalReceiver is the SignalR hub callback surface implemented by the Tezos
@@ -71,7 +72,7 @@ func TestSubscribeEvents_StopsClientWhenSubscriptionFails(t *testing.T) {
 	subscriber, err := tezos.NewSubscriber(tezos.Config{
 		WebSocketURL: "wss://tzkt.example/ws",
 		ChainID:      domain.ChainTezosMainnet,
-	}, signalR, clock, tzkt)
+	}, signalR, clock, tzkt, nil)
 	require.NoError(t, err)
 
 	err = subscriber.SubscribeEvents(context.Background(), 123, func(*domain.BlockchainEvent) error { return nil })
@@ -155,7 +156,7 @@ func TestSubscribeEvents_emitsIncompleteLevelAfterQuietFeedTimeout(t *testing.T)
 	subscriber, err := tezos.NewSubscriber(tezos.Config{
 		WebSocketURL: "wss://tzkt.example/ws",
 		ChainID:      domain.ChainTezosMainnet,
-	}, signalR, clock, tzkt)
+	}, signalR, clock, tzkt, nil)
 	require.NoError(t, err)
 
 	seen := make(chan *domain.BlockchainEvent, 1)
@@ -262,7 +263,7 @@ func TestSubscribeEvents_backfillsGapBeforeLiveStream(t *testing.T) {
 	subscriber, err := tezos.NewSubscriber(tezos.Config{
 		WebSocketURL: "wss://tzkt.example/ws",
 		ChainID:      domain.ChainTezosMainnet,
-	}, signalR, clock, tzkt)
+	}, signalR, clock, tzkt, nil)
 	require.NoError(t, err)
 
 	var mu sync.Mutex
@@ -387,7 +388,7 @@ func TestSubscribeEvents_buffersLiveDuringBackfill(t *testing.T) {
 	subscriber, err := tezos.NewSubscriber(tezos.Config{
 		WebSocketURL: "wss://tzkt.example/ws",
 		ChainID:      domain.ChainTezosMainnet,
-	}, signalR, clock, tzkt)
+	}, signalR, clock, tzkt, nil)
 	require.NoError(t, err)
 
 	var mu sync.Mutex
@@ -481,7 +482,7 @@ func TestSubscribeEvents_failsOnLiveBufferOverflowDuringBackfill(t *testing.T) {
 		WebSocketURL:    "wss://tzkt.example/ws",
 		ChainID:         domain.ChainTezosMainnet,
 		EventBufferSize: bufSize,
-	}, signalR, clock, tzkt)
+	}, signalR, clock, tzkt, nil)
 	require.NoError(t, err)
 
 	errCh := make(chan error, 1)
@@ -549,7 +550,7 @@ func TestSubscribeEvents_usesFreshHeadForHandoffBoundary(t *testing.T) {
 	subscriber, err := tezos.NewSubscriber(tezos.Config{
 		WebSocketURL: "wss://tzkt.example/ws",
 		ChainID:      domain.ChainTezosMainnet,
-	}, signalR, clock, tzkt)
+	}, signalR, clock, tzkt, nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -571,4 +572,54 @@ func TestSubscribeEvents_usesFreshHeadForHandoffBoundary(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for subscription to stop")
 	}
+}
+
+// TestSubscribeEvents_negotiateIsChargedToTzktLimiter pins the connection attempt to the
+// shared "tzkt" limiter bucket: the SignalR negotiate and websocket handshake are
+// api.tzkt.io requests like any REST call. Unthrottled per-boot negotiates were part of
+// the traffic mix behind the 2026-08-18 429 crash-loop.
+//
+// The limiter mock mimics the real limiter's lifecycle hazard: the callback context is
+// limiter-scoped and already dead by the time anything long-lived could use it. The
+// SignalR client must therefore be constructed on the subscription context, never the
+// callback context — the mock's NewClient asserts the context it receives is alive.
+func TestSubscribeEvents_negotiateIsChargedToTzktLimiter(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	signalR := mocks.NewMockSignalR(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	tzkt := mocks.NewMockTzKTClient(ctrl)
+	limiter := mocks.NewMockLimiter(ctrl)
+
+	// One token per startup HTTP exchange: the negotiate POST and the websocket upgrade.
+	acquire := limiter.EXPECT().
+		Do(gomock.Any(), "tzkt", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, fn ratelimit.Func) (any, error) {
+			// Real limiter shape: the callback runs on a queue-scoped context that is
+			// canceled as soon as Do returns.
+			queueCtx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return fn(queueCtx)
+		}).
+		Times(2)
+	connect := signalR.EXPECT().
+		NewClient(gomock.Any(), "wss://tzkt.example/ws", gomock.Any()).
+		DoAndReturn(func(ctx context.Context, _ string, _ any) (adapter.SignalRClient, error) {
+			require.NoError(t, ctx.Err(),
+				"the client must be built on the live subscription context, not the limiter's canceled callback context")
+			return nil, errors.New("negotiate refused")
+		})
+	// Token before negotiate: the connection attempt is what the token pays for.
+	gomock.InOrder(acquire, connect)
+
+	subscriber, err := tezos.NewSubscriber(tezos.Config{
+		WebSocketURL: "wss://tzkt.example/ws",
+		ChainID:      domain.ChainTezosMainnet,
+	}, signalR, clock, tzkt, limiter)
+	require.NoError(t, err)
+
+	err = subscriber.SubscribeEvents(context.Background(), 123, func(*domain.BlockchainEvent) error { return nil })
+	require.Error(t, err)
+	require.ErrorContains(t, err, "failed to create SignalR client")
 }
