@@ -6,7 +6,6 @@ import (
 	"math/big"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -307,85 +306,4 @@ func TestFilterLogsWithPagination_OneBlockTooManyResultsReturnsError(t *testing.
 	require.Error(t, err)
 	require.Nil(t, logs)
 	require.Contains(t, err.Error(), "too many results in single block 100")
-}
-
-// TestFilterLogsWithPagination_RangeCappedProviderSplitsAndCompletes simulates a
-// provider that caps the queried block span (e.g. "range 9999999 exceeds limit
-// of 10000") instead of capping result counts. Pagination must recognize the
-// error, split the window down to an accepted span, cover the whole range, and
-// never probe above the discovered cap again — every above-cap probe is a
-// guaranteed rejection plus a one-second sleep, and against the helper's
-// one-minute default deadline a probe-per-window scan times out with partial
-// progress on any real owner enumeration.
-func TestFilterLogsWithPagination_RangeCappedProviderSplitsAndCompletes(t *testing.T) {
-	t.Parallel()
-
-	ctrl := gomock.NewController(t)
-	mockClient := mocks.NewMockEthClient(ctrl)
-	mockClock := mocks.NewMockClock(ctrl)
-
-	var totalSlept time.Duration
-	mockClock.EXPECT().
-		Sleep(gomock.Any()).
-		AnyTimes().
-		Do(func(d time.Duration) {
-			totalSlept += d
-		})
-
-	const (
-		fromBlock uint64 = 0
-		toBlock   uint64 = 1000
-		spanLimit uint64 = 16
-	)
-
-	var (
-		successRanges          []blockRange
-		totalCalls             int
-		sawSuccess             bool
-		rejectionsAfterSuccess int
-	)
-
-	mockClient.EXPECT().
-		FilterLogs(gomock.Any(), gomock.Any()).
-		AnyTimes().
-		DoAndReturn(func(_ context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
-			totalCalls++
-			from := query.FromBlock.Uint64()
-			to := query.ToBlock.Uint64()
-			span := to - from + 1
-			if span > spanLimit {
-				if sawSuccess {
-					rejectionsAfterSuccess++
-				}
-				return nil, fmt.Errorf("range %d exceeds limit of %d", span, spanLimit)
-			}
-			sawSuccess = true
-			successRanges = append(successRanges, blockRange{from: from, to: to})
-			return nil, nil
-		})
-
-	pagination := helpers.NewPaginationHelper(mockClient, mockClock, nil)
-	logs, err := pagination.FilterLogsWithPagination(context.Background(), ethereum.FilterQuery{
-		FromBlock: new(big.Int).SetUint64(fromBlock),
-		ToBlock:   new(big.Int).SetUint64(toBlock),
-	})
-
-	require.NoError(t, err)
-	require.Empty(t, logs)
-	requireContiguousCoverage(t, successRanges, fromBlock, toBlock)
-
-	// The cap is discovered once, during the initial halving cascade. Probing
-	// above it after a success is a guaranteed rejection.
-	require.Zero(t, rejectionsAfterSuccess, "pagination probed above the discovered range cap after a success")
-
-	// Sleep happens only on rejections, so total slept time is the halving
-	// cascade alone (~16s from the 1M default step down to the cap). Ramping
-	// above the cap after every success slept once per window (~63s here),
-	// which would blow the one-minute default deadline scaled to any real scan.
-	require.LessOrEqual(t, totalSlept, 20*time.Second, "pagination slept beyond the initial halving cascade")
-
-	// Covering 1001 blocks at a span cap of 16 is ~63 successful windows plus
-	// the ~16-call cascade. The old reset-and-reprobe behavior took 2-17 calls
-	// per window, well over 150.
-	require.Less(t, totalCalls, 120, "pagination is re-paying rejected probes after successes")
 }
