@@ -234,6 +234,21 @@ func (w *coreWorkflows) IndexTokenFromEvent(ctx context.Context, event *domain.B
 				zap.String("tokenCID", event.TokenCID().String()),
 			)
 		}
+	} else if w.guardDefersERC1155History(event.TokenCID()) {
+		// Under the credit guard the minimal path above stored only the triggering
+		// event (balance-only owner lookups, no prior history), and this branch
+		// deliberately never enqueues full provenance for ERC-1155 — so the deferral
+		// must be marked here or ingestion-discovered ERC-1155 tokens would be
+		// invisible to the backfill. A marking failure fails the workflow (the job
+		// retries) rather than silently losing the token from the backfill set.
+		if err := w.executor.MarkTokenProvenanceDeferred(ctx, event.TokenCID()); err != nil {
+			logger.ErrorCtx(ctx,
+				fmt.Errorf("failed to mark event-driven token provenance deferred"),
+				zap.Error(err),
+				zap.String("tokenCID", event.TokenCID().String()),
+			)
+			return err
+		}
 	}
 
 	logger.InfoCtx(ctx, "Token indexing completed, metadata and provenances workflows started",
@@ -364,7 +379,7 @@ func (w *coreWorkflows) IndexToken(ctx context.Context, tokenCID domain.TokenCID
 				zap.Error(err),
 			)
 		}
-	} else if w.ownerPathEventsSkippedByGuard(tokenCID, address) {
+	} else if address != nil && w.guardDefersERC1155History(tokenCID) {
 		// Owner-path ERC-1155 tokens never reach IndexTokenProvenances (the
 		// owner-specific minimal path normally captures their events), but under the
 		// credit guard that path returned balance-only — so the deferral must be
@@ -405,17 +420,19 @@ func shouldIndexFullProvenance(tokenCID domain.TokenCID, address *string, execut
 	return executor.SupportsTokenProvenance(tokenCID)
 }
 
-// ownerPathEventsSkippedByGuard reports whether this token's owner-specific event
-// capture was skipped by the EVM credit guard and therefore owes a deferred-provenance
-// marker. It mirrors the ERC-1155-with-address exclusion in shouldIndexFullProvenance:
-// that path normally substitutes for full provenance, but with the guard on the
-// ethereum client answers it balance-only, so the events were never captured.
-func (w *coreWorkflows) ownerPathEventsSkippedByGuard(tokenCID domain.TokenCID, address *string) bool {
+// guardDefersERC1155History reports whether the EVM credit guard is answering this
+// token's ERC-1155 owner-history lookups balance-only, so any path that normally
+// relies on those events substituting for full provenance owes a deferred-provenance
+// marker. Two such paths exist and both must mark: the owner-specific indexing path
+// (ERC-1155 with a triggering address) and the event-driven ingestion path (which
+// excludes ERC-1155 from full provenance because the minimal path normally captures
+// balance deltas).
+func (w *coreWorkflows) guardDefersERC1155History(tokenCID domain.TokenCID) bool {
 	if !w.config.EthereumFullProvenanceDisabled {
 		return false
 	}
 	chain, standard, _, _ := tokenCID.Parse()
-	return chain.IsEVM() && standard == domain.StandardERC1155 && address != nil
+	return chain.IsEVM() && standard == domain.StandardERC1155
 }
 
 func (w *coreWorkflows) startIndexTokenMetadataAsync(ctx context.Context, tokenCID domain.TokenCID, address *string) {

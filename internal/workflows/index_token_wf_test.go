@@ -419,3 +419,95 @@ func TestIndexToken_OwnerPathERC1155_NoGuardNoDeferral(t *testing.T) {
 	err := wf.IndexToken(ctx, tcid, &owner)
 	require.NoError(t, err)
 }
+
+// TestIndexTokenFromEvent_ERC1155_GuardMarksDeferred pins the third deferral
+// path: event-driven ingestion excludes ERC-1155 from full provenance because
+// its minimal path normally captures balance deltas — but under the EVM credit
+// guard that path is balance-only, so IndexTokenFromEvent must persist the
+// deferred-provenance marker or ingestion-discovered ERC-1155 tokens would be
+// invisible to the backfill.
+func TestIndexTokenFromEvent_ERC1155_GuardMarksDeferred(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC1155,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tcid := event.TokenCID()
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(nil)
+
+	err := wf.IndexTokenFromEvent(ctx, event)
+	require.NoError(t, err)
+}
+
+// TestIndexTokenFromEvent_ERC1155_GuardMarkingFailureFailsWorkflow pins the
+// durability contract on the event path: a marking failure must fail the
+// workflow (so the job retries) rather than report success and silently drop
+// the token from the backfill set.
+func TestIndexTokenFromEvent_ERC1155_GuardMarkingFailureFailsWorkflow(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC1155,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tcid := event.TokenCID()
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	markErr := errors.New("db unavailable")
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(markErr)
+
+	err := wf.IndexTokenFromEvent(ctx, event)
+	require.ErrorIs(t, err, markErr)
+}
+
+// TestIndexTokenFromEvent_ERC1155_NoGuardNoDeferral pins the guard's scope on
+// the event path: with the guard off, the minimal path captures the owner's
+// events itself, so no deferral marker may be written (the strict mock fails on
+// any marking call).
+func TestIndexTokenFromEvent_ERC1155_NoGuardNoDeferral(t *testing.T) {
+	t.Parallel()
+	d := testTokenCore(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC1155,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tcid := event.TokenCID()
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+
+	err := wf.IndexTokenFromEvent(ctx, event)
+	require.NoError(t, err)
+}
