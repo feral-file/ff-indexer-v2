@@ -99,7 +99,7 @@ func runTezosIngestion(
 		)
 	}
 
-	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient, clockAdapter)
+	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient, rateLimiter, clockAdapter)
 	tzBlockProvider := block.NewBlockProvider(tzBlockFetcher,
 		block.Config{
 			TTL:               cfg.Tezos.BlockHeadTTL * time.Second,
@@ -111,7 +111,7 @@ func runTezosIngestion(
 	source, err := tezos.NewSubscriber(tezos.Config{
 		WebSocketURL: cfg.Tezos.WebSocketURL,
 		ChainID:      cfg.Tezos.ChainID,
-	}, signalR, clockAdapter, tzktClient)
+	}, signalR, clockAdapter, tzktClient, rateLimiter)
 	if err != nil {
 		return err
 	}

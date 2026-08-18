@@ -27,6 +27,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 )
 
 const (
@@ -97,6 +98,7 @@ type tzSubscriber struct {
 	signalR          adapter.SignalR
 	clock            adapter.Clock
 	tzktClient       TzKTClient
+	rateLimiter      ratelimit.Limiter
 	config           Config
 	streamCh         chan streamMessage
 	errCh            chan error
@@ -116,14 +118,15 @@ type levelBuffer struct {
 }
 
 // NewSubscriber builds a Tezos EventSource backed by TzKT SignalR.
-func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzktClient TzKTClient) (blockchain.EventSource, error) {
+func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzktClient TzKTClient, rateLimiter ratelimit.Limiter) (blockchain.EventSource, error) {
 	return &tzSubscriber{
-		wsURL:      cfg.WebSocketURL,
-		chainID:    cfg.ChainID,
-		signalR:    signalR,
-		clock:      clock,
-		tzktClient: tzktClient,
-		config:     cfg,
+		wsURL:       cfg.WebSocketURL,
+		chainID:     cfg.ChainID,
+		signalR:     signalR,
+		clock:       clock,
+		tzktClient:  tzktClient,
+		rateLimiter: rateLimiter,
+		config:      cfg,
 	}, nil
 }
 
@@ -157,8 +160,15 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	c.errCh = make(chan error, 1)
 	c.liveStreamActive.Store(false)
 
-	// Create SignalR client with connection
-	client, err := c.signalR.NewClient(subscriptionCtx, c.wsURL, c)
+	// Create SignalR client with connection. The negotiate POST and websocket handshake
+	// are api.tzkt.io requests like any REST call, so they are charged to the shared
+	// "tzkt" limiter bucket — unthrottled connection attempts were part of the traffic
+	// mix behind the 2026-08-18 429 crash-loop (each restart re-negotiated instantly
+	// against a fresh in-process token bucket).
+	client, err := ratelimit.Do(subscriptionCtx, c.rateLimiter, PROVIDER_NAME,
+		func(ctx context.Context) (adapter.SignalRClient, error) {
+			return c.signalR.NewClient(ctx, c.wsURL, c)
+		})
 	if err != nil {
 		cancel()
 		c.cancel = nil
