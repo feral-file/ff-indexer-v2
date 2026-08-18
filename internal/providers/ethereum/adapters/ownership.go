@@ -46,6 +46,12 @@ func sortLogsAscending(logs []types.Log) {
 // filterLogsInParallel executes multiple filter queries concurrently and merges the results.
 // All queries must succeed or the function returns an error.
 // Deduplication is the caller's responsibility after merging.
+//
+// The walks run under a cancellable child context so that the first failure —
+// notably a helpers.ErrCallBudgetExhausted credit-guard abort — stops the
+// sibling walks instead of leaving them spending RPC credits under the still-live
+// parent context until their own budgets or deadlines. The buffered channel lets
+// canceled siblings deliver their result without blocking after the early return.
 func filterLogsInParallel(
 	ctx context.Context,
 	pagination *helpers.PaginationHelper,
@@ -54,6 +60,9 @@ func filterLogsInParallel(
 	if len(queries) == 0 {
 		return nil, nil
 	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	type queryResult struct {
 		logs []types.Log

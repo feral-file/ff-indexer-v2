@@ -396,6 +396,14 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 		adaptersToQuery = append(adaptersToQuery, adapter)
 	}
 
+	// A cancellable child context stops the sibling adapter walks as soon as one
+	// fails — without it, a credit-guard abort (helpers.ErrCallBudgetExhausted) in
+	// one leg leaves the other full-range walks spending RPC credits under the
+	// still-live parent context. The buffered channel lets canceled siblings
+	// deliver their result without blocking after the early return.
+	fanoutCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	type adapterResult struct {
 		logs []types.Log
 		err  error
@@ -404,7 +412,7 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 	resultsCh := make(chan adapterResult, len(adaptersToQuery))
 	for _, adp := range adaptersToQuery {
 		go func(adapter adapters.ContractAdapter) {
-			logs, err := adapter.GetOwnerLogs(ctx, ownerAddress, requestedFromBlock, requestedToBlock)
+			logs, err := adapter.GetOwnerLogs(fanoutCtx, ownerAddress, requestedFromBlock, requestedToBlock)
 			resultsCh <- adapterResult{logs: logs, err: err}
 		}(adp)
 	}

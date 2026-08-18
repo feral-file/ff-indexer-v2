@@ -762,7 +762,14 @@ func ERC1155BalanceAndEventsForOwner(
 		},
 	}
 
-	// Step 4: Execute all queries in parallel
+	// Step 4: Execute all queries in parallel under a cancellable child context so
+	// the first failure — notably a credit-guard abort (ErrCallBudgetExhausted) —
+	// stops the sibling walks instead of leaving them spending RPC credits under
+	// the still-live parent context. The buffered channel lets canceled siblings
+	// deliver their result without blocking after the early return.
+	fanoutCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	type queryResult struct {
 		logs []types.Log
 		err  error
@@ -772,7 +779,7 @@ func ERC1155BalanceAndEventsForOwner(
 	for _, q := range queries {
 		query := q // capture loop variable
 		go func() {
-			logs, err := pagination.FilterLogsWithPagination(ctx, query)
+			logs, err := pagination.FilterLogsWithPagination(fanoutCtx, query)
 			resultsCh <- queryResult{logs: logs, err: err}
 		}()
 	}
