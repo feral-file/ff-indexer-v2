@@ -527,7 +527,8 @@ agreed on #3485: previously-reported healthy, validated healthy, actually render
   SET consecutive_failures = 0, next_check_at = now(),
       phash = NULL, baseline_phash = NULL
   WHERE (verdict = 'stalled' AND (last_error LIKE '%chrome failed to start%'
-                                  OR last_error LIKE '%fork/exec%'))
+                                  OR last_error LIKE '%fork/exec%'
+                                  OR last_error LIKE '%websocket url timeout%'))
      OR (verdict = 'blank' AND phash = -5317002703598635468);
   ```
 
