@@ -35,20 +35,12 @@ func NewPaginationHelper(
 	}
 }
 
-// noDeadlineTimeout bounds a pagination walk whose caller set no deadline.
-// Sized for the worst legitimate case: a genesis-to-head walk against a
-// provider that caps eth_getLogs at 10k blocks (~2,300 sequential calls at
-// mainnet head ~23M blocks). The previous one-minute bound predates range-cap
-// handling — it assumed 10M-block steps and a handful of calls, and killed
-// every full-history owner scan on a capped provider before it could finish.
-const noDeadlineTimeout = 30 * time.Minute
-
 // FilterLogsWithPagination fetches logs across a block range using adaptive pagination.
 func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
 	timeoutCtx := ctx
 	var cancel context.CancelFunc
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		timeoutCtx, cancel = context.WithTimeout(ctx, noDeadlineTimeout)
+		timeoutCtx, cancel = context.WithTimeout(ctx, time.Minute)
 		defer cancel()
 	}
 
@@ -98,20 +90,12 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 		rangeQuery.FromBlock = new(big.Int).Set(currentFrom)
 		rangeQuery.ToBlock = currentTo
 
-		logs, cappedStep, err := h.getLogsWithRetry(timeoutCtx, rangeQuery, stepSize)
+		logs, err := h.getLogsWithRetry(timeoutCtx, rangeQuery, stepSize)
 		if err != nil {
 			if timeoutCtx.Err() != nil {
 				return allLogs, timeoutCtx.Err()
 			}
 			return nil, fmt.Errorf("failed to get logs for range %d-%d: %w", currentFrom.Uint64(), currentTo.Uint64(), err)
-		}
-
-		// A provider's block-range cap holds for the whole walk, not just the
-		// window that discovered it. Without hoisting it here, every later
-		// window re-probes at the original step and re-pays the halving
-		// cascade (one rejected call plus a one-second sleep per halving).
-		if cappedStep < stepSize {
-			stepSize = cappedStep
 		}
 
 		allLogs = append(allLogs, logs...)
@@ -188,12 +172,7 @@ func (h *PaginationHelper) calculateStepSize(ctx context.Context, query ethereum
 	}
 }
 
-// getLogsWithRetry walks one outer window, halving the step on
-// too-many-results/range-cap rejections. The second return value is the step
-// ceiling after the walk: it equals the given stepSize unless the provider
-// reported a block-range cap, in which case it is the discovered cap so the
-// caller can stop probing above it in later windows.
-func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64) ([]types.Log, uint64, error) {
+func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64) ([]types.Log, error) {
 	currentStepSize := stepSize
 	// maxStepSize is the ceiling the step may ramp back up to after successes.
 	// It starts at the caller's step size and shrinks permanently when the
@@ -208,7 +187,7 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 	for currentFrom.Cmp(query.ToBlock) <= 0 {
 		select {
 		case <-ctx.Done():
-			return allLogs, maxStepSize, ctx.Err()
+			return allLogs, ctx.Err()
 		default:
 		}
 
@@ -239,21 +218,21 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 		}
 
 		if ctx.Err() != nil {
-			return allLogs, maxStepSize, ctx.Err()
+			return allLogs, ctx.Err()
 		}
 
 		if !IsTooManyResultsError(err) {
-			return nil, maxStepSize, err
+			return nil, err
 		}
 
 		// Cannot split further - return explicit error
 		if currentFrom.Cmp(currentTo) == 0 {
-			return nil, maxStepSize, fmt.Errorf("too many results in single block %d: %w", currentFrom.Uint64(), err)
+			return nil, fmt.Errorf("too many results in single block %d: %w", currentFrom.Uint64(), err)
 		}
 
 		currentStepSize = currentStepSize / 2
 		if currentStepSize == 0 {
-			return nil, maxStepSize, fmt.Errorf("step size exhausted at block range [%d, %d]: %w", currentFrom.Uint64(), currentTo.Uint64(), err)
+			return nil, fmt.Errorf("step size exhausted at block range [%d, %d]: %w", currentFrom.Uint64(), currentTo.Uint64(), err)
 		}
 
 		if IsBlockRangeCapError(err) {
@@ -263,5 +242,5 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 		h.clock.Sleep(time.Second)
 	}
 
-	return allLogs, maxStepSize, nil
+	return allLogs, nil
 }
