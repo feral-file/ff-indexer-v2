@@ -150,6 +150,24 @@ func (s *pgStore) GetTokenByTokenCID(ctx context.Context, tokenCID string) (*sch
 	return &token, nil
 }
 
+// SetTokenProvenanceDeferred marks or clears the token's deferred-provenance flag.
+// A missing token affects zero rows and is not an error (see Store interface doc).
+func (s *pgStore) SetTokenProvenanceDeferred(ctx context.Context, tokenCID string, deferred bool) error {
+	value := any(nil)
+	if deferred {
+		value = gorm.Expr("now()")
+	}
+
+	if err := s.db.WithContext(ctx).
+		Model(&schema.Token{}).
+		Where("token_cid = ?", tokenCID).
+		Update("provenance_deferred_at", value).Error; err != nil {
+		return fmt.Errorf("failed to set provenance deferred for token %s: %w", tokenCID, err)
+	}
+
+	return nil
+}
+
 // GetTokensByCIDs retrieves multiple tokens by their canonical IDs
 func (s *pgStore) GetTokensByCIDs(ctx context.Context, tokenCIDs []string) ([]*schema.Token, error) {
 	if len(tokenCIDs) == 0 {

@@ -20,10 +20,21 @@ func (w *coreWorkflows) IndexTokenProvenances(ctx context.Context, tokenCID doma
 	// from genesis (~0.9M Infura credits per token at the 10k block-span cap). Gating
 	// here — the single entry point — covers every trigger: synchronous IndexToken
 	// steps, enqueued jobs, and API-initiated refreshes. Skipped tokens keep their
-	// minimal provenance and no completion webhook fires; they backfill when the
-	// guard lifts. Tezos provenance is TzKT-backed and free, so it is not gated.
+	// minimal provenance and no completion webhook fires. The deferred marker is what
+	// makes the skip recoverable: db/migrations/025_backfill.sql re-enqueues every
+	// marked token once the guard is lifted, so a marking failure must fail the job
+	// (it retries) rather than silently lose the token from the backfill set.
+	// Tezos provenance is TzKT-backed and free, so it is not gated.
 	if chain, _, _, _ := tokenCID.Parse(); w.config.EthereumFullProvenanceDisabled && chain.IsEVM() {
-		logger.InfoCtx(ctx, "Full provenance indexing is disabled for EVM tokens (credit guard); skipping",
+		if err := w.executor.MarkTokenProvenanceDeferred(ctx, tokenCID); err != nil {
+			logger.ErrorCtx(ctx,
+				fmt.Errorf("failed to mark token provenance deferred"),
+				zap.Error(err),
+				zap.String("tokenCID", tokenCID.String()),
+			)
+			return err
+		}
+		logger.InfoCtx(ctx, "Full provenance indexing is disabled for EVM tokens (credit guard); deferred",
 			zap.String("tokenCID", tokenCID.String()),
 		)
 		return nil

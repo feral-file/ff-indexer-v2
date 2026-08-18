@@ -3574,6 +3574,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721(t *testing.T) {
 		Return([]byte(`{"event":"test"}`), nil).
 		Times(2)
 
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
+
 	// Mock store CreateTokenWithProvenances
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
@@ -3653,6 +3658,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721_Burned(t *testin
 		Return([]byte(`{"event":"test"}`), nil).
 		Times(2)
 
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
+
 	// Mock store CreateTokenWithProvenances
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
@@ -3711,6 +3721,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_SingleOwnerUsesOnChainFallbackW
 	mocks.json.EXPECT().
 		Marshal(gomock.Any()).
 		Return([]byte(`{"event":"test"}`), nil)
+
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
 
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
@@ -3780,6 +3795,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC1155_Burned(t *testi
 		Return([]byte(`{"event":"test"}`), nil).
 		Times(2)
 
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
+
 	// Mock store CreateTokenWithProvenances
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
@@ -3842,6 +3862,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_OwnershipModelOverridesCIDStand
 		Marshal(gomock.Any()).
 		Return([]byte(`{"event":"test"}`), nil)
 
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
+
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, input store.CreateTokenWithProvenancesInput) error {
@@ -3901,6 +3926,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_FA2(t *testing.T) {
 	mocks.json.EXPECT().
 		Marshal(gomock.Any()).
 		Return([]byte(`{"event":"test"}`), nil)
+
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
 
 	// Mock store CreateTokenWithProvenances
 	mocks.store.EXPECT().
@@ -3978,6 +4008,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_FA2_Burned(t *testing.T
 		Marshal(gomock.Any()).
 		Return([]byte(`{"event":"test"}`), nil).
 		Times(2)
+
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
 
 	// Mock store CreateTokenWithProvenances
 	mocks.store.EXPECT().
@@ -5618,6 +5653,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_SingleOwnerAdapterAuthority(t *
 		Return([]byte(`{"event":"test"}`), nil)
 
 	// Verify that the persisted token uses the adapter owner, not the event owner
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
+
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
 		DoAndReturn(func(_ context.Context, input store.CreateTokenWithProvenancesInput) error {

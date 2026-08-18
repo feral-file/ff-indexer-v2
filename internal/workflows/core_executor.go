@@ -67,6 +67,12 @@ type CoreExecutor interface {
 	// Full provenance data includes balances for all addresses, provenance events related to the token
 	IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error
 
+	// MarkTokenProvenanceDeferred records that full provenance work for the token was
+	// skipped by the EVM credit guard, so the operator backfill
+	// (db/migrations/025_backfill.sql) can find it once the guard is lifted. Cleared
+	// automatically when IndexTokenWithFullProvenancesByTokenCID succeeds.
+	MarkTokenProvenanceDeferred(ctx context.Context, tokenCID domain.TokenCID) error
+
 	// IndexTokenWithMinimalProvenancesByTokenCID indexes token with minimal provenances using tokenCID
 	// If address is provided, uses address-specific indexing for ERC1155 (efficient, partial balance + events)
 	// For ERC721 and FA2, address parameter is ignored and full provenance is always indexed
@@ -1569,7 +1575,22 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 		return fmt.Errorf("failed to create token with full provenances: %w", err)
 	}
 
+	// Full provenance is now stored: clear any deferred-provenance marker left by
+	// the EVM credit guard so the operator backfill converges instead of
+	// re-enqueuing this token. Clearing after the store write means a failure here
+	// leaves the marker set and the backfill re-indexes the token — idempotent, so
+	// erring on the re-index side is safe.
+	if err := e.store.SetTokenProvenanceDeferred(ctx, tokenCID.String(), false); err != nil {
+		return fmt.Errorf("failed to clear provenance deferred marker: %w", err)
+	}
+
 	return nil
+}
+
+// MarkTokenProvenanceDeferred records a credit-guard skip of full provenance work.
+// See the CoreExecutor interface doc for the backfill contract.
+func (e *coreExecutor) MarkTokenProvenanceDeferred(ctx context.Context, tokenCID domain.TokenCID) error {
+	return e.store.SetTokenProvenanceDeferred(ctx, tokenCID.String(), true)
 }
 
 // applySingleOwnerOnChainFallback ensures current owner state comes from the adapter for single-owner tokens.

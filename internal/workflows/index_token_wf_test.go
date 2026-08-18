@@ -369,3 +369,53 @@ func TestIndexToken_Skip_TokenNotFound(t *testing.T) {
 	err := wf.IndexToken(ctx, tcid, nil)
 	require.NoError(t, err)
 }
+
+// TestIndexToken_OwnerPathERC1155_GuardMarksDeferred pins the second deferral
+// path: owner-specific ERC-1155 indexing never reaches IndexTokenProvenances
+// (its minimal path normally captures events), but under the EVM credit guard
+// that path is balance-only, so IndexToken itself must persist the
+// deferred-provenance marker or the token would be invisible to the backfill.
+func TestIndexToken_OwnerPathERC1155_GuardMarksDeferred(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	owner := "0x00000000000000000000000000000000000000aa"
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x1234567890123456789012345678901234567890", "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(nil)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+
+	err := wf.IndexToken(ctx, tcid, &owner)
+	require.NoError(t, err)
+}
+
+// TestIndexToken_OwnerPathERC1155_NoGuardNoDeferral pins the guard's scope: with
+// the guard off, the owner-specific ERC-1155 path captures events itself, so no
+// deferral marker may be written (the strict mock fails on any marking call).
+func TestIndexToken_OwnerPathERC1155_NoGuardNoDeferral(t *testing.T) {
+	t.Parallel()
+	d := testTokenCore(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	owner := "0x00000000000000000000000000000000000000aa"
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x1234567890123456789012345678901234567890", "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+
+	err := wf.IndexToken(ctx, tcid, &owner)
+	require.NoError(t, err)
+}

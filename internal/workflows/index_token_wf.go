@@ -364,6 +364,21 @@ func (w *coreWorkflows) IndexToken(ctx context.Context, tokenCID domain.TokenCID
 				zap.Error(err),
 			)
 		}
+	} else if w.ownerPathEventsSkippedByGuard(tokenCID, address) {
+		// Owner-path ERC-1155 tokens never reach IndexTokenProvenances (the
+		// owner-specific minimal path normally captures their events), but under the
+		// credit guard that path returned balance-only — so the deferral must be
+		// marked here or these tokens would be invisible to the backfill. A marking
+		// failure fails the job (it retries) rather than silently losing the token
+		// from the backfill set.
+		if err := w.executor.MarkTokenProvenanceDeferred(ctx, tokenCID); err != nil {
+			logger.ErrorCtx(ctx,
+				fmt.Errorf("failed to mark owner-path token provenance deferred"),
+				zap.Error(err),
+				zap.String("tokenCID", tokenCID.String()),
+			)
+			return err
+		}
 	} else {
 		logger.InfoCtx(ctx, "Skipping full provenance indexing; adapter does not support it",
 			zap.String("tokenCID", tokenCID.String()),
@@ -388,6 +403,19 @@ func shouldIndexFullProvenance(tokenCID domain.TokenCID, address *string, execut
 		return false
 	}
 	return executor.SupportsTokenProvenance(tokenCID)
+}
+
+// ownerPathEventsSkippedByGuard reports whether this token's owner-specific event
+// capture was skipped by the EVM credit guard and therefore owes a deferred-provenance
+// marker. It mirrors the ERC-1155-with-address exclusion in shouldIndexFullProvenance:
+// that path normally substitutes for full provenance, but with the guard on the
+// ethereum client answers it balance-only, so the events were never captured.
+func (w *coreWorkflows) ownerPathEventsSkippedByGuard(tokenCID domain.TokenCID, address *string) bool {
+	if !w.config.EthereumFullProvenanceDisabled {
+		return false
+	}
+	chain, standard, _, _ := tokenCID.Parse()
+	return chain.IsEVM() && standard == domain.StandardERC1155 && address != nil
 }
 
 func (w *coreWorkflows) startIndexTokenMetadataAsync(ctx context.Context, tokenCID domain.TokenCID, address *string) {
