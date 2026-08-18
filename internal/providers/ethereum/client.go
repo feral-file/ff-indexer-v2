@@ -332,26 +332,31 @@ func (f *ethereumClient) OwnerBalanceAndEvents(
 	contractAddress, tokenNumber, ownerAddress string,
 	standard domain.ChainStandard,
 ) (string, []domain.BlockchainEvent, error) {
-	// Credit guard: the ERC-1155 adapter path replays the owner's transfer history
-	// with four full-range log walks per token — the single most expensive per-token
-	// operation on a span-capped provider. The current balance is one eth_call, so
-	// balance-only keeps owner indexing functional while history is disabled; the
-	// stored token simply carries no provenance events until the guard lifts and a
-	// backfill replays them. Only the ERC-1155 standard is short-circuited: balanceOf
-	// is part of that standard, while configured legacy contracts may resolve
-	// balances differently and keep their adapter path.
-	if f.guards.FullProvenanceDisabled && standard == domain.StandardERC1155 {
-		balance, err := helpers.ERC1155BalanceOf(ctx, f.client, contractAddress, ownerAddress, tokenNumber)
-		if err != nil {
-			return "", nil, err
-		}
-		return balance, nil, nil
-	}
-
 	adp, err := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
 	if err != nil {
 		return "", nil, err
 	}
+
+	// Credit guard: the standard ERC-1155 adapter path replays the owner's transfer
+	// history with four full-range log walks per token — the single most expensive
+	// per-token operation on a span-capped provider. The current balance is one
+	// eth_call, so balance-only keeps owner indexing functional while history is
+	// disabled; the stored token simply carries no provenance events until the guard
+	// lifts and a backfill replays them. The adapter is resolved BEFORE the shortcut
+	// because configured multi-holder contracts derive the same erc1155 CID standard
+	// yet compute balances by replaying their configured events and need not
+	// implement balanceOf — they must keep their adapter path (and the registry's
+	// standard-mismatch validation must still run).
+	if f.guards.FullProvenanceDisabled {
+		if _, isStandardERC1155 := adp.(*adapters.ERC1155Adapter); isStandardERC1155 {
+			balance, err := helpers.ERC1155BalanceOf(ctx, f.client, contractAddress, ownerAddress, tokenNumber)
+			if err != nil {
+				return "", nil, err
+			}
+			return balance, nil, nil
+		}
+	}
+
 	return adp.GetOwnerBalanceAndEvents(ctx, contractAddress, tokenNumber, ownerAddress)
 }
 
