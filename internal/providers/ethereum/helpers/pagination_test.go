@@ -462,3 +462,103 @@ func TestFilterLogsWithPagination_CapHoistedAcrossOuterWindows(t *testing.T) {
 	// per window on top of that.
 	require.Less(t, totalCalls, 16, "pagination made rejected probes beyond the initial discovery")
 }
+
+// TestFilterLogsWithPagination_SpanCapSeedsStepWithoutProbing pins the cost
+// contract of a configured span cap: the walk never issues a window wider than
+// the cap (so there is no halving cascade and no rejection sleeps — the strict
+// clock mock fails the test on any Sleep), and outer windows align with the
+// inner step so covering the range takes exactly ceil(blocks/(cap+1)) calls.
+// The pre-guard outer loop cut windows one block wider than the inner step,
+// which cost a second single-block call per window after the cap was hoisted.
+// CallBudget is set to that exact call count to pin that a fitting walk is not
+// aborted (no off-by-one in the budget check).
+func TestFilterLogsWithPagination_SpanCapSeedsStepWithoutProbing(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockClock := mocks.NewMockClock(ctrl) // no Sleep expectation: any sleep fails
+
+	const (
+		fromBlock     uint64 = 0
+		toBlock       uint64 = 109 // 110 blocks at cap+1=17 per window -> exactly 7 calls
+		spanCap       uint64 = 16
+		expectedCalls int    = 7
+	)
+
+	var (
+		ranges     []blockRange
+		totalCalls int
+	)
+	mockClient.EXPECT().
+		FilterLogs(gomock.Any(), gomock.Any()).
+		AnyTimes().
+		DoAndReturn(func(_ context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+			totalCalls++
+			from := query.FromBlock.Uint64()
+			to := query.ToBlock.Uint64()
+			require.LessOrEqual(t, to-from, spanCap, "window wider than the configured span cap")
+			ranges = append(ranges, blockRange{from: from, to: to})
+			return nil, nil
+		})
+
+	pagination := helpers.NewGuardedPaginationHelper(mockClient, mockClock, nil, helpers.PaginationGuards{
+		SpanCap:    spanCap,
+		CallBudget: expectedCalls,
+	})
+	logs, err := pagination.FilterLogsWithPagination(context.Background(), ethereum.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(fromBlock),
+		ToBlock:   new(big.Int).SetUint64(toBlock),
+	})
+
+	require.NoError(t, err)
+	require.Empty(t, logs)
+	requireContiguousCoverage(t, ranges, fromBlock, toBlock)
+	require.Equal(t, expectedCalls, totalCalls,
+		"a span-cap-seeded walk must cover the range in exactly ceil(blocks/(cap+1)) calls")
+}
+
+// TestFilterLogsWithPagination_CallBudgetAborts pins the backstop: a walk that
+// would exceed the configured FilterLogs call budget aborts with
+// ErrCallBudgetExhausted after exactly budget calls instead of walking on and
+// draining the provider's credit quota. The provider is range-capped and the
+// cap is NOT configured, so the walk pays the halving cascade — the scenario
+// the backstop exists for.
+func TestFilterLogsWithPagination_CallBudgetAborts(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockClock := mocks.NewMockClock(ctrl)
+	mockClock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+
+	const (
+		spanLimit  uint64 = 16
+		callBudget int    = 10
+	)
+
+	totalCalls := 0
+	mockClient.EXPECT().
+		FilterLogs(gomock.Any(), gomock.Any()).
+		AnyTimes().
+		DoAndReturn(func(_ context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+			totalCalls++
+			span := query.ToBlock.Uint64() - query.FromBlock.Uint64()
+			if span > spanLimit {
+				return nil, fmt.Errorf("range %d exceeds limit of %d", span, spanLimit)
+			}
+			return nil, nil
+		})
+
+	pagination := helpers.NewGuardedPaginationHelper(mockClient, mockClock, nil, helpers.PaginationGuards{
+		CallBudget: callBudget,
+	})
+	logs, err := pagination.FilterLogsWithPagination(context.Background(), ethereum.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(0),
+		ToBlock:   new(big.Int).SetUint64(10_000),
+	})
+
+	require.ErrorIs(t, err, helpers.ErrCallBudgetExhausted)
+	require.Nil(t, logs)
+	require.Equal(t, callBudget, totalCalls, "the walk must stop issuing calls once the budget is spent")
+}
