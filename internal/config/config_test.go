@@ -801,3 +801,21 @@ func TestLoadAppConfig_GuardEnvVarsReachConfig(t *testing.T) {
 	require.Equal(t, 3000, cfg.Ethereum.GetLogsCallBudget)
 	require.True(t, cfg.Ethereum.FullProvenanceDisabled)
 }
+
+// TestLoadAppConfig_NegativeCallBudgetRejected pins that a malformed negative
+// call budget is a visible startup error: the pagination backstop only engages
+// when CallBudget > 0, so a negative value would silently disable it.
+func TestLoadAppConfig_NegativeCallBudgetRejected(t *testing.T) {
+	t.Setenv("FF_INDEXER_DATABASE_HOST", "localhost")
+	t.Setenv("FF_INDEXER_DATABASE_DBNAME", "ff")
+	t.Setenv("FF_INDEXER_JOBS_TOKEN_QUEUE", "token_index")
+	t.Setenv("FF_INDEXER_ETHEREUM_RPC_URL", "http://rpc.invalid")
+	t.Setenv("FF_INDEXER_ETHEREUM_WEBSOCKET_URL", "ws://rpc.invalid")
+	t.Setenv("FF_INDEXER_TEZOS_API_URL", "http://tzkt.invalid")
+	t.Setenv("FF_INDEXER_TEZOS_WEBSOCKET_URL", "ws://tzkt.invalid")
+
+	t.Setenv("FF_INDEXER_ETHEREUM_GETLOGS_CALL_BUDGET", "-1")
+
+	_, err := LoadAppConfig("", "")
+	require.ErrorContains(t, err, "getlogs_call_budget")
+}

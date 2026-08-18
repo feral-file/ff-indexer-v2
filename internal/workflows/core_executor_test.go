@@ -5701,10 +5701,13 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardWithholdsBalanc
 	tokenNumber := "1"
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
 
-	// Token already exists in DB: skips on-chain existence verification.
+	// Token already exists in DB: skips on-chain existence verification. Read
+	// twice — the existence check, then the guarded branch loading the stored
+	// burned state.
 	mocks.store.EXPECT().
 		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(&schema.Token{TokenCID: tokenCID.String()}, nil)
+		Return(&schema.Token{TokenCID: tokenCID.String()}, nil).
+		Times(2)
 
 	mocks.ethClient.EXPECT().
 		TokenBalances(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
@@ -5717,6 +5720,44 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardWithholdsBalanc
 			assert.Empty(t, input.Balances, "guarded path must not fabricate balances")
 			assert.False(t, input.Token.Burned, "guard-withheld balances must not be inferred as burned")
 			assert.Empty(t, input.Events)
+			return nil
+		})
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, nil)
+	assert.NoError(t, err)
+}
+
+// TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardKeepsBurnedState
+// pins burn-state preservation on the guarded addressless path: the token
+// upsert overwrites `burned`, so refreshing an already-burned ERC-1155 token
+// while balances are guard-withheld must carry the stored burned value instead
+// of reviving the token with the fresh default (false).
+func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardKeepsBurnedState(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0x1234567890123456789012345678901234567890"
+	tokenNumber := "1"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+	burnedToken := &schema.Token{TokenCID: tokenCID.String(), Burned: true}
+	// First read: the existence check. Second read: the guarded branch loading
+	// the stored burned state.
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(burnedToken, nil).
+		Times(2)
+
+	mocks.ethClient.EXPECT().
+		TokenBalances(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
+		Return(nil, ethproviders.ErrGuardedHistoryReplay)
+
+	mocks.store.EXPECT().
+		CreateTokenWithProvenances(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenWithProvenancesInput) error {
+			assert.Empty(t, input.Balances)
+			assert.True(t, input.Token.Burned, "guarded refresh must preserve the stored burned state")
 			return nil
 		})
 

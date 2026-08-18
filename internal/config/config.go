@@ -576,6 +576,14 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 	if err := validateRenderProbeConfig(&cfg.RenderProbe, cfg.MediaEnabled, cfg.Jobs.MediaQueue); err != nil {
 		return err
 	}
+
+	// A negative call budget would silently disable the pagination cost backstop
+	// (the guard only engages when CallBudget > 0), so a malformed value must be a
+	// visible startup error, not an unguarded deployment.
+	if cfg.Ethereum.GetLogsCallBudget < 0 {
+		return fmt.Errorf("ethereum.getlogs_call_budget must be >= 0, got %d", cfg.Ethereum.GetLogsCallBudget)
+	}
+
 	return validateModerationSweeperConfig(&cfg.ModerationSweeper)
 }
 

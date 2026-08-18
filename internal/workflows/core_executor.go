@@ -1322,8 +1322,17 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 				// Store the token without holder balances so metadata indexing can
 				// proceed; the deferred-provenance backfill supplies them later.
 				// Empty balances here mean "deliberately unknown", so the
-				// balances-empty burned inference below must not run.
+				// balances-empty burned inference below must not run — and the
+				// upsert overwrites `burned`, so an existing token must keep its
+				// stored value or a guarded refresh would revive a burned token.
 				balancesUnavailable = true
+				existing, gerr := e.store.GetTokenByTokenCID(ctx, tokenCID.String())
+				if gerr != nil {
+					return fmt.Errorf("failed to load existing token for guarded refresh: %w", gerr)
+				}
+				if existing != nil {
+					input.Token.Burned = existing.Burned
+				}
 			case errors.Is(err, ethereum.ErrContractNotFound), ethhelpers.IsExecutionRevert(err):
 				return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
 			case ethhelpers.IsOutOfGas(err):
