@@ -160,15 +160,25 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	c.errCh = make(chan error, 1)
 	c.liveStreamActive.Store(false)
 
-	// Create SignalR client with connection. The negotiate POST and websocket handshake
-	// are api.tzkt.io requests like any REST call, so they are charged to the shared
-	// "tzkt" limiter bucket — unthrottled connection attempts were part of the traffic
-	// mix behind the 2026-08-18 429 crash-loop (each restart re-negotiated instantly
-	// against a fresh in-process token bucket).
-	client, err := ratelimit.Do(subscriptionCtx, c.rateLimiter, PROVIDER_NAME,
-		func(ctx context.Context) (adapter.SignalRClient, error) {
-			return c.signalR.NewClient(ctx, c.wsURL, c)
-		})
+	// The negotiate POST and websocket handshake are api.tzkt.io requests like any REST
+	// call, so acquire a "tzkt" limiter token before connecting — unthrottled connection
+	// attempts were part of the traffic mix behind the 2026-08-18 429 crash-loop (each
+	// restart re-negotiated instantly against a fresh in-process token bucket).
+	//
+	// The token is acquired with a no-op callback rather than by running NewClient
+	// inside Do: the limiter cancels its callback context when Do returns, and the
+	// SignalR client stores its construction context for the connection's whole
+	// lifetime — a client built on the callback context would start life canceled.
+	if _, err := ratelimit.Do(subscriptionCtx, c.rateLimiter, PROVIDER_NAME,
+		func(context.Context) (struct{}, error) { return struct{}{}, nil },
+	); err != nil {
+		cancel()
+		c.cancel = nil
+		return fmt.Errorf("failed to acquire tzkt rate limit token for SignalR connect: %w", err)
+	}
+
+	// Create SignalR client with connection, on the long-lived subscription context.
+	client, err := c.signalR.NewClient(subscriptionCtx, c.wsURL, c)
 	if err != nil {
 		cancel()
 		c.cancel = nil

@@ -578,6 +578,11 @@ func TestSubscribeEvents_usesFreshHeadForHandoffBoundary(t *testing.T) {
 // shared "tzkt" limiter bucket: the SignalR negotiate and websocket handshake are
 // api.tzkt.io requests like any REST call. Unthrottled per-boot negotiates were part of
 // the traffic mix behind the 2026-08-18 429 crash-loop.
+//
+// The limiter mock mimics the real limiter's lifecycle hazard: the callback context is
+// limiter-scoped and already dead by the time anything long-lived could use it. The
+// SignalR client must therefore be constructed on the subscription context, never the
+// callback context — the mock's NewClient asserts the context it receives is alive.
 func TestSubscribeEvents_negotiateIsChargedToTzktLimiter(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -587,14 +592,24 @@ func TestSubscribeEvents_negotiateIsChargedToTzktLimiter(t *testing.T) {
 	tzkt := mocks.NewMockTzKTClient(ctrl)
 	limiter := mocks.NewMockLimiter(ctrl)
 
-	limiter.EXPECT().
+	acquire := limiter.EXPECT().
 		Do(gomock.Any(), "tzkt", gomock.Any()).
-		DoAndReturn(func(ctx context.Context, _ string, fn ratelimit.Func) (any, error) {
-			return fn(ctx)
+		DoAndReturn(func(_ context.Context, _ string, fn ratelimit.Func) (any, error) {
+			// Real limiter shape: the callback runs on a queue-scoped context that is
+			// canceled as soon as Do returns.
+			queueCtx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return fn(queueCtx)
 		})
-	signalR.EXPECT().
+	connect := signalR.EXPECT().
 		NewClient(gomock.Any(), "wss://tzkt.example/ws", gomock.Any()).
-		Return(nil, errors.New("negotiate refused"))
+		DoAndReturn(func(ctx context.Context, _ string, _ any) (adapter.SignalRClient, error) {
+			require.NoError(t, ctx.Err(),
+				"the client must be built on the live subscription context, not the limiter's canceled callback context")
+			return nil, errors.New("negotiate refused")
+		})
+	// Token before negotiate: the connection attempt is what the token pays for.
+	gomock.InOrder(acquire, connect)
 
 	subscriber, err := tezos.NewSubscriber(tezos.Config{
 		WebSocketURL: "wss://tzkt.example/ws",
