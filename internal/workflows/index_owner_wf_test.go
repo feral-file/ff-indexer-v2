@@ -116,13 +116,14 @@ func TestIndexTokenOwner_Tezos_EmptyFirstRun(t *testing.T) {
 	require.NoError(t, wf.IndexTokenOwner(ctx, addr))
 }
 
-// TestIndexTokenOwner_JobCreateFailure_FailsJob pins the tracking-durability
-// contract (feralfile-bot #128 round 3): the address_indexing_jobs row is the
-// durable record every trigger-endpoint gate reads (active-job check, throttle
-// history), so a failure to create it must fail the queue job — which retries
-// until the row is durable — rather than run an untracked scan. The strict mock
-// has no scan expectations, proving indexing does not proceed untracked.
-func TestIndexTokenOwner_JobCreateFailure_FailsJob(t *testing.T) {
+// TestIndexTokenOwner_JobCreateFailure_Reschedules pins the tracking-durability
+// contract (feralfile-bot #128 rounds 3 and 9): the address_indexing_jobs row
+// is the durable record every trigger-endpoint gate reads, so a failure to
+// create it must RESCHEDULE the queue job — the worker maps ordinary errors to
+// a terminal MarkJobFailed, which would turn a transient database blip into a
+// permanently failed scan plus a throttle backoff penalty. The strict mock has
+// no scan expectations, proving indexing does not proceed untracked.
+func TestIndexTokenOwner_JobCreateFailure_Reschedules(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
 	defer d.Ctrl.Finish()
@@ -130,10 +131,12 @@ func TestIndexTokenOwner_JobCreateFailure_FailsJob(t *testing.T) {
 	exec, wf := d.Exec, d.Wf
 	addr := "0x1234567890123456789012345678901234567890"
 	chainID := domain.ChainEthereumMainnet
-	createErr := errors.New("db error")
-	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(createErr)
+	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(errors.New("db error"))
 
-	require.ErrorIs(t, wf.IndexTokenOwner(ctx, addr), createErr)
+	err := wf.IndexTokenOwner(ctx, addr)
+	var re *jobs.RescheduleError
+	require.ErrorAs(t, err, &re, "tracking-create failure must reschedule, not terminally fail")
+	require.False(t, re.At.IsZero())
 }
 
 // TestIndexTokenOwner_IndexingError_MarksJobFailed matches the “child/owner path failed and job is marked failed”

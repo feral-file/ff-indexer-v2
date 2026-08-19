@@ -862,6 +862,30 @@ func (e *executor) runAddressIndexingGates(ctx context.Context, st store.Store, 
 		return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(fmt.Sprintf("Failed to check existing jobs for address %s: %v", address, err))
 	}
 
+	// An "active" tracking row can belong to a pending queue job that is already
+	// cancel-requested — doomed, the sweeper will terminate it, but until it
+	// runs the row blocks every retrigger. Finalize the pending cancellation now
+	// (the sweep also cancels the tracking row atomically) so an operator's
+	// cancel-then-retry works immediately instead of returning the doomed job.
+	if existingJob != nil && existingJob.JobID != 0 {
+		qj, jerr := st.GetJob(ctx, existingJob.JobID)
+		if jerr != nil {
+			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
+				fmt.Sprintf("Failed to inspect queue job for address %s: %v", address, jerr))
+		}
+		if qj != nil && qj.Status == schema.JobStatusPending && qj.CancelRequested {
+			if _, sweepErr := st.SweepCanceledPendingJobs(ctx, e.tokenQueue); sweepErr != nil {
+				return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
+					fmt.Sprintf("Failed to finalize canceled job for address %s: %v", address, sweepErr))
+			}
+			existingJob, err = st.GetActiveIndexingJobForAddress(ctx, address, chainID)
+			if err != nil {
+				return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
+					fmt.Sprintf("Failed to check existing jobs for address %s: %v", address, err))
+			}
+		}
+	}
+
 	if existingJob != nil {
 		if existingJob.JobID == 0 {
 			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(

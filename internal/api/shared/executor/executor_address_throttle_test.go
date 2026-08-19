@@ -212,6 +212,9 @@ func TestTriggerAddressIndexing_ActiveJobWinsOverThrottle(t *testing.T) {
 			JobID:      13,
 			WorkflowID: "13",
 		}, nil)
+	f.Store.EXPECT().
+		GetJob(gomock.Any(), int64(13)).
+		Return(&schema.Job{ID: 13, Status: schema.JobStatusRunning}, nil)
 
 	resp, err := f.Exec.TriggerAddressIndexing(context.Background(), []string{throttleTestAddress})
 	require.NoError(t, err)
@@ -399,4 +402,70 @@ func TestTriggerAddressIndexing_ConcurrentTriggersSerializedByLock(t *testing.T)
 	}
 	require.Equal(t, 1, started, "exactly one trigger may start a scan")
 	require.Equal(t, 1, throttled, "the serialized second trigger must observe the terminal state and throttle")
+}
+
+// TestTriggerAddressIndexing_DoomedActiveRowFinalizedAndReplaced pins round-9
+// F2: an "active" tracking row whose pending queue job is already
+// cancel-requested must not be returned as the existing job — the trigger
+// finalizes the pending cancellation (sweep cancels job and tracking row
+// atomically), re-reads, and proceeds to start replacement work. An operator's
+// cancel-then-retry therefore works immediately instead of waiting for the
+// sweeper's next tick.
+func TestTriggerAddressIndexing_DoomedActiveRowFinalizedAndReplaced(t *testing.T) {
+	t.Parallel()
+	f := newAddressThrottleFixture(t, executor.AddressIndexingThrottle{})
+
+	first := f.Store.EXPECT().
+		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
+		Return(&schema.AddressIndexingJob{
+			Status: schema.IndexingJobStatusRunning,
+			JobID:  60,
+		}, nil)
+	f.Store.EXPECT().
+		GetJob(gomock.Any(), int64(60)).
+		Return(&schema.Job{ID: 60, Status: schema.JobStatusPending, CancelRequested: true}, nil)
+	sweep := f.Store.EXPECT().
+		SweepCanceledPendingJobs(gomock.Any(), "token_index").
+		Return(int64(1), nil).
+		After(first)
+	f.Store.EXPECT().
+		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
+		Return(nil, nil).
+		After(sweep)
+	f.Store.EXPECT().
+		EnqueueJob(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 61, Status: schema.JobStatusPending}, true, nil)
+	f.Store.EXPECT().
+		CreateAddressIndexingJob(gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	resp, err := f.Exec.TriggerAddressIndexing(context.Background(), []string{throttleTestAddress})
+	require.NoError(t, err)
+	require.Len(t, resp.Jobs, 1)
+	require.Equal(t, int64(61), resp.Jobs[0].JobID, "the replacement job must be reported, not the doomed one")
+}
+
+// TestTriggerAddressIndexing_HealthyActiveRowStillReturned pins the guard's
+// scope: an active row whose queue job is genuinely executable is returned
+// as-is — no sweep, no replacement (strict mock).
+func TestTriggerAddressIndexing_HealthyActiveRowStillReturned(t *testing.T) {
+	t.Parallel()
+	f := newAddressThrottleFixture(t, executor.AddressIndexingThrottle{})
+
+	f.Store.EXPECT().
+		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
+		Return(&schema.AddressIndexingJob{
+			Status:     schema.IndexingJobStatusRunning,
+			JobID:      70,
+			WorkflowID: "70",
+		}, nil)
+	f.Store.EXPECT().
+		GetJob(gomock.Any(), int64(70)).
+		Return(&schema.Job{ID: 70, Status: schema.JobStatusRunning}, nil)
+
+	resp, err := f.Exec.TriggerAddressIndexing(context.Background(), []string{throttleTestAddress})
+	require.NoError(t, err)
+	require.Len(t, resp.Jobs, 1)
+	require.Equal(t, int64(70), resp.Jobs[0].JobID)
+	require.False(t, resp.Jobs[0].Throttled)
 }
