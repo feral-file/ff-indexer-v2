@@ -896,9 +896,19 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 			JobID:   pj.ID,
 		})
 		if err != nil {
-			logger.Warn(fmt.Sprintf("Failed to create indexing job: %v", err),
-				zap.String("address", address),
-				zap.Int64("job_id", pj.ID))
+			// The tracking row is the durable record every gate on this endpoint
+			// reads (active-job check, throttle history). Reporting success while
+			// it is missing would leave an untracked scan running and the next
+			// trigger free to start another. Best-effort cancel of the just
+			// enqueued job (the worker re-creates the row on claim as a fallback,
+			// but a canceled job never runs at all), then surface the failure.
+			if cancelErr := e.store.RequestJobCancel(ctx, pj.ID); cancelErr != nil {
+				logger.Warn(fmt.Sprintf("Failed to cancel untracked indexing job: %v", cancelErr),
+					zap.String("address", address),
+					zap.Int64("job_id", pj.ID))
+			}
+			return nil, apierrors.NewServiceError(
+				fmt.Sprintf("Failed to record indexing job for address %s: %v", address, err))
 		}
 
 		outJobs = append(outJobs, dto.AddressIndexingJobInfo{

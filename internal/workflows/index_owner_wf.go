@@ -66,8 +66,13 @@ func (w *coreWorkflows) IndexTokenOwner(ctx context.Context, address string) err
 	}()
 
 	if haveQueueJobID {
+		// The tracking row is the durable record the trigger endpoint's gates
+		// read (active-job check, throttle history). Failing the job here makes
+		// the queue retry until the row is durable — continuing without it would
+		// run a scan that no gate can see and no throttle can account for.
 		if err := w.executor.CreateIndexingJob(ctx, address, chainID, queueJobID); err != nil {
 			logger.ErrorCtx(ctx, fmt.Errorf("failed to create/update job record"), zap.Error(err))
+			return fmt.Errorf("failed to create address indexing job record: %w", err)
 		}
 		if err := w.executor.UpdateIndexingJobStatus(ctx,
 			queueJobID, schema.IndexingJobStatusRunning, time.Now().UTC()); err != nil {

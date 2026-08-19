@@ -8150,6 +8150,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"AddressIndexingJobs", testAddressIndexingJobs},
 		{"GetAddressIndexingThrottleState", testGetAddressIndexingThrottleState},
 		{"SweepCanceledPendingJobsSyncsAddressJobs", testSweepCanceledPendingJobsSyncsAddressJobs},
+		{"SweepOrphanedJobsSyncsAddressJobs", testSweepOrphanedJobsSyncsAddressJobs},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
 		{"MediaRenderProbeOperations", testMediaRenderProbeOperations},
@@ -8632,4 +8633,61 @@ func testSweepCanceledPendingJobsSyncsAddressJobs(t *testing.T, store Store) {
 	require.NotNil(t, state.LatestTerminal)
 	require.Equal(t, schema.IndexingJobStatusCanceled, state.LatestTerminal.Status)
 	require.Zero(t, state.ConsecutiveFailures)
+}
+
+// testSweepOrphanedJobsSyncsAddressJobs pins the crash-loop path (feralfile-bot
+// #128 round 3): when the orphan sweeper permanently fails an exhausted running
+// job, the linked address_indexing_jobs row must fail with it — otherwise the
+// address reads as permanently active (blocking every retrigger) and the
+// throttle never observes the terminal failure for its backoff.
+func testSweepOrphanedJobsSyncsAddressJobs(t *testing.T, store Store) {
+	ctx := context.Background()
+	queue := "q_sweep_orphan_addr_sync"
+	addr := "0xsweep-orphan-sync"
+	chain := domain.ChainEthereumMainnet
+
+	uk := "sweep-orphan-sync-1"
+	j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+		Queue:     queue,
+		Kind:      "IndexTokenOwner",
+		Payload:   []byte(`[]`),
+		UniqueKey: &uk,
+	})
+	require.NoError(t, err)
+
+	// Claim the job (running, attempt_count=1) and create the tracking row the
+	// way the worker does on claim.
+	claimed, err := store.ClaimJobs(ctx, queue, 1)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: addr,
+		Chain:   chain,
+		Status:  schema.IndexingJobStatusRunning,
+		JobID:   j.ID,
+	}))
+
+	// Crash-loop terminal: maxAttempts=1 permanently fails the running job.
+	_, failed, err := store.SweepOrphanedJobs(ctx, queue, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), failed)
+
+	// The tracking row followed the queue job into failed.
+	addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+	require.NoError(t, err)
+	require.NotNil(t, addrJob)
+	require.Equal(t, schema.IndexingJobStatusFailed, addrJob.Status)
+	require.NotNil(t, addrJob.FailedAt)
+
+	// Retrigger eligibility + backoff visibility: no active job blocks the
+	// address, and the throttle sees the failure with a streak of one.
+	active, err := store.GetActiveIndexingJobForAddress(ctx, addr, chain)
+	require.NoError(t, err)
+	require.Nil(t, active)
+
+	state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+	require.NoError(t, err)
+	require.NotNil(t, state.LatestTerminal)
+	require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
+	require.Equal(t, 1, state.ConsecutiveFailures)
 }

@@ -4490,16 +4490,29 @@ func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string, maxAttemp
 
 	// Permanently fail jobs that have crashed maxAttempts or more times.
 	// These will never be retried, giving operators a clear terminal signal.
-	failedResult := s.db.WithContext(ctx).Model(&schema.Job{}).
-		Where("queue = ? AND status = ? AND attempt_count >= ?", queue, schema.JobStatusRunning, maxAttempts).
-		Updates(map[string]any{
-			"status":      schema.JobStatusFailed,
-			"last_error":  fmt.Sprintf("crash-loop terminated: job failed %d time(s) without completing (process crash or SIGABRT)", maxAttempts),
-			"finished_at": now,
-			"updated_at":  now,
-		})
-	if failedResult.Error != nil {
-		return 0, 0, failedResult.Error
+	// Active address_indexing_jobs rows tracking a failed job are failed in the
+	// same statement: the tracking row was created as `running` when the job was
+	// claimed, and leaving it active would report the address as permanently busy
+	// (blocking every retrigger) while hiding the terminal failure from the
+	// trigger throttle's backoff. The CTE keeps both statuses atomic.
+	var failedCount int64
+	err := s.db.WithContext(ctx).Raw(`
+		WITH failed AS (
+			UPDATE jobs
+			SET status = 'failed', last_error = $1, finished_at = $2, updated_at = $2
+			WHERE queue = $3 AND status = 'running' AND attempt_count >= $4
+			RETURNING id
+		), synced AS (
+			UPDATE address_indexing_jobs
+			SET status = 'failed', failed_at = $2, updated_at = $2
+			WHERE job_id IN (SELECT id FROM failed)
+			  AND status IN ('running', 'paused')
+		)
+		SELECT count(*) FROM failed`,
+		fmt.Sprintf("crash-loop terminated: job failed %d time(s) without completing (process crash or SIGABRT)", maxAttempts),
+		now, queue, maxAttempts).Scan(&failedCount).Error
+	if err != nil {
+		return 0, 0, err
 	}
 
 	// Reset remaining orphaned jobs (attempt_count < maxAttempts) back to pending for retry.
@@ -4511,10 +4524,10 @@ func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string, maxAttemp
 			"updated_at": now,
 		})
 	if resetResult.Error != nil {
-		return 0, failedResult.RowsAffected, resetResult.Error
+		return 0, failedCount, resetResult.Error
 	}
 
-	return resetResult.RowsAffected, failedResult.RowsAffected, nil
+	return resetResult.RowsAffected, failedCount, nil
 }
 
 // SweepCanceledPendingJobs transitions pending jobs with cancel_requested to canceled status.

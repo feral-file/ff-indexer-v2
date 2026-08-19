@@ -2,6 +2,7 @@ package executor_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -197,4 +198,32 @@ func TestTriggerAddressIndexing_ActiveJobWinsOverThrottle(t *testing.T) {
 	require.Len(t, resp.Jobs, 1)
 	require.False(t, resp.Jobs[0].Throttled)
 	require.Equal(t, int64(13), resp.Jobs[0].JobID)
+}
+
+// TestTriggerAddressIndexing_TrackingFailureCancelsAndErrors pins the
+// durability contract on the API path: if the address_indexing_jobs tracking
+// row cannot be created, the trigger must not report success — the just
+// enqueued queue job is cancel-requested (a canceled pending job never runs)
+// and the request fails, instead of leaving an untracked scan invisible to the
+// active-job check and the throttle.
+func TestTriggerAddressIndexing_TrackingFailureCancelsAndErrors(t *testing.T) {
+	t.Parallel()
+	f := newAddressThrottleFixture(t, executor.AddressIndexingThrottle{})
+
+	f.Store.EXPECT().
+		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
+		Return(nil, nil)
+	f.JQ.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 21}, true, nil)
+	f.Store.EXPECT().
+		CreateAddressIndexingJob(gomock.Any(), gomock.Any()).
+		Return(errors.New("db unavailable"))
+	f.Store.EXPECT().
+		RequestJobCancel(gomock.Any(), int64(21)).
+		Return(nil)
+
+	resp, err := f.Exec.TriggerAddressIndexing(context.Background(), []string{throttleTestAddress})
+	require.Error(t, err)
+	require.Nil(t, resp)
 }
