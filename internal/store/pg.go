@@ -4391,7 +4391,15 @@ func (s *pgStore) markJobTerminal(
 ) error {
 	now := time.Now().UTC()
 	var count int64
-	err := s.db.WithContext(ctx).Raw(fmt.Sprintf(`
+	// Raw() executes through gorm's query callback, which the DB resolver routes
+	// to a read replica by default — these CTEs mutate, so pin them to the
+	// primary explicitly (the pre-refactor Updates() calls got this for free via
+	// the update callback).
+	db := s.db
+	if hasDBResolver(db) {
+		db = db.Clauses(dbresolver.Write)
+	}
+	err := db.WithContext(ctx).Raw(fmt.Sprintf(`
 		WITH terminal AS (
 			UPDATE jobs
 			SET status = $1, finished_at = $2, updated_at = $2,
@@ -4501,7 +4509,12 @@ func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string, maxAttemp
 	// (blocking every retrigger) while hiding the terminal failure from the
 	// trigger throttle's backoff. The CTE keeps both statuses atomic.
 	var failedCount int64
-	err := s.db.WithContext(ctx).Raw(`
+	// Mutating CTE via Raw(): pin to the primary (see markJobTerminal).
+	db := s.db
+	if hasDBResolver(db) {
+		db = db.Clauses(dbresolver.Write)
+	}
+	err := db.WithContext(ctx).Raw(`
 		WITH failed AS (
 			UPDATE jobs
 			SET status = 'failed', last_error = $1, finished_at = $2, updated_at = $2
@@ -4548,7 +4561,12 @@ func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string, maxAttemp
 func (s *pgStore) SweepCanceledPendingJobs(ctx context.Context, queue string) (int64, error) {
 	now := time.Now().UTC()
 	var count int64
-	err := s.db.WithContext(ctx).Raw(`
+	// Mutating CTE via Raw(): pin to the primary (see markJobTerminal).
+	db := s.db
+	if hasDBResolver(db) {
+		db = db.Clauses(dbresolver.Write)
+	}
+	err := db.WithContext(ctx).Raw(`
 		WITH canceled AS (
 			UPDATE jobs
 			SET status = 'canceled', finished_at = $1, updated_at = $1

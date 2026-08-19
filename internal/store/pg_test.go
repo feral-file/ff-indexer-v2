@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -726,4 +727,103 @@ func TestGetAddressIndexingThrottleState_ReplicaRoutedToPrimary(t *testing.T) {
 	require.NotNil(t, state.LatestTerminal)
 	require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
 	require.Equal(t, 1, state.ConsecutiveFailures)
+}
+
+// readOnlyReplicaDSN derives a DSN identical to the test database but with
+// default_transaction_read_only=on, so any statement mis-routed to the
+// "replica" fails loudly instead of silently writing to the same database.
+func readOnlyReplicaDSN() string {
+	if strings.Contains(testDSN, "://") { // URL form (testcontainers)
+		sep := "?"
+		if strings.Contains(testDSN, "?") {
+			sep = "&"
+		}
+		return testDSN + sep + "options=-c%20default_transaction_read_only%3Don"
+	}
+	// Keyword form (external DB via TEST_DB_* env).
+	return testDSN + " options='-c default_transaction_read_only=on'"
+}
+
+// TestResolverRoutedMutationsUsePrimary pins the round-5 routing contract: the
+// raw mutating CTEs (terminal job marks, both sweeps) and the throttle-state
+// read must all run on the primary when a DB resolver is configured. The
+// replica here is the same database opened read-only, so a mis-routed
+// statement errors ("cannot execute ... in a read-only transaction") rather
+// than passing by accident.
+func TestResolverRoutedMutationsUsePrimary(t *testing.T) {
+	if testDB == nil {
+		t.Fatal("Test database not initialized")
+	}
+
+	db, err := gorm.Open(pgdriver.Open(testDSN), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Use(dbresolver.Register(dbresolver.Config{
+		Replicas: []gorm.Dialector{pgdriver.Open(readOnlyReplicaDSN())},
+	})))
+	require.True(t, hasDBResolver(db))
+
+	st := NewPGStore(db)
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+
+	// Sanity: prove the replica is reachable, replica-routed, and genuinely
+	// read-only. dbresolver routes select-prefixed raw SQL to the replica
+	// (switchGuess), so this must observe the replica's read-only setting —
+	// guarding the test against a silently writable replica, which would let
+	// mis-routed mutations pass. (Non-select raw SQL is routed to Write by the
+	// same heuristic; the explicit dbresolver.Write pins in the store make that
+	// intent independent of the plugin's guess.)
+	var roSetting string
+	require.NoError(t, db.WithContext(ctx).Raw(
+		`select current_setting('default_transaction_read_only')`,
+	).Scan(&roSetting).Error)
+	require.Equal(t, "on", roSetting, "replica route must land on the read-only connection")
+
+	mkJob := func(queue, addr, uk string) int64 {
+		j, _, err := st.EnqueueJob(ctx, EnqueueJobInput{
+			Queue: queue, Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk,
+		})
+		require.NoError(t, err)
+		claimed, err := st.ClaimJobs(ctx, queue, 1)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
+		require.NoError(t, st.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address: addr, Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+		}))
+		return j.ID
+	}
+
+	// Terminal marks route to the primary.
+	id1 := mkJob("q_resolver_route_1", "0xresolver-route-1", "resolver-route-1")
+	require.NoError(t, st.MarkJobSucceeded(ctx, id1))
+	id2 := mkJob("q_resolver_route_2", "0xresolver-route-2", "resolver-route-2")
+	require.NoError(t, st.MarkJobFailed(ctx, id2, "boom"))
+	id3 := mkJob("q_resolver_route_3", "0xresolver-route-3", "resolver-route-3")
+	require.NoError(t, st.MarkJobCanceled(ctx, id3))
+
+	// Orphan sweep (failed branch) routes to the primary.
+	id4 := mkJob("q_resolver_route_4", "0xresolver-route-4", "resolver-route-4")
+	_, failed, err := st.SweepOrphanedJobs(ctx, "q_resolver_route_4", 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), failed)
+	_ = id4
+
+	// Pending-cancel sweep routes to the primary.
+	uk5 := "resolver-route-5"
+	j5, _, err := st.EnqueueJob(ctx, EnqueueJobInput{
+		Queue: "q_resolver_route_5", Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk5,
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.RequestJobCancel(ctx, j5.ID))
+	swept, err := st.SweepCanceledPendingJobs(ctx, "q_resolver_route_5")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), swept)
+
+	// Throttle-state read stays pinned to the primary (round-1 contract).
+	state, err := st.GetAddressIndexingThrottleState(ctx, "0xresolver-route-2", chain)
+	require.NoError(t, err)
+	require.NotNil(t, state.LatestTerminal)
+	require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
 }
