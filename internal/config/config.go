@@ -64,6 +64,21 @@ type EthereumConfig struct {
 	BlockHeadTTL         time.Duration `mapstructure:"block_head_ttl"`
 	BlockHeadStaleWindow time.Duration `mapstructure:"block_head_stale_window"`
 	BlockFlushTimeout    time.Duration `mapstructure:"block_flush_timeout"`
+
+	// Credit guards against a metered RPC provider. Zero values disable each guard.
+	// See ethereum.ClientGuards for full semantics; the short version:
+	//
+	// GetLogsSpanCap: the provider's eth_getLogs block-range cap as max
+	// toBlock-fromBlock (10000 for Infura). Seeds pagination at the cap instead of
+	// paying a halving cascade of rejected calls per walk.
+	GetLogsSpanCap uint64 `mapstructure:"getlogs_span_cap"`
+	// GetLogsCallBudget: max FilterLogs calls per pagination walk; exceeding it
+	// aborts the walk. Size above ceil(chain head / span cap) — mainnet at a 10k cap
+	// needs ~2,600 calls per full-history walk.
+	GetLogsCallBudget int `mapstructure:"getlogs_call_budget"`
+	// FullProvenanceDisabled: skip per-token history walks (full provenance and the
+	// ERC-1155 owner event replay); tokens keep minimal provenance until backfilled.
+	FullProvenanceDisabled bool `mapstructure:"full_provenance_disabled"`
 }
 
 // TezosConfig holds Tezos-specific configuration
@@ -578,6 +593,13 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 		return err
 	}
 
+	// A negative call budget would silently disable the pagination cost backstop
+	// (the guard only engages when CallBudget > 0), so a malformed value must be a
+	// visible startup error, not an unguarded deployment.
+	if cfg.Ethereum.GetLogsCallBudget < 0 {
+		return fmt.Errorf("ethereum.getlogs_call_budget must be >= 0, got %d", cfg.Ethereum.GetLogsCallBudget)
+	}
+
 	// Address-indexing throttle: negative durations would silently disable the
 	// throttle (it engages only on positive values), and a cap below the base
 	// would make the first backoff exceed its own ceiling.
@@ -883,6 +905,11 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("ethereum.block_head_ttl", 12)
 	v.SetDefault("ethereum.block_head_stale_window", 60)
 	v.SetDefault("ethereum.block_flush_timeout", 36*time.Second)
+	// Credit guards default off (0/false = unguarded, pre-guard behavior);
+	// production enables them via deploy config.
+	v.SetDefault("ethereum.getlogs_span_cap", 0)
+	v.SetDefault("ethereum.getlogs_call_budget", 0)
+	v.SetDefault("ethereum.full_provenance_disabled", false)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("tezos.block_head_ttl", 10)
@@ -1052,6 +1079,9 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.block_head_ttl",
 		"ethereum.block_head_stale_window",
 		"ethereum.block_flush_timeout",
+		"ethereum.getlogs_span_cap",
+		"ethereum.getlogs_call_budget",
+		"ethereum.full_provenance_disabled",
 		// Tezos
 		"tezos.api_url",
 		"tezos.websocket_url",

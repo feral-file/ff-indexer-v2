@@ -20,6 +20,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	ethproviders "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	ethadapters "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -3574,6 +3575,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721(t *testing.T) {
 		Return([]byte(`{"event":"test"}`), nil).
 		Times(2)
 
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
+
 	// Mock store CreateTokenWithProvenances
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
@@ -3653,6 +3659,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721_Burned(t *testin
 		Return([]byte(`{"event":"test"}`), nil).
 		Times(2)
 
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
+
 	// Mock store CreateTokenWithProvenances
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
@@ -3711,6 +3722,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_SingleOwnerUsesOnChainFallbackW
 	mocks.json.EXPECT().
 		Marshal(gomock.Any()).
 		Return([]byte(`{"event":"test"}`), nil)
+
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
 
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
@@ -3780,6 +3796,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC1155_Burned(t *testi
 		Return([]byte(`{"event":"test"}`), nil).
 		Times(2)
 
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
+
 	// Mock store CreateTokenWithProvenances
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
@@ -3842,6 +3863,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_OwnershipModelOverridesCIDStand
 		Marshal(gomock.Any()).
 		Return([]byte(`{"event":"test"}`), nil)
 
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
+
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, input store.CreateTokenWithProvenancesInput) error {
@@ -3901,6 +3927,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_FA2(t *testing.T) {
 	mocks.json.EXPECT().
 		Marshal(gomock.Any()).
 		Return([]byte(`{"event":"test"}`), nil)
+
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
 
 	// Mock store CreateTokenWithProvenances
 	mocks.store.EXPECT().
@@ -3978,6 +4009,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_FA2_Burned(t *testing.T
 		Marshal(gomock.Any()).
 		Return([]byte(`{"event":"test"}`), nil).
 		Times(2)
+
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
 
 	// Mock store CreateTokenWithProvenances
 	mocks.store.EXPECT().
@@ -5618,6 +5654,11 @@ func TestIndexTokenWithFullProvenancesByTokenCID_SingleOwnerAdapterAuthority(t *
 		Return([]byte(`{"event":"test"}`), nil)
 
 	// Verify that the persisted token uses the adapter owner, not the event owner
+	// Full-provenance success clears the deferred-provenance marker (credit guard).
+	mocks.store.EXPECT().
+		SetTokenProvenanceDeferred(gomock.Any(), gomock.Any(), false).
+		Return(nil)
+
 	mocks.store.EXPECT().
 		CreateTokenWithProvenances(ctx, gomock.Any()).
 		DoAndReturn(func(_ context.Context, input store.CreateTokenWithProvenancesInput) error {
@@ -5644,3 +5685,82 @@ func TestIndexTokenWithFullProvenancesByTokenCID_SingleOwnerAdapterAuthority(t *
 // moderationStatusPtr returns a pointer to a moderation status, for building
 // EnhancedMetadata fixtures where nil means "vendor publishes no signal".
 func moderationStatusPtr(s schema.ModerationStatus) *schema.ModerationStatus { return &s }
+
+// TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardWithholdsBalances
+// pins the addressless credit-guard path: when TokenBalances is refused with
+// ErrGuardedHistoryReplay (all-holder ERC-1155 balances are a full history
+// replay), the token must still be stored — with no balances and, critically,
+// WITHOUT the balances-empty burned inference: empty means "backfill pending"
+// here, not "no holders".
+func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardWithholdsBalances(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0x1234567890123456789012345678901234567890"
+	tokenNumber := "1"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+	// Token already exists in DB: skips on-chain existence verification. Read
+	// twice — the existence check, then the guarded branch loading the stored
+	// burned state.
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(&schema.Token{TokenCID: tokenCID.String()}, nil).
+		Times(2)
+
+	mocks.ethClient.EXPECT().
+		TokenBalances(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
+		Return(nil, ethproviders.ErrGuardedHistoryReplay)
+
+	mocks.store.EXPECT().
+		CreateTokenWithProvenances(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenWithProvenancesInput) error {
+			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
+			assert.Empty(t, input.Balances, "guarded path must not fabricate balances")
+			assert.False(t, input.Token.Burned, "guard-withheld balances must not be inferred as burned")
+			assert.Empty(t, input.Events)
+			return nil
+		})
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, nil)
+	assert.NoError(t, err)
+}
+
+// TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardKeepsBurnedState
+// pins burn-state preservation on the guarded addressless path: the token
+// upsert overwrites `burned`, so refreshing an already-burned ERC-1155 token
+// while balances are guard-withheld must carry the stored burned value instead
+// of reviving the token with the fresh default (false).
+func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardKeepsBurnedState(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0x1234567890123456789012345678901234567890"
+	tokenNumber := "1"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+	burnedToken := &schema.Token{TokenCID: tokenCID.String(), Burned: true}
+	// First read: the existence check. Second read: the guarded branch loading
+	// the stored burned state.
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(burnedToken, nil).
+		Times(2)
+
+	mocks.ethClient.EXPECT().
+		TokenBalances(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
+		Return(nil, ethproviders.ErrGuardedHistoryReplay)
+
+	mocks.store.EXPECT().
+		CreateTokenWithProvenances(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenWithProvenancesInput) error {
+			assert.Empty(t, input.Balances)
+			assert.True(t, input.Token.Burned, "guarded refresh must preserve the stored burned state")
+			return nil
+		})
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, nil)
+	assert.NoError(t, err)
+}

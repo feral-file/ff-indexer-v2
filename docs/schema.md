@@ -49,6 +49,7 @@ Primary entity for tracking tokens across all supported blockchains.
 | is_viewable | BOOLEAN | Whether token has accessible media URLs (for filtering unviewable tokens) |
 | moderation_status | moderation_status | Materialized combined moderation verdict (`none` \| `spam`), recomputed from `token_moderation_verdicts` on every verdict write (a `feralfile` row wins outright, otherwise the most severe vendor verdict); read paths exclude anything but `none` unless `include_moderated` is set. An enum so new verdict kinds need no schema change |
 | last_provenance_timestamp | TIMESTAMPTZ | Cached timestamp of most recent provenance event (denormalized for query performance) |
+| provenance_deferred_at | TIMESTAMPTZ | Set when the EVM credit guard (`ethereum.full_provenance_disabled`) skips full provenance work for this token; cleared when full provenance indexing succeeds. Tokens with this set are owed a history backfill (`025_backfill.sql`). Added in migration 025 |
 | version | BIGINT | Incremented on user-visible changes (ownership, metadata, enrichment, viewability, burn status); used for scoped state sync |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp |
@@ -60,6 +61,7 @@ Primary entity for tracking tokens across all supported blockchains.
 - `idx_tokens_created_at` on (created_at)
 - `idx_tokens_last_prov_timestamp_id` on (last_provenance_timestamp DESC NULLS LAST, id DESC) - for sorting by latest activity
 - `idx_tokens_viewable_last_prov_timestamp` on (is_viewable, last_provenance_timestamp DESC NULLS LAST, id DESC) - for filtered sorting
+- `idx_tokens_provenance_deferred` on (provenance_deferred_at) WHERE provenance_deferred_at IS NOT NULL - deferred-provenance backlog for the 025 backfill
 
 **Unique Constraints**:
 - `token_cid` (unique)
@@ -785,6 +787,8 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 - `019.sql` - Adds `vendor_release_slug TEXT` column to `releases` and the partial unique index `releases_vendor_slug_idx` on `(vendor, vendor_release_slug)` WHERE NOT NULL (composite key so slug uniqueness is scoped per vendor). The column is nullable; existing rows retain `vendor_release_slug = NULL` until re-enriched.
 - `019_reindex.sql` - Two-part backfill: (1) Re-enqueues all OpenSea-enriched tokens so the updated enhancer fetches `GetCollection` data and populates `name`, `total_mints`, and `vendor_release_slug` on their release rows. (2) For every non-OpenSea release still missing a slug, enqueues the first member token for re-enrichment; a single enrichment is sufficient to upsert the slug on the release row. Run `019_reindex.sql` after deploying the application (worker must be running to process the enqueued jobs).
 - `024_reindex.sql` - Enqueues `IndexTokenMetadata` jobs for FA2 tokens whose stored metadata still carries the unsigned-fxhash placeholder (name/description markers or the placeholder page's CID in `animation_url`), so the resolver's big-map re-resolve path heals rows indexed while TzKT's metadata cache was stale. Run after deploying the application code. Safe to run on a fresh database (produces no rows).
+- `025.sql` - Adds `tokens.provenance_deferred_at` and the partial index `idx_tokens_provenance_deferred`, recording tokens whose full provenance was skipped by the EVM credit guard (`ethereum.full_provenance_disabled`). **Must be applied before the guard is enabled** — the application writes the column whenever a guard skip occurs.
+- `025_backfill.sql` - Operator-run recovery step, executed **after** the guard is disabled and workers restarted: enqueues `IndexTokenProvenances` for every token with `provenance_deferred_at` set. Requires the deployment's token queue as a psql parameter (`-v queue=<jobs.token_queue>`, default `token_index`) and fails loudly without it. Idempotent under `jobs_unique_key_active`; the file documents burst sizing (each token replays full history, ~0.7–1.3M Infura credits) and time-sliced execution. See the guard runbook in DEVELOPMENT.md.
 - `026.sql` - Adds the unique index `idx_address_indexing_jobs_job_id` on `address_indexing_jobs(job_id)` after deduplicating historical per-retry rows (newest row per `job_id` wins). One tracking row per queue job: closes the trigger-vs-worker create race that application-level checks cannot, since the partial active indexes only protect active rows. Run before deploying application code (standard ordering).
 
 **Migration Guidelines**:

@@ -37,6 +37,12 @@ type Token struct {
 	// LastProvenanceTimestamp is the cached timestamp of the most recent provenance event for this token
 	// This is actually the known latest provenance timestamp for this token, not the actual latest provenance timestamp
 	LastProvenanceTimestamp *time.Time `gorm:"column:last_provenance_timestamp;type:timestamptz"`
+	// ProvenanceDeferredAt marks that full provenance indexing was skipped by the
+	// EVM credit guard (ethereum.full_provenance_disabled), so the token's history
+	// is owed a backfill. Set when a guard skips provenance work, cleared when full
+	// provenance indexing succeeds. db/migrations/025_backfill.sql enqueues the
+	// backfill for all marked tokens once the guard is lifted (added in migration 025).
+	ProvenanceDeferredAt *time.Time `gorm:"column:provenance_deferred_at;type:timestamptz"`
 	// CreatedAt is the timestamp when this record was first indexed
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this record was last updated

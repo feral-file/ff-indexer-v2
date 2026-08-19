@@ -391,6 +391,15 @@ type Store interface {
 
 	// GetTokenByTokenCID retrieves a token by its canonical ID
 	GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error)
+
+	// SetTokenProvenanceDeferred marks (deferred=true) or clears (deferred=false) the
+	// token's deferred-provenance flag. Set when the EVM credit guard skips full
+	// provenance work so the skipped token stays identifiable for the operator
+	// backfill (db/migrations/025_backfill.sql); cleared when full provenance
+	// indexing succeeds. Missing tokens are a no-op, not an error: the workflow gate
+	// can fire for tokens whose minimal indexing has not committed yet, and losing
+	// the marker there is recovered by the next indexing attempt.
+	SetTokenProvenanceDeferred(ctx context.Context, tokenCID string, deferred bool) error
 	// GetTokensByCIDs retrieves multiple tokens by their canonical IDs
 	GetTokensByCIDs(ctx context.Context, tokenCIDs []string) ([]*schema.Token, error)
 	// GetTokensByIDs retrieves multiple tokens by their internal IDs

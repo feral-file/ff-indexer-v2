@@ -1119,6 +1119,20 @@ func (mr *MockStoreMockRecorder) SetKeyValue(ctx, key, value any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetKeyValue", reflect.TypeOf((*MockStore)(nil).SetKeyValue), ctx, key, value)
 }
 
+// SetTokenProvenanceDeferred mocks base method.
+func (m *MockStore) SetTokenProvenanceDeferred(ctx context.Context, tokenCID string, deferred bool) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetTokenProvenanceDeferred", ctx, tokenCID, deferred)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetTokenProvenanceDeferred indicates an expected call of SetTokenProvenanceDeferred.
+func (mr *MockStoreMockRecorder) SetTokenProvenanceDeferred(ctx, tokenCID, deferred any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetTokenProvenanceDeferred", reflect.TypeOf((*MockStore)(nil).SetTokenProvenanceDeferred), ctx, tokenCID, deferred)
+}
+
 // SweepCanceledPendingJobs mocks base method.
 func (m *MockStore) SweepCanceledPendingJobs(ctx context.Context, queue string) (int64, error) {
 	m.ctrl.T.Helper()

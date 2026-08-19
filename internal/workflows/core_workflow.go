@@ -112,6 +112,11 @@ type CoreWorkflowsConfig struct {
 	// MediaTaskQueue is the jobs.queue name for the media worker (IndexMediaWorkflow jobs).
 	// It must match the configured media job queue when media indexing is enabled.
 	MediaTaskQueue string
+	// EthereumFullProvenanceDisabled makes IndexTokenProvenances a no-op for EVM
+	// tokens. Temporary credit guard against span-capped providers, where one token's
+	// history replay is thousands of eth_getLogs calls; skipped tokens keep minimal
+	// provenance and backfill when the guard lifts. Tezos is unaffected.
+	EthereumFullProvenanceDisabled bool
 	// BudgetedIndexingModeEnabled enables quota-based token indexing
 	BudgetedIndexingModeEnabled bool
 	// BudgetedIndexingDefaultDailyQuota is the default daily quota for budgeted indexing mode

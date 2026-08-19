@@ -34,6 +34,7 @@ CREATE TABLE tokens (
     is_viewable BOOLEAN NOT NULL DEFAULT FALSE,
     moderation_status moderation_status NOT NULL DEFAULT 'none',  -- Combined moderation verdict across sources (added in migration 021)
     last_provenance_timestamp TIMESTAMPTZ,  -- Cached timestamp of most recent provenance event (added in migration 011)
+    provenance_deferred_at TIMESTAMPTZ,  -- Full provenance skipped by the EVM credit guard; owed a backfill (added in migration 025)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (chain, contract_address, token_number),
@@ -417,6 +418,9 @@ CREATE INDEX idx_tokens_current_owner ON tokens (current_owner) WHERE current_ow
 CREATE INDEX idx_tokens_burned ON tokens (burned) WHERE burned;
 CREATE INDEX idx_tokens_created_at ON tokens (created_at);
 CREATE INDEX idx_tokens_viewable ON tokens (is_viewable);
+-- Deferred-provenance backlog (small; only tokens skipped by the EVM credit guard).
+-- Serves the 025_backfill.sql enqueue and its sizing query.
+CREATE INDEX idx_tokens_provenance_deferred ON tokens (provenance_deferred_at) WHERE provenance_deferred_at IS NOT NULL;
 CREATE INDEX idx_tokens_chain_owner_viewable ON tokens (chain, current_owner, is_viewable) WHERE current_owner IS NOT NULL;
 CREATE INDEX idx_tokens_token_cid_viewable ON tokens (token_cid, is_viewable);
 CREATE INDEX idx_tokens_last_prov_timestamp_id ON tokens (last_provenance_timestamp DESC NULLS LAST, id DESC);

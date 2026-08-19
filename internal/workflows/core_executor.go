@@ -67,6 +67,12 @@ type CoreExecutor interface {
 	// Full provenance data includes balances for all addresses, provenance events related to the token
 	IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error
 
+	// MarkTokenProvenanceDeferred records that full provenance work for the token was
+	// skipped by the EVM credit guard, so the operator backfill
+	// (db/migrations/025_backfill.sql) can find it once the guard is lifted. Cleared
+	// automatically when IndexTokenWithFullProvenancesByTokenCID succeeds.
+	MarkTokenProvenanceDeferred(ctx context.Context, tokenCID domain.TokenCID) error
+
 	// IndexTokenWithMinimalProvenancesByTokenCID indexes token with minimal provenances using tokenCID
 	// If address is provided, uses address-specific indexing for ERC1155 (efficient, partial balance + events)
 	// For ERC721 and FA2, address parameter is ignored and full provenance is always indexed
@@ -1144,6 +1150,11 @@ func (e *coreExecutor) fetchOwnerBalanceAndEvents(ctx context.Context, event *do
 // but ARE included for owner-specific indexing.
 // If address is provided, uses address-specific indexing for ERC1155 (efficient, partial balance + events)
 func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
+	// balancesUnavailable records that the credit guard withheld all-holder
+	// balances (ErrGuardedHistoryReplay): the token is stored without balances and
+	// the balances-empty burned inference is skipped.
+	balancesUnavailable := false
+
 	// If address is not provided, verify the token exists in the database and on-chain before indexing
 	// Without address, the event logs would be huge and the indexing is inefficient for ERC1155 tokens.
 	// Otherwise, we can skip the existence check and index the token with minimal provenances, the indexing with
@@ -1304,16 +1315,29 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 			}
 
 			balances, err := e.ethClient.TokenBalances(ctx, contractAddress, tokenNumber, standard)
-			if err != nil {
-				if errors.Is(err, ethereum.ErrContractNotFound) ||
-					ethhelpers.IsExecutionRevert(err) {
-					return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
+			switch {
+			case errors.Is(err, ethereum.ErrGuardedHistoryReplay):
+				// Credit guard: all-holder ERC-1155 balances require a full
+				// transfer-history replay (~1,000 span-capped calls per token).
+				// Store the token without holder balances so metadata indexing can
+				// proceed; the deferred-provenance backfill supplies them later.
+				// Empty balances here mean "deliberately unknown", so the
+				// balances-empty burned inference below must not run — and the
+				// upsert overwrites `burned`, so an existing token must keep its
+				// stored value or a guarded refresh would revive a burned token.
+				balancesUnavailable = true
+				existing, gerr := e.store.GetTokenByTokenCID(ctx, tokenCID.String())
+				if gerr != nil {
+					return fmt.Errorf("failed to load existing token for guarded refresh: %w", gerr)
 				}
-
-				if ethhelpers.IsOutOfGas(err) {
-					return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
+				if existing != nil {
+					input.Token.Burned = existing.Burned
 				}
-
+			case errors.Is(err, ethereum.ErrContractNotFound), ethhelpers.IsExecutionRevert(err):
+				return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
+			case ethhelpers.IsOutOfGas(err):
+				return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
+			case err != nil:
 				return fmt.Errorf("failed to get token balances from Ethereum: %w", err)
 			}
 
@@ -1334,8 +1358,10 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 		return fmt.Errorf("unsupported chain: %s", chain)
 	}
 
-	// Determine burned status from balances (if no positive balances, token is burned)
-	if len(input.Balances) == 0 {
+	// Determine burned status from balances (if no positive balances, token is burned).
+	// Skipped when the credit guard withheld the balances: empty means "unknown,
+	// backfill pending" there, not "no holders".
+	if len(input.Balances) == 0 && !balancesUnavailable {
 		input.Token.Burned = true
 	}
 
@@ -1569,7 +1595,22 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 		return fmt.Errorf("failed to create token with full provenances: %w", err)
 	}
 
+	// Full provenance is now stored: clear any deferred-provenance marker left by
+	// the EVM credit guard so the operator backfill converges instead of
+	// re-enqueuing this token. Clearing after the store write means a failure here
+	// leaves the marker set and the backfill re-indexes the token — idempotent, so
+	// erring on the re-index side is safe.
+	if err := e.store.SetTokenProvenanceDeferred(ctx, tokenCID.String(), false); err != nil {
+		return fmt.Errorf("failed to clear provenance deferred marker: %w", err)
+	}
+
 	return nil
+}
+
+// MarkTokenProvenanceDeferred records a credit-guard skip of full provenance work.
+// See the CoreExecutor interface doc for the backfill contract.
+func (e *coreExecutor) MarkTokenProvenanceDeferred(ctx context.Context, tokenCID domain.TokenCID) error {
+	return e.store.SetTokenProvenanceDeferred(ctx, tokenCID.String(), true)
 }
 
 // applySingleOwnerOnChainFallback ensures current owner state comes from the adapter for single-owner tokens.

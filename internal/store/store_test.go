@@ -8121,6 +8121,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"CreateTokenWithProvenances", testCreateTokenWithProvenances},
 		{"UpsertTokenBalanceForOwner", testUpsertTokenBalanceForOwner},
 		{"GetTokenByTokenCID", testGetTokenByTokenCID},
+		{"SetTokenProvenanceDeferred", testSetTokenProvenanceDeferred},
 		{"GetTokensByCIDs", testGetTokensByCIDs},
 		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
@@ -8871,4 +8872,39 @@ func testAddressIndexingJobUniquePerJobID(t *testing.T, store Store) {
 	active, err := store.GetActiveIndexingJobForAddress(ctx, "0xunique-jobid-other", chain)
 	require.NoError(t, err)
 	require.Nil(t, active, "the conflicting late create must not leave an active row")
+}
+
+// =============================================================================
+// Test: SetTokenProvenanceDeferred
+// =============================================================================
+
+func testSetTokenProvenanceDeferred(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("set and clear the deferred marker", func(t *testing.T) {
+		input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0x7777777777777777777777777777777777777777",
+			"1",
+			"0xowner7777777777777777777777777777777777777",
+		)
+		require.NoError(t, store.CreateTokenMint(ctx, input))
+
+		require.NoError(t, store.SetTokenProvenanceDeferred(ctx, input.Token.TokenCID, true))
+		token, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, token)
+		require.NotNil(t, token.ProvenanceDeferredAt, "marker must be set for the backfill to find the token")
+
+		require.NoError(t, store.SetTokenProvenanceDeferred(ctx, input.Token.TokenCID, false))
+		token, err = store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, token)
+		require.Nil(t, token.ProvenanceDeferredAt, "marker must clear so the backfill converges")
+	})
+
+	t.Run("missing token is a no-op, not an error", func(t *testing.T) {
+		require.NoError(t, store.SetTokenProvenanceDeferred(ctx, "eip155:1:erc721:0xdoesnotexist:404", true))
+	})
 }
