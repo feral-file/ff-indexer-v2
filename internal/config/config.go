@@ -172,6 +172,12 @@ type APIConfig struct {
 	BlacklistPath string         `mapstructure:"blacklist_path"`
 	Tezos         TezosConfig    `mapstructure:"tezos"`
 	Ethereum      EthereumConfig `mapstructure:"ethereum"`
+
+	// Per-address API throttle for TriggerAddressIndexing (see AppConfig for the
+	// full contract). Zero values disable each part.
+	AddressIndexingSuccessCooldown   time.Duration `mapstructure:"address_indexing_success_cooldown"`
+	AddressIndexingFailureBackoff    time.Duration `mapstructure:"address_indexing_failure_backoff"`
+	AddressIndexingFailureBackoffCap time.Duration `mapstructure:"address_indexing_failure_backoff_cap"`
 }
 
 // CloudflareConfig holds Cloudflare configuration
@@ -458,6 +464,16 @@ type AppConfig struct {
 	TezosOwnerFirstBatchTarget         int `mapstructure:"tezos_owner_first_batch_target"`
 	TezosOwnerSubsequentBatchTarget    int `mapstructure:"tezos_owner_subsequent_batch_target"`
 
+	// Per-address API throttle for TriggerAddressIndexing. Zero values disable
+	// each part. A wallet scan is one of the most expensive operations the public
+	// API can start (owner enumeration against a credit-metered RPC provider):
+	// the cooldown bounds re-scan frequency after success; the backoff pair
+	// halves the retry frequency of a repeatedly failing address (delay =
+	// base × 2^(consecutive failures − 1), capped).
+	AddressIndexingSuccessCooldown   time.Duration `mapstructure:"address_indexing_success_cooldown"`
+	AddressIndexingFailureBackoff    time.Duration `mapstructure:"address_indexing_failure_backoff"`
+	AddressIndexingFailureBackoffCap time.Duration `mapstructure:"address_indexing_failure_backoff_cap"`
+
 	Security SecurityConfig `mapstructure:"security"`
 }
 
@@ -561,6 +577,25 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 	if err := validateRenderProbeConfig(&cfg.RenderProbe, cfg.MediaEnabled, cfg.Jobs.MediaQueue); err != nil {
 		return err
 	}
+
+	// Address-indexing throttle: negative durations would silently disable the
+	// throttle (it engages only on positive values), and a cap below the base
+	// would make the first backoff exceed its own ceiling.
+	if cfg.AddressIndexingSuccessCooldown < 0 {
+		return fmt.Errorf("address_indexing_success_cooldown must be >= 0, got %s", cfg.AddressIndexingSuccessCooldown)
+	}
+	if cfg.AddressIndexingFailureBackoff < 0 {
+		return fmt.Errorf("address_indexing_failure_backoff must be >= 0, got %s", cfg.AddressIndexingFailureBackoff)
+	}
+	if cfg.AddressIndexingFailureBackoffCap < 0 {
+		return fmt.Errorf("address_indexing_failure_backoff_cap must be >= 0, got %s", cfg.AddressIndexingFailureBackoffCap)
+	}
+	if cfg.AddressIndexingFailureBackoff > 0 && cfg.AddressIndexingFailureBackoffCap > 0 &&
+		cfg.AddressIndexingFailureBackoffCap < cfg.AddressIndexingFailureBackoff {
+		return fmt.Errorf("address_indexing_failure_backoff_cap (%s) must be >= address_indexing_failure_backoff (%s)",
+			cfg.AddressIndexingFailureBackoffCap, cfg.AddressIndexingFailureBackoff)
+	}
+
 	return validateModerationSweeperConfig(&cfg.ModerationSweeper)
 }
 
@@ -736,14 +771,17 @@ func validateModerationSweeperConfig(c *ModerationSweeperConfig) error {
 // ToAPIConfig maps AppConfig to the shape expected by the HTTP API server.
 func (a *AppConfig) ToAPIConfig() *APIConfig {
 	return &APIConfig{
-		BaseConfig:    a.BaseConfig,
-		Server:        a.Server,
-		Database:      a.Database,
-		Jobs:          a.Jobs,
-		Auth:          a.Auth,
-		BlacklistPath: a.BlacklistPath,
-		Tezos:         a.Tezos,
-		Ethereum:      a.Ethereum,
+		BaseConfig:                       a.BaseConfig,
+		Server:                           a.Server,
+		Database:                         a.Database,
+		Jobs:                             a.Jobs,
+		Auth:                             a.Auth,
+		BlacklistPath:                    a.BlacklistPath,
+		Tezos:                            a.Tezos,
+		Ethereum:                         a.Ethereum,
+		AddressIndexingSuccessCooldown:   a.AddressIndexingSuccessCooldown,
+		AddressIndexingFailureBackoff:    a.AddressIndexingFailureBackoff,
+		AddressIndexingFailureBackoffCap: a.AddressIndexingFailureBackoffCap,
 	}
 }
 
@@ -906,6 +944,12 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("ethereum_owner_subsequent_batch_target", 3)
 	v.SetDefault("tezos_owner_first_batch_target", 20)
 	v.SetDefault("tezos_owner_subsequent_batch_target", 1)
+	// Address-indexing throttle defaults off (0 = disabled); production enables
+	// via deploy config. The cap default gives a sane bound when only the base
+	// is configured.
+	v.SetDefault("address_indexing_success_cooldown", 0)
+	v.SetDefault("address_indexing_failure_backoff", 0)
+	v.SetDefault("address_indexing_failure_backoff_cap", 24*time.Hour)
 
 	// Rate limiter
 	v.SetDefault("rate_limiter.max_workers", 10)
@@ -1068,6 +1112,9 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum_owner_subsequent_batch_target",
 		"tezos_owner_first_batch_target",
 		"tezos_owner_subsequent_batch_target",
+		"address_indexing_success_cooldown",
+		"address_indexing_failure_backoff",
+		"address_indexing_failure_backoff_cap",
 		// Media specific
 		"max_image_size",
 		"max_video_size",

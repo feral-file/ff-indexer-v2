@@ -26,6 +26,14 @@ type AddressIndexingJobInfo struct {
 	//
 	// Deprecated: use JobID for new integrations.
 	WorkflowID string `json:"workflow_id"`
+	// Throttled reports that no new job was started because the address is inside
+	// its post-completion cooldown or post-failure backoff window; JobID then
+	// refers to the most recent finished job. Additive field: absent (false) for
+	// enqueued and already-active jobs.
+	Throttled bool `json:"throttled,omitempty"`
+	// RetryAt is the earliest time a new indexing job may be started for this
+	// address. Only set when Throttled is true.
+	RetryAt *time.Time `json:"retry_at,omitempty"`
 }
 
 // TriggerAddressIndexingResponse represents the response for triggering address indexing

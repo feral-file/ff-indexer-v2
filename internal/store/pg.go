@@ -2685,6 +2685,60 @@ func (s *pgStore) GetActiveIndexingJobForAddress(ctx context.Context, address st
 	return nil, fmt.Errorf("failed to get active job for address %s on chain %s: %w", address, chainID, err)
 }
 
+// GetAddressIndexingThrottleState returns the latest terminal job and the
+// consecutive-failure streak for an address. Both queries ride the
+// idx_address_indexing_jobs_address_chain_created index; the history per
+// address is small (one row per triggered scan).
+func (s *pgStore) GetAddressIndexingThrottleState(ctx context.Context, address string, chainID domain.Chain) (*AddressIndexingThrottleState, error) {
+	terminalStatuses := []schema.IndexingJobStatus{
+		schema.IndexingJobStatusCompleted,
+		schema.IndexingJobStatusFailed,
+		schema.IndexingJobStatusCanceled,
+	}
+
+	state := &AddressIndexingThrottleState{}
+
+	// Recency is ordered by id, not created_at: ids are monotonic with insertion,
+	// while created_at (default now()) ties for rows written in one transaction —
+	// and a tie here silently picks an arbitrary "latest" job.
+	var latest schema.AddressIndexingJob
+	err := s.db.WithContext(ctx).
+		Where("address = ? AND chain = ? AND status IN ?", address, chainID, terminalStatuses).
+		Order("id DESC").
+		First(&latest).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return state, nil // no history: nothing to throttle on
+	case err != nil:
+		return nil, fmt.Errorf("failed to get latest terminal job for address %s on chain %s: %w", address, chainID, err)
+	}
+	state.LatestTerminal = &latest
+
+	if latest.Status != schema.IndexingJobStatusFailed {
+		return state, nil // streak is zero by definition
+	}
+
+	// Streak = failed jobs newer than the last completed/canceled one. COALESCE
+	// to zero covers addresses whose entire history is failures.
+	var streak int64
+	if err := s.db.WithContext(ctx).
+		Model(&schema.AddressIndexingJob{}).
+		Where("address = ? AND chain = ? AND status = ?", address, chainID, schema.IndexingJobStatusFailed).
+		Where(`id > COALESCE((
+			SELECT max(id) FROM address_indexing_jobs
+			WHERE address = ? AND chain = ? AND status IN ?
+		), 0)`, address, chainID, []schema.IndexingJobStatus{
+			schema.IndexingJobStatusCompleted,
+			schema.IndexingJobStatusCanceled,
+		}).
+		Count(&streak).Error; err != nil {
+		return nil, fmt.Errorf("failed to count consecutive failures for address %s on chain %s: %w", address, chainID, err)
+	}
+	state.ConsecutiveFailures = int(streak)
+
+	return state, nil
+}
+
 // UpdateAddressIndexingJobStatus updates job status with timestamp
 func (s *pgStore) UpdateAddressIndexingJobStatus(ctx context.Context, jobID int64, status schema.IndexingJobStatus, timestamp time.Time) error {
 	updates := make(map[string]interface{})

@@ -330,6 +330,18 @@ type CreateWebhookClientInput struct {
 	RetryMaxAttempts int
 }
 
+// AddressIndexingThrottleState carries the per-address inputs for the API-side
+// indexing throttle: the most recent finished job and how many consecutive
+// failures preceded now. See Store.GetAddressIndexingThrottleState.
+type AddressIndexingThrottleState struct {
+	// LatestTerminal is the most recent job in a terminal status
+	// (completed, failed, or canceled); nil when the address has no history.
+	LatestTerminal *schema.AddressIndexingJob
+	// ConsecutiveFailures counts failed jobs newer than the most recent
+	// completed or canceled job (zero when the latest terminal is not a failure).
+	ConsecutiveFailures int
+}
+
 // CreateAddressIndexingJobInput represents input for creating an address indexing job
 type CreateAddressIndexingJobInput struct {
 	Address string
@@ -670,6 +682,13 @@ type Store interface {
 	// GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
 	// Returns nil if no active job is found (not an error)
 	GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error)
+	// GetAddressIndexingThrottleState returns the request-throttle inputs for an
+	// address: the most recent terminal job (completed/failed/canceled; nil when
+	// none exists) and the current consecutive-failure streak — the number of
+	// failed jobs newer than the last completed or canceled one. Canceled breaks
+	// the streak: an operator cancel is an explicit intervention, and backing off
+	// from it would lock out the retry the operator is about to make.
+	GetAddressIndexingThrottleState(ctx context.Context, address string, chainID domain.Chain) (*AddressIndexingThrottleState, error)
 	// UpdateAddressIndexingJobStatus updates job status with timestamp
 	UpdateAddressIndexingJobStatus(ctx context.Context, jobID int64, status schema.IndexingJobStatus, timestamp time.Time) error
 	// UpdateAddressIndexingJobProgress updates job progress metrics

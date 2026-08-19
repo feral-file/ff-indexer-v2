@@ -109,10 +109,13 @@ type executor struct {
 	clock           adapter.Clock
 	tezosChainID    domain.Chain
 	ethereumChainID domain.Chain
+	// addressThrottle rate-limits per-address scan triggers; zero value disables.
+	addressThrottle AddressIndexingThrottle
 }
 
 // NewExecutor builds the API executor. tokenQueue is jobs.token_queue (e.g. token_index).
-func NewExecutor(store store.Store, jobQueue jobs.JobQueue, tokenQueue string, blacklist registry.BlacklistRegistry, json adapter.JSON, clock adapter.Clock, tezosChainID domain.Chain, ethereumChainID domain.Chain) Executor {
+// addressThrottle rate-limits TriggerAddressIndexing per address; the zero value disables it.
+func NewExecutor(store store.Store, jobQueue jobs.JobQueue, tokenQueue string, blacklist registry.BlacklistRegistry, json adapter.JSON, clock adapter.Clock, tezosChainID domain.Chain, ethereumChainID domain.Chain, addressThrottle AddressIndexingThrottle) Executor {
 	return &executor{
 		store:           store,
 		jobQueue:        jobQueue,
@@ -122,6 +125,7 @@ func NewExecutor(store store.Store, jobQueue jobs.JobQueue, tokenQueue string, b
 		clock:           clock,
 		tezosChainID:    tezosChainID,
 		ethereumChainID: ethereumChainID,
+		addressThrottle: addressThrottle,
 	}
 }
 
@@ -831,6 +835,37 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 				zap.String("status", string(existingJob.Status)),
 			)
 			continue
+		}
+
+		// Throttle: an address that just finished a scan (cooldown) or keeps
+		// failing one (exponential backoff) does not get a fresh job; the caller
+		// receives the last job's info plus the earliest retry time. This gate
+		// sits after the active-job check on purpose — an active job already
+		// answers "what is happening for this address" better than a throttle
+		// verdict would.
+		if e.addressThrottle.Enabled() {
+			state, err := e.store.GetAddressIndexingThrottleState(ctx, address, chainID)
+			if err != nil {
+				return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to check indexing throttle for address %s: %v", address, err))
+			}
+			if retryAt, restricted := e.addressThrottle.RetryAt(state); restricted && e.clock.Now().Before(retryAt) {
+				last := state.LatestTerminal
+				retryAtCopy := retryAt
+				outJobs = append(outJobs, dto.AddressIndexingJobInfo{
+					Address:    address,
+					JobID:      last.JobID,
+					WorkflowID: strconv.FormatInt(last.JobID, 10),
+					Throttled:  true,
+					RetryAt:    &retryAtCopy,
+				})
+
+				logger.Info("Address indexing throttled",
+					zap.String("address", address),
+					zap.String("lastStatus", string(last.Status)),
+					zap.Time("retryAt", retryAt),
+				)
+				continue
+			}
 		}
 
 		uk := jobs.IndexTokenOwnerUniqueKey(chainID, address)

@@ -8148,6 +8148,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"WebhookClients", testWebhookClients},
 		{"WebhookDeliveries", testWebhookDeliveries},
 		{"AddressIndexingJobs", testAddressIndexingJobs},
+		{"GetAddressIndexingThrottleState", testGetAddressIndexingThrottleState},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
 		{"MediaRenderProbeOperations", testMediaRenderProbeOperations},
@@ -8468,4 +8469,108 @@ func getModerationStatusEvents(t *testing.T, store Store, tokenID uint64) []sche
 		Order("id ASC").
 		Find(&events).Error)
 	return events
+}
+
+// =============================================================================
+// Test: GetAddressIndexingThrottleState
+// =============================================================================
+
+// throttleStateAddJob inserts one address_indexing_jobs row in a terminal (or
+// active) status for the throttle-state tests. Each row gets its own queue job.
+func throttleStateAddJob(t *testing.T, ctx context.Context, st Store, address string, chain domain.Chain, status schema.IndexingJobStatus, uniqueKey string) int64 {
+	t.Helper()
+	queueJobID := mustStubJobsRowID(t, ctx, st, uniqueKey)
+	require.NoError(t, st.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: address,
+		Chain:   chain,
+		Status:  schema.IndexingJobStatusRunning,
+		JobID:   queueJobID,
+	}))
+	if status != schema.IndexingJobStatusRunning {
+		require.NoError(t, st.UpdateAddressIndexingJobStatus(ctx, queueJobID, status, time.Now().UTC()))
+	}
+	return queueJobID
+}
+
+func testGetAddressIndexingThrottleState(t *testing.T, store Store) {
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+
+	t.Run("no history returns empty state", func(t *testing.T) {
+		state, err := store.GetAddressIndexingThrottleState(ctx, "0xthrottle-nohistory", chain)
+		require.NoError(t, err)
+		require.NotNil(t, state)
+		require.Nil(t, state.LatestTerminal)
+		require.Zero(t, state.ConsecutiveFailures)
+	})
+
+	t.Run("latest completed with zero streak", func(t *testing.T) {
+		addr := "0xthrottle-completed"
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-c-1")
+		jobID := throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusCompleted, "thr-c-2")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+		require.NoError(t, err)
+		require.NotNil(t, state.LatestTerminal)
+		require.Equal(t, schema.IndexingJobStatusCompleted, state.LatestTerminal.Status)
+		require.Equal(t, jobID, state.LatestTerminal.JobID)
+		require.NotNil(t, state.LatestTerminal.CompletedAt)
+		require.Zero(t, state.ConsecutiveFailures)
+	})
+
+	t.Run("consecutive failures counted since last success", func(t *testing.T) {
+		addr := "0xthrottle-failing"
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-f-0")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusCompleted, "thr-f-1")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-f-2")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-f-3")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+		require.NoError(t, err)
+		require.NotNil(t, state.LatestTerminal)
+		require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
+		require.Equal(t, 2, state.ConsecutiveFailures,
+			"the pre-success failure must not count toward the streak")
+	})
+
+	t.Run("all-failure history counts every failure", func(t *testing.T) {
+		addr := "0xthrottle-allfail"
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-a-1")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-a-2")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+		require.NoError(t, err)
+		require.Equal(t, 2, state.ConsecutiveFailures)
+	})
+
+	t.Run("canceled breaks the streak and is the latest terminal", func(t *testing.T) {
+		addr := "0xthrottle-canceled"
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-x-1")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusCanceled, "thr-x-2")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+		require.NoError(t, err)
+		require.Equal(t, schema.IndexingJobStatusCanceled, state.LatestTerminal.Status)
+		require.Zero(t, state.ConsecutiveFailures)
+	})
+
+	t.Run("active jobs are not terminal", func(t *testing.T) {
+		addr := "0xthrottle-active"
+		completedID := throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusCompleted, "thr-r-1")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusRunning, "thr-r-2")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+		require.NoError(t, err)
+		require.Equal(t, completedID, state.LatestTerminal.JobID,
+			"a running job must not shadow the latest terminal one")
+	})
+
+	t.Run("state is scoped per chain", func(t *testing.T) {
+		addr := "0xthrottle-chains"
+		throttleStateAddJob(t, ctx, store, addr, domain.ChainEthereumMainnet, schema.IndexingJobStatusFailed, "thr-ch-1")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, domain.ChainTezosMainnet)
+		require.NoError(t, err)
+		require.Nil(t, state.LatestTerminal)
+	})
 }
