@@ -4519,19 +4519,34 @@ func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string, maxAttemp
 
 // SweepCanceledPendingJobs transitions pending jobs with cancel_requested to canceled status.
 // Returns the number of jobs transitioned.
+//
+// Address-indexing tracking rows are synchronized in the same statement: a
+// trigger creates its address_indexing_jobs row as `running` before the queue
+// job is claimed, so canceling a still-pending job would otherwise leave that
+// row active forever — the trigger endpoint's active-job check would then
+// report the address as permanently busy and it could never be retriggered
+// (and the throttle's operator-cancel reset would never apply). One CTE keeps
+// both statuses atomic: they cannot diverge under a crash between updates.
 func (s *pgStore) SweepCanceledPendingJobs(ctx context.Context, queue string) (int64, error) {
 	now := time.Now().UTC()
-	result := s.db.WithContext(ctx).Model(&schema.Job{}).
-		Where("queue = ? AND status = ? AND cancel_requested = ?", queue, schema.JobStatusPending, true).
-		Updates(map[string]any{
-			"status":      schema.JobStatusCanceled,
-			"finished_at": now,
-			"updated_at":  now,
-		})
-	if result.Error != nil {
-		return 0, result.Error
+	var count int64
+	err := s.db.WithContext(ctx).Raw(`
+		WITH canceled AS (
+			UPDATE jobs
+			SET status = 'canceled', finished_at = $1, updated_at = $1
+			WHERE queue = $2 AND status = 'pending' AND cancel_requested = true
+			RETURNING id
+		), synced AS (
+			UPDATE address_indexing_jobs
+			SET status = 'canceled', canceled_at = $1, updated_at = $1
+			WHERE job_id IN (SELECT id FROM canceled)
+			  AND status IN ('running', 'paused')
+		)
+		SELECT count(*) FROM canceled`, now, queue).Scan(&count).Error
+	if err != nil {
+		return 0, err
 	}
-	return result.RowsAffected, nil
+	return count, nil
 }
 
 // AcquireJobQueueLock tries a session advisory lock (one worker per process per queue) on a dedicated connection.

@@ -8149,6 +8149,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"WebhookDeliveries", testWebhookDeliveries},
 		{"AddressIndexingJobs", testAddressIndexingJobs},
 		{"GetAddressIndexingThrottleState", testGetAddressIndexingThrottleState},
+		{"SweepCanceledPendingJobsSyncsAddressJobs", testSweepCanceledPendingJobsSyncsAddressJobs},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
 		{"MediaRenderProbeOperations", testMediaRenderProbeOperations},
@@ -8573,4 +8574,62 @@ func testGetAddressIndexingThrottleState(t *testing.T, store Store) {
 		require.NoError(t, err)
 		require.Nil(t, state.LatestTerminal)
 	})
+}
+
+// =============================================================================
+// Test: SweepCanceledPendingJobs synchronizes address_indexing_jobs
+// =============================================================================
+
+// testSweepCanceledPendingJobsSyncsAddressJobs pins the cancel-before-claim
+// path: a trigger creates its address_indexing_jobs row as `running` before the
+// queue job is claimed, so sweeping the canceled pending job must also
+// transition that row to canceled — otherwise the address-indexing active-job
+// check reports the address as permanently busy and it can never be
+// retriggered (nor benefit from the throttle's operator-cancel reset).
+func testSweepCanceledPendingJobsSyncsAddressJobs(t *testing.T, store Store) {
+	ctx := context.Background()
+	queue := "q_sweep_addr_sync"
+	addr := "0xsweep-cancel-sync"
+	chain := domain.ChainEthereumMainnet
+
+	// Trigger shape: queue job + running tracking row, job never claimed.
+	uk := "sweep-addr-sync-1"
+	j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+		Queue:     queue,
+		Kind:      "IndexTokenOwner",
+		Payload:   []byte(`[]`),
+		UniqueKey: &uk,
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: addr,
+		Chain:   chain,
+		Status:  schema.IndexingJobStatusRunning,
+		JobID:   j.ID,
+	}))
+
+	// Operator cancels while the job is still pending; the sweeper applies it.
+	require.NoError(t, store.RequestJobCancel(ctx, j.ID))
+	n, err := store.SweepCanceledPendingJobs(ctx, queue)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n)
+
+	// The tracking row followed the queue job into canceled.
+	addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+	require.NoError(t, err)
+	require.NotNil(t, addrJob)
+	require.Equal(t, schema.IndexingJobStatusCanceled, addrJob.Status)
+	require.NotNil(t, addrJob.CanceledAt)
+
+	// Retrigger eligibility: no active job blocks the address, and the throttle
+	// sees a canceled latest terminal (streak reset, no restriction).
+	active, err := store.GetActiveIndexingJobForAddress(ctx, addr, chain)
+	require.NoError(t, err)
+	require.Nil(t, active, "canceled tracking row must not read as active")
+
+	state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+	require.NoError(t, err)
+	require.NotNil(t, state.LatestTerminal)
+	require.Equal(t, schema.IndexingJobStatusCanceled, state.LatestTerminal.Status)
+	require.Zero(t, state.ConsecutiveFailures)
 }

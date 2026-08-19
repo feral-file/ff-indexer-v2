@@ -742,8 +742,11 @@ type Store interface {
 	// out jobs with cancel_requested=true (preventing their execution).
 	//
 	// Reason: Canceled pending jobs remain in pending state indefinitely without an explicit transition.
+	// Active address_indexing_jobs rows tracking a swept job are transitioned to canceled in the same
+	// statement — a trigger creates them as `running` before the queue job is claimed, and leaving them
+	// active would block the address from ever being retriggered (and from the throttle's cancel reset).
 	// Constraints: Only rows with the given queue, status=pending, and cancel_requested=true are updated.
-	// Returns the number of rows changed.
+	// Returns the number of jobs rows changed.
 	SweepCanceledPendingJobs(ctx context.Context, queue string) (int64, error)
 	// AcquireJobQueueLock tries to take a session-level advisory lock for this queue on a single dedicated connection.
 	// If acquired, the returned release function unlocks and closes the connection. If not acquired, callers
