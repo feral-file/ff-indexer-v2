@@ -559,6 +559,7 @@ Tracks address-level indexing job status for owner-based indexing. Each row is k
 **Indexes**:
 - `idx_address_indexing_job_workflow_id` (unique partial) on `workflow_id` where status is `running` or `paused` — at most one active job per deprecated workflow id
 - `idx_address_indexing_jobs_address_chain_active` (unique partial) on (address, chain) where status is `running` or `paused` — at most one active job per address+chain
+- `idx_address_indexing_jobs_job_id` (unique) on (job_id) - one tracking row per queue job; closes the trigger-vs-worker create race (migration 026)
 - `idx_address_indexing_jobs_address_chain_created` on (address, chain, created_at DESC) - For querying jobs by address
 - `idx_address_indexing_jobs_status_created` on (status, created_at DESC) - For querying jobs by status
 
@@ -784,6 +785,7 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 - `019.sql` - Adds `vendor_release_slug TEXT` column to `releases` and the partial unique index `releases_vendor_slug_idx` on `(vendor, vendor_release_slug)` WHERE NOT NULL (composite key so slug uniqueness is scoped per vendor). The column is nullable; existing rows retain `vendor_release_slug = NULL` until re-enriched.
 - `019_reindex.sql` - Two-part backfill: (1) Re-enqueues all OpenSea-enriched tokens so the updated enhancer fetches `GetCollection` data and populates `name`, `total_mints`, and `vendor_release_slug` on their release rows. (2) For every non-OpenSea release still missing a slug, enqueues the first member token for re-enrichment; a single enrichment is sufficient to upsert the slug on the release row. Run `019_reindex.sql` after deploying the application (worker must be running to process the enqueued jobs).
 - `024_reindex.sql` - Enqueues `IndexTokenMetadata` jobs for FA2 tokens whose stored metadata still carries the unsigned-fxhash placeholder (name/description markers or the placeholder page's CID in `animation_url`), so the resolver's big-map re-resolve path heals rows indexed while TzKT's metadata cache was stale. Run after deploying the application code. Safe to run on a fresh database (produces no rows).
+- `026.sql` - Adds the unique index `idx_address_indexing_jobs_job_id` on `address_indexing_jobs(job_id)` after deduplicating historical per-retry rows (newest row per `job_id` wins). One tracking row per queue job: closes the trigger-vs-worker create race that application-level checks cannot, since the partial active indexes only protect active rows. Run before deploying application code (standard ordering).
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data

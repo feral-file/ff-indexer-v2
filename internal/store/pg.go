@@ -2585,11 +2585,17 @@ func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddr
 	case schema.IndexingJobStatusCanceled:
 		job.CanceledAt = &now
 	}
-	err = s.db.WithContext(ctx).Create(job).Error
+	// ON CONFLICT DO NOTHING (untargeted, so it covers both the per-job unique
+	// index and the active-per-address partial index) is what actually closes
+	// the create race: the check above is a cheap short-circuit, but a worker
+	// can create and terminalize a row for this job between that check and this
+	// insert, and only the database constraint can reject the late duplicate
+	// atomically.
+	err = s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(job).Error
 	if err == nil {
 		return nil
 	}
-	// Another worker may have inserted the active row; treat as idempotent
+	// Belt-and-suspenders for drivers surfacing the conflict as an error anyway.
 	if isPostgresUniqueViolation(err) {
 		return nil
 	}

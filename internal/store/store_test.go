@@ -8153,6 +8153,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"SweepOrphanedJobsSyncsAddressJobs", testSweepOrphanedJobsSyncsAddressJobs},
 		{"MarkJobTerminalSyncsAddressJobs", testMarkJobTerminalSyncsAddressJobs},
 		{"CreateAddressIndexingJobIdempotentPerJobID", testCreateAddressIndexingJobIdempotentPerJobID},
+		{"AddressIndexingJobUniquePerJobID", testAddressIndexingJobUniquePerJobID},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
 		{"MediaRenderProbeOperations", testMediaRenderProbeOperations},
@@ -8833,4 +8834,41 @@ func testCreateAddressIndexingJobIdempotentPerJobID(t *testing.T, store Store) {
 	active, err := store.GetActiveIndexingJobForAddress(ctx, addr, chain)
 	require.NoError(t, err)
 	require.Nil(t, active, "no orphaned active row may exist for a finished job")
+}
+
+// testAddressIndexingJobUniquePerJobID pins round-8 F1 at the database layer:
+// the unique index on job_id is what closes the trigger-vs-worker create race
+// (check-then-insert cannot), and the store's conflict-safe insert treats the
+// late duplicate as a no-op rather than an error.
+func testAddressIndexingJobUniquePerJobID(t *testing.T, store Store) {
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+
+	uk := "unique-jobid-1"
+	j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+		Queue: "q_unique_jobid", Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk,
+	})
+	require.NoError(t, err)
+
+	// Worker's row reaches terminal state first.
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: "0xunique-jobid", Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+	}))
+	require.NoError(t, store.UpdateAddressIndexingJobStatus(ctx, j.ID, schema.IndexingJobStatusCompleted, time.Now().UTC()))
+
+	// A late create for the same queue job — even under a DIFFERENT address,
+	// which the active-per-address check cannot catch — must be a silent no-op:
+	// the job_id constraint is the backstop the interleaving race lands on.
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: "0xunique-jobid-other", Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+	}))
+
+	addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+	require.NoError(t, err)
+	require.Equal(t, schema.IndexingJobStatusCompleted, addrJob.Status)
+	require.Equal(t, "0xunique-jobid", addrJob.Address, "the original tracking row must be the only one")
+
+	active, err := store.GetActiveIndexingJobForAddress(ctx, "0xunique-jobid-other", chain)
+	require.NoError(t, err)
+	require.Nil(t, active, "the conflicting late create must not leave an active row")
 }
