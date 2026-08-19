@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.uber.org/zap"
@@ -12,10 +13,41 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
+// ErrDeferralMarkingFailed wraps a failure to persist the deferred-provenance
+// marker under the EVM credit guard. Callers that treat provenance indexing as
+// best-effort (IndexToken step 3) must still propagate THIS error: an ordinary
+// provenance failure loses recomputable history, but a lost marker permanently
+// drops the token from the operator backfill set.
+var ErrDeferralMarkingFailed = errors.New("deferred-provenance marking failed")
+
 // IndexTokenProvenances indexes all provenances (balances and events) for a token
 // address is the address that triggered the indexing operation
 // If nil, the indexing operation was not triggered by a specific address
 func (w *coreWorkflows) IndexTokenProvenances(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
+	// Credit guard: full provenance for an EVM token replays its entire event history
+	// from genesis (~0.9M Infura credits per token at the 10k block-span cap). Gating
+	// here — the single entry point — covers every trigger: synchronous IndexToken
+	// steps, enqueued jobs, and API-initiated refreshes. Skipped tokens keep their
+	// minimal provenance and no completion webhook fires. The deferred marker is what
+	// makes the skip recoverable: db/migrations/025_backfill.sql re-enqueues every
+	// marked token once the guard is lifted, so a marking failure must fail the job
+	// (it retries) rather than silently lose the token from the backfill set.
+	// Tezos provenance is TzKT-backed and free, so it is not gated.
+	if chain, _, _, _ := tokenCID.Parse(); w.config.EthereumFullProvenanceDisabled && chain.IsEVM() {
+		if err := w.executor.MarkTokenProvenanceDeferred(ctx, tokenCID); err != nil {
+			logger.ErrorCtx(ctx,
+				fmt.Errorf("failed to mark token provenance deferred"),
+				zap.Error(err),
+				zap.String("tokenCID", tokenCID.String()),
+			)
+			return fmt.Errorf("%w: %w", ErrDeferralMarkingFailed, err)
+		}
+		logger.InfoCtx(ctx, "Full provenance indexing is disabled for EVM tokens (credit guard); deferred",
+			zap.String("tokenCID", tokenCID.String()),
+		)
+		return nil
+	}
+
 	logger.InfoCtx(ctx, "Starting token provenances indexing",
 		zap.String("tokenCID", tokenCID.String()),
 		zap.String("address", types.SafeString(address)),

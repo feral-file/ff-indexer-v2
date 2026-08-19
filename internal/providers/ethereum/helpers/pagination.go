@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -15,23 +16,61 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
+// ErrCallBudgetExhausted marks a pagination walk aborted by PaginationGuards.CallBudget.
+// Callers can errors.Is on it to distinguish a cost guard from a provider failure.
+var ErrCallBudgetExhausted = errors.New("pagination call budget exhausted")
+
+// PaginationGuards bounds the RPC cost of a pagination walk against a
+// credit-metered provider. The zero value disables both guards.
+//
+// Reason: on a provider that caps eth_getLogs by block span (Infura: toBlock-fromBlock
+// <= 10000), a genesis-to-head walk is thousands of sequential calls at ~255 credits
+// each. An unbounded walk can consume an entire daily credit quota; discovering the
+// cap dynamically additionally pays a halving cascade of rejected calls per walk.
+type PaginationGuards struct {
+	// SpanCap is the provider's known eth_getLogs block-range cap, expressed as the
+	// maximum accepted toBlock-fromBlock difference (10000 for Infura). When set, step
+	// sizing starts at the cap instead of probing down to it with rejected calls and
+	// one-second sleeps. Dynamic discovery still applies on top, so a misconfigured
+	// (too large) value degrades to the old cascade behavior instead of failing.
+	SpanCap uint64
+	// CallBudget is the maximum number of FilterLogs RPC calls one
+	// FilterLogsWithPagination walk may issue. Exceeding it aborts the walk with
+	// ErrCallBudgetExhausted instead of silently draining the provider quota. It is a
+	// backstop, not a pace-setter: size it above ceil(chain head / SpanCap) so every
+	// legitimate full-history walk fits (mainnet at a 10k cap needs ~2,600 calls).
+	CallBudget int
+}
+
 // PaginationHelper paginates eth_getLogs queries with adaptive step sizing and retry.
 type PaginationHelper struct {
 	ethClient     ethadapter.EthClient
 	clock         ethadapter.Clock
 	blockProvider block.BlockProvider
+	guards        PaginationGuards
 }
 
-// NewPaginationHelper creates a helper for paginated log queries.
+// NewPaginationHelper creates a helper for paginated log queries with no cost guards.
 func NewPaginationHelper(
 	ethClient ethadapter.EthClient,
 	clock ethadapter.Clock,
 	blockProvider block.BlockProvider,
 ) *PaginationHelper {
+	return NewGuardedPaginationHelper(ethClient, clock, blockProvider, PaginationGuards{})
+}
+
+// NewGuardedPaginationHelper creates a helper whose walks are bounded by guards.
+func NewGuardedPaginationHelper(
+	ethClient ethadapter.EthClient,
+	clock ethadapter.Clock,
+	blockProvider block.BlockProvider,
+	guards PaginationGuards,
+) *PaginationHelper {
 	return &PaginationHelper{
 		ethClient:     ethClient,
 		clock:         clock,
 		blockProvider: blockProvider,
+		guards:        guards,
 	}
 }
 
@@ -82,6 +121,7 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 	var allLogs []types.Log
 	currentFrom := new(big.Int).Set(fromBlock)
 	stepSize := h.calculateStepSize(timeoutCtx, query)
+	callsUsed := 0
 
 	for currentFrom.Cmp(toBlock) <= 0 {
 		select {
@@ -95,7 +135,11 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 		default:
 		}
 
-		currentTo := new(big.Int).Add(currentFrom, new(big.Int).SetUint64(stepSize))
+		// An outer window spans exactly stepSize blocks (from..from+stepSize-1),
+		// matching the inner walk's window arithmetic. The former from+stepSize left
+		// one extra block per window, which cost a second single-block RPC call per
+		// window once the range cap was hoisted here — doubling the walk's call count.
+		currentTo := new(big.Int).Add(currentFrom, new(big.Int).SetUint64(stepSize-1))
 		if currentTo.Cmp(toBlock) > 0 {
 			currentTo.Set(toBlock)
 		}
@@ -104,7 +148,7 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 		rangeQuery.FromBlock = new(big.Int).Set(currentFrom)
 		rangeQuery.ToBlock = currentTo
 
-		logs, cappedStep, err := h.getLogsWithRetry(timeoutCtx, rangeQuery, stepSize)
+		logs, cappedStep, err := h.getLogsWithRetry(timeoutCtx, rangeQuery, stepSize, &callsUsed)
 		if err != nil {
 			if timeoutCtx.Err() != nil {
 				return allLogs, timeoutCtx.Err()
@@ -127,7 +171,24 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 	return allLogs, nil
 }
 
+// calculateStepSize picks the initial pagination step for a query.
+//
+// The per-query heuristics predate span-capped providers: they assume the only
+// limit is result count, so denser event families get smaller steps. When the
+// provider's span cap is configured (guards.SpanCap), it clamps every heuristic:
+// a step above the cap is a guaranteed rejection plus a one-second sleep per
+// halving, paid on every walk.
 func (h *PaginationHelper) calculateStepSize(ctx context.Context, query ethereum.FilterQuery) uint64 {
+	step := h.heuristicStepSize(ctx, query)
+	if h.guards.SpanCap > 0 && step > h.guards.SpanCap+1 {
+		// A step of N covers blocks from..from+N-1, i.e. a span of toBlock-fromBlock
+		// = N-1, so the largest accepted step is SpanCap+1.
+		step = h.guards.SpanCap + 1
+	}
+	return step
+}
+
+func (h *PaginationHelper) heuristicStepSize(ctx context.Context, query ethereum.FilterQuery) uint64 {
 	const (
 		defaultStepSize         = uint64(1_000_000)
 		erc721TokenStepSize     = uint64(30_000_000)
@@ -199,7 +260,11 @@ func (h *PaginationHelper) calculateStepSize(ctx context.Context, query ethereum
 // ceiling after the walk: it equals the given stepSize unless the provider
 // reported a block-range cap, in which case it is the discovered cap so the
 // caller can stop probing above it in later windows.
-func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64) ([]types.Log, uint64, error) {
+//
+// callsUsed counts FilterLogs calls across the whole FilterLogsWithPagination
+// walk (all outer windows share one budget); when guards.CallBudget is set and
+// exhausted, the walk aborts with ErrCallBudgetExhausted before the next call.
+func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64, callsUsed *int) ([]types.Log, uint64, error) {
 	currentStepSize := stepSize
 	// maxStepSize is the ceiling the step may ramp back up to after successes.
 	// It starts at the caller's step size and shrinks permanently when the
@@ -234,6 +299,12 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 		queryCopy.FromBlock = new(big.Int).Set(currentFrom)
 		queryCopy.ToBlock = new(big.Int).Set(currentTo)
 
+		if h.guards.CallBudget > 0 && *callsUsed >= h.guards.CallBudget {
+			return allLogs, maxStepSize, fmt.Errorf(
+				"%w: %d FilterLogs calls used, aborting at block range [%d, %d]",
+				ErrCallBudgetExhausted, *callsUsed, currentFrom.Uint64(), currentTo.Uint64())
+		}
+		*callsUsed++
 		logs, err := h.ethClient.FilterLogs(ctx, queryCopy)
 		if err == nil {
 			allLogs = append(allLogs, logs...)

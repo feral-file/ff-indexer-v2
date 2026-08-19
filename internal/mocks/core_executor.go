@@ -355,6 +355,20 @@ func (mr *MockCoreExecutorMockRecorder) IndexTokenWithMinimalProvenancesByTokenC
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithMinimalProvenancesByTokenCID", reflect.TypeOf((*MockCoreExecutor)(nil).IndexTokenWithMinimalProvenancesByTokenCID), ctx, tokenCID, address)
 }
 
+// MarkTokenProvenanceDeferred mocks base method.
+func (m *MockCoreExecutor) MarkTokenProvenanceDeferred(ctx context.Context, tokenCID domain.TokenCID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkTokenProvenanceDeferred", ctx, tokenCID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkTokenProvenanceDeferred indicates an expected call of MarkTokenProvenanceDeferred.
+func (mr *MockCoreExecutorMockRecorder) MarkTokenProvenanceDeferred(ctx, tokenCID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkTokenProvenanceDeferred", reflect.TypeOf((*MockCoreExecutor)(nil).MarkTokenProvenanceDeferred), ctx, tokenCID)
+}
+
 // ResolveTokenMetadata mocks base method.
 func (m *MockCoreExecutor) ResolveTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
 	m.ctrl.T.Helper()

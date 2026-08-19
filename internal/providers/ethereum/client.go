@@ -127,6 +127,35 @@ type EthereumClient interface {
 	Close()
 }
 
+// ErrGuardedHistoryReplay is returned when ClientGuards.FullProvenanceDisabled
+// refuses an operation whose only implementation is a full transfer-history
+// replay (currently: all-holder ERC-1155 balances). Callers must treat it as
+// "data deliberately unavailable, backfill pending" — distinct from "the token
+// has no holders", which would otherwise be inferred as burned.
+var ErrGuardedHistoryReplay = errors.New("history replay disabled by credit guard")
+
+// ClientGuards bounds the RPC credit cost of expensive client operations against a
+// credit-metered provider. The zero value disables all guards (current behavior).
+//
+// Reason: with Infura's 10k eth_getLogs block-span cap, unguarded full-history walks
+// cost millions of credits per wallet scan (each eth_getLogs call is ~255 credits and
+// each walk is thousands of calls). These guards existed as a production incident
+// response; the durable fix is chunked, resumable scanning at the workflow layer.
+type ClientGuards struct {
+	// GetLogsSpanCap seeds pagination at the provider's known block-span cap
+	// (toBlock-fromBlock; 10000 for Infura). See helpers.PaginationGuards.SpanCap.
+	GetLogsSpanCap uint64
+	// GetLogsCallBudget caps FilterLogs calls per pagination walk.
+	// See helpers.PaginationGuards.CallBudget.
+	GetLogsCallBudget int
+	// FullProvenanceDisabled short-circuits the per-token owner history replay:
+	// OwnerBalanceAndEvents returns the current balanceOf with no events instead of
+	// walking TransferSingle/TransferBatch history from genesis (4 full-range log
+	// walks per token). Pair it with the workflow-level gate that skips
+	// IndexTokenProvenances for EVM tokens; history backfills when the guard lifts.
+	FullProvenanceDisabled bool
+}
+
 // ethereumClient implements EthereumClient. It wires RPC, pagination, block metadata,
 // and the in-process adapter registry; it does not embed standard- or contract-specific logic.
 type ethereumClient struct {
@@ -136,20 +165,31 @@ type ethereumClient struct {
 	blockProvider   block.BlockProvider
 	pagination      *helpers.PaginationHelper
 	adapterRegistry *contractregistry.AdapterRegistry
+	guards          ClientGuards
 }
 
-// NewClient constructs the Ethereum gateway: RPC client, pagination helper, and adapter registry.
+// NewClient constructs the Ethereum gateway with no cost guards.
 //
 // Returns an error if the contract adapter registry cannot be initialized (config validation failure,
 // missing ABI files, etc.). Callers must handle this error to prevent silent startup failures.
 func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock, blockProvider block.BlockProvider) (EthereumClient, error) {
+	return NewGuardedClient(chainID, client, clock, blockProvider, ClientGuards{})
+}
+
+// NewGuardedClient constructs the Ethereum gateway with credit guards applied to
+// pagination walks and owner-history replay. See ClientGuards for the semantics.
+func NewGuardedClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock, blockProvider block.BlockProvider, guards ClientGuards) (EthereumClient, error) {
 	ec := &ethereumClient{
 		chainID:       chainID,
 		client:        client,
 		clock:         clock,
 		blockProvider: blockProvider,
+		guards:        guards,
 	}
-	ec.pagination = helpers.NewPaginationHelper(client, clock, blockProvider)
+	ec.pagination = helpers.NewGuardedPaginationHelper(client, clock, blockProvider, helpers.PaginationGuards{
+		SpanCap:    guards.GetLogsSpanCap,
+		CallBudget: guards.GetLogsCallBudget,
+	})
 
 	registry, err := contractregistry.NewAdapterRegistry(
 		contracts.Files,
@@ -267,6 +307,15 @@ func (f *ethereumClient) OwnershipModel(contractAddress string, standard domain.
 }
 
 // TokenBalances fetches all holder balances via the contract adapter registry.
+//
+// Credit guard: for the standard ERC-1155 adapter, all-holder balances are
+// derived by replaying the contract's transfer history (~1,000 span-capped
+// eth_getLogs calls per token) — there is no cheap current-state query for "all
+// holders". With FullProvenanceDisabled the call fails fast with
+// ErrGuardedHistoryReplay instead, so callers can store the token without
+// holder balances and rely on the deferred-provenance backfill to supply them.
+// As with OwnerBalanceAndEvents, the adapter is resolved first so configured
+// contracts keep their adapter path and registry validation still runs.
 func (f *ethereumClient) TokenBalances(
 	ctx context.Context,
 	contractAddress, tokenNumber string,
@@ -276,6 +325,13 @@ func (f *ethereumClient) TokenBalances(
 	if err != nil {
 		return nil, err
 	}
+
+	if f.guards.FullProvenanceDisabled {
+		if _, isStandardERC1155 := adp.(*adapters.ERC1155Adapter); isStandardERC1155 {
+			return nil, ErrGuardedHistoryReplay
+		}
+	}
+
 	return adp.GetTokenBalances(ctx, contractAddress, tokenNumber)
 }
 
@@ -303,6 +359,27 @@ func (f *ethereumClient) OwnerBalanceAndEvents(
 	if err != nil {
 		return "", nil, err
 	}
+
+	// Credit guard: the standard ERC-1155 adapter path replays the owner's transfer
+	// history with four full-range log walks per token — the single most expensive
+	// per-token operation on a span-capped provider. The current balance is one
+	// eth_call, so balance-only keeps owner indexing functional while history is
+	// disabled; the stored token simply carries no provenance events until the guard
+	// lifts and a backfill replays them. The adapter is resolved BEFORE the shortcut
+	// because configured multi-holder contracts derive the same erc1155 CID standard
+	// yet compute balances by replaying their configured events and need not
+	// implement balanceOf — they must keep their adapter path (and the registry's
+	// standard-mismatch validation must still run).
+	if f.guards.FullProvenanceDisabled {
+		if _, isStandardERC1155 := adp.(*adapters.ERC1155Adapter); isStandardERC1155 {
+			balance, err := helpers.ERC1155BalanceOf(ctx, f.client, contractAddress, ownerAddress, tokenNumber)
+			if err != nil {
+				return "", nil, err
+			}
+			return balance, nil, nil
+		}
+	}
+
 	return adp.GetOwnerBalanceAndEvents(ctx, contractAddress, tokenNumber, ownerAddress)
 }
 
@@ -347,6 +424,14 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 		adaptersToQuery = append(adaptersToQuery, adapter)
 	}
 
+	// A cancellable child context stops the sibling adapter walks as soon as one
+	// fails — without it, a credit-guard abort (helpers.ErrCallBudgetExhausted) in
+	// one leg leaves the other full-range walks spending RPC credits under the
+	// still-live parent context. The buffered channel lets canceled siblings
+	// deliver their result without blocking after the early return.
+	fanoutCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	type adapterResult struct {
 		logs []types.Log
 		err  error
@@ -355,7 +440,7 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 	resultsCh := make(chan adapterResult, len(adaptersToQuery))
 	for _, adp := range adaptersToQuery {
 		go func(adapter adapters.ContractAdapter) {
-			logs, err := adapter.GetOwnerLogs(ctx, ownerAddress, requestedFromBlock, requestedToBlock)
+			logs, err := adapter.GetOwnerLogs(fanoutCtx, ownerAddress, requestedFromBlock, requestedToBlock)
 			resultsCh <- adapterResult{logs: logs, err: err}
 		}(adp)
 	}

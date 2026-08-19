@@ -70,7 +70,12 @@ func registerWorkerCore(
 			StaleWindow:       cfg.Ethereum.BlockHeadStaleWindow * time.Second,
 			BlockTimestampTTL: 0,
 		}, clockAdapter)
-	ethereumClient, err := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider)
+	ethereumClient, err := ethereum.NewGuardedClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider,
+		ethereum.ClientGuards{
+			GetLogsSpanCap:         cfg.Ethereum.GetLogsSpanCap,
+			GetLogsCallBudget:      cfg.Ethereum.GetLogsCallBudget,
+			FullProvenanceDisabled: cfg.Ethereum.FullProvenanceDisabled,
+		})
 	if err != nil {
 		return nil, nil, fmt.Errorf("initialize ethereum client: %w", err)
 	}
@@ -170,6 +175,7 @@ func registerWorkerCore(
 			MediaTaskQueue:                     cfg.Jobs.MediaQueue,
 			BudgetedIndexingModeEnabled:        cfg.BudgetedIndexingEnabled,
 			BudgetedIndexingDefaultDailyQuota:  cfg.BudgetedIndexingDefaultDailyQuota,
+			EthereumFullProvenanceDisabled:     cfg.Ethereum.FullProvenanceDisabled,
 			// Vendor clients for IndexRelease CID derivation and slug resolution.
 			// fxhash and Feral File require API calls for CID derivation.
 			// AB requires a client only for slug resolution (CID derivation is deterministic).

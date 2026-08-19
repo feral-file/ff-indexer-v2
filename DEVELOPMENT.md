@@ -183,6 +183,36 @@ Some migrations introduce database constraints that application code depends on 
 5. **Deploy** the new application version
 6. **Resume** traffic
 
+**Migration 025 + the EVM credit guard — required ordering:**
+
+The Ethereum credit guard (`ethereum.full_provenance_disabled`, with
+`ethereum.getlogs_span_cap` and `ethereum.getlogs_call_budget`) has a lifecycle
+that spans config and database. Order matters in both directions:
+
+*Enabling the guard:*
+
+1. Run `025.sql` (adds `tokens.provenance_deferred_at`) on all instances
+2. Deploy application code that knows the guard
+3. Enable the guard in deploy config and restart workers
+
+Enabling the guard before 025 is applied makes every guarded skip fail on the
+missing column — jobs error instead of deferring.
+
+*Lifting the guard (recovery):*
+
+1. Disable `ethereum.full_provenance_disabled` in deploy config and restart workers
+2. Size the backfill burst first — each deferred token replays full history
+   (~0.7–1.3M Infura credits at a 10k span cap):
+   `SELECT count(*) FROM tokens WHERE provenance_deferred_at IS NOT NULL;`
+3. Run the backfill with the deployment's token queue (required parameter):
+   `psql ... -v queue=<jobs.token_queue> -f db/migrations/025_backfill.sql`
+4. Verify convergence: the count from step 2 shrinks toward zero as jobs
+   complete (successful full provenance clears the marker). Re-running the
+   backfill is safe and picks up only the remainder.
+
+Running the backfill while the guard is still enabled is harmless but useless:
+every job re-skips and re-marks; re-run the file after the guard is off.
+
 **Migration 017 (token_events uniqueness) - REQUIRED:**
 
 This migration adds the `token_events_ownership_unique` partial index that application code depends on for idempotent ownership event insertion.

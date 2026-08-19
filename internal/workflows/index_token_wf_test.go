@@ -369,3 +369,302 @@ func TestIndexToken_Skip_TokenNotFound(t *testing.T) {
 	err := wf.IndexToken(ctx, tcid, nil)
 	require.NoError(t, err)
 }
+
+// TestIndexToken_OwnerPathERC1155_GuardMarksDeferred pins the second deferral
+// path: owner-specific ERC-1155 indexing never reaches IndexTokenProvenances
+// (its minimal path normally captures events), but under the EVM credit guard
+// that path is balance-only, so IndexToken itself must persist the
+// deferred-provenance marker or the token would be invisible to the backfill.
+func TestIndexToken_OwnerPathERC1155_GuardMarksDeferred(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	owner := "0x00000000000000000000000000000000000000aa"
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x1234567890123456789012345678901234567890", "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(nil)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+
+	err := wf.IndexToken(ctx, tcid, &owner)
+	require.NoError(t, err)
+}
+
+// TestIndexToken_OwnerPathERC1155_NoGuardNoDeferral pins the guard's scope: with
+// the guard off, the owner-specific ERC-1155 path captures events itself, so no
+// deferral marker may be written (the strict mock fails on any marking call).
+func TestIndexToken_OwnerPathERC1155_NoGuardNoDeferral(t *testing.T) {
+	t.Parallel()
+	d := testTokenCore(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	owner := "0x00000000000000000000000000000000000000aa"
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x1234567890123456789012345678901234567890", "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+
+	err := wf.IndexToken(ctx, tcid, &owner)
+	require.NoError(t, err)
+}
+
+// TestIndexTokenFromEvent_ERC1155_GuardMarksDeferred pins the third deferral
+// path: event-driven ingestion excludes ERC-1155 from full provenance because
+// its minimal path normally captures balance deltas — but under the EVM credit
+// guard that path is balance-only, so IndexTokenFromEvent must persist the
+// deferred-provenance marker or ingestion-discovered ERC-1155 tokens would be
+// invisible to the backfill.
+func TestIndexTokenFromEvent_ERC1155_GuardMarksDeferred(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC1155,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tcid := event.TokenCID()
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(nil)
+
+	err := wf.IndexTokenFromEvent(ctx, event)
+	require.NoError(t, err)
+}
+
+// TestIndexTokenFromEvent_ERC1155_GuardMarkingFailureFailsWorkflow pins the
+// durability contract on the event path: a marking failure must fail the
+// workflow (so the job retries) rather than report success and silently drop
+// the token from the backfill set.
+func TestIndexTokenFromEvent_ERC1155_GuardMarkingFailureFailsWorkflow(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC1155,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tcid := event.TokenCID()
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	markErr := errors.New("db unavailable")
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(markErr)
+
+	err := wf.IndexTokenFromEvent(ctx, event)
+	require.ErrorIs(t, err, markErr)
+}
+
+// TestIndexTokenFromEvent_ERC1155_NoGuardNoDeferral pins the guard's scope on
+// the event path: with the guard off, the minimal path captures the owner's
+// events itself, so no deferral marker may be written (the strict mock fails on
+// any marking call).
+func TestIndexTokenFromEvent_ERC1155_NoGuardNoDeferral(t *testing.T) {
+	t.Parallel()
+	d := testTokenCore(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC1155,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tcid := event.TokenCID()
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+
+	err := wf.IndexTokenFromEvent(ctx, event)
+	require.NoError(t, err)
+}
+
+// TestIndexToken_DeferralMarkingFailurePropagates pins the durability contract
+// through the IndexToken caller: provenance indexing is best-effort, but a
+// failed deferral marking under the credit guard must fail the job (so owner
+// indexing retries) instead of returning success and permanently dropping the
+// token from the operator backfill set.
+func TestIndexToken_DeferralMarkingFailurePropagates(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	// ERC-721 with a triggering address: shouldIndexFullProvenance is true, so
+	// the guard skip (and its marking) happens inside IndexTokenProvenances.
+	owner := "0x00000000000000000000000000000000000000aa"
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(errors.New("db unavailable"))
+
+	err := wf.IndexToken(ctx, tcid, &owner)
+	require.ErrorIs(t, err, workflows.ErrDeferralMarkingFailed)
+}
+
+// TestIndexToken_OrdinaryProvenanceFailureStaysBestEffort pins the counterpart:
+// without the guard, a plain provenance failure is logged and IndexToken still
+// succeeds — the pre-guard best-effort contract is unchanged.
+func TestIndexToken_OrdinaryProvenanceFailureStaysBestEffort(t *testing.T) {
+	t.Parallel()
+	d := testTokenCore(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+	exec.EXPECT().IndexTokenWithFullProvenancesByTokenCID(gomock.Any(), tcid).Return(errors.New("rpc flake"))
+
+	err := wf.IndexToken(ctx, tcid, nil)
+	require.NoError(t, err)
+}
+
+// TestIndexTokens_AddresslessERC1155_GuardDefersProvenance covers the
+// public-trigger route (API enqueues IndexTokens with a nil address) under the
+// credit guard: minimal indexing runs (with balances withheld at the client),
+// and the token must end up in the backfill set via the provenance gate's
+// deferral marking. The strict mock fails the test if the expensive full
+// provenance replay is attempted.
+func TestIndexTokens_AddresslessERC1155_GuardDefersProvenance(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x1234567890123456789012345678901234567890", "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Nil()).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(nil)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+
+	err := wf.IndexTokens(ctx, []domain.TokenCID{tcid}, nil)
+	require.NoError(t, err)
+}
+
+// TestIndexTokenFromEvent_ERC721_GuardMarksDeferredSynchronously pins round-7
+// durability on the event path for supported non-ERC-1155 tokens: under the
+// guard, the deferral must be persisted synchronously — not delegated to the
+// fire-and-forget IndexTokenProvenances enqueue, whose failure is swallowed.
+// The job-queue mock rejects any provenance enqueue to prove the async path is
+// not taken.
+func TestIndexTokenFromEvent_ERC721_GuardMarksDeferredSynchronously(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	d.MockJQ.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			require.NotEqual(t, "IndexTokenProvenances", opts.Kind,
+				"guarded event path must not rely on the fire-and-forget provenance enqueue")
+			return nil, true, nil
+		}).
+		AnyTimes()
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tcid := event.TokenCID()
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(nil)
+
+	err := wf.IndexTokenFromEvent(ctx, event)
+	require.NoError(t, err)
+}
+
+// TestIndexTokenFromEvent_ERC721_GuardMarkingFailureFailsWorkflow pins that a
+// synchronous marking failure on the supported event path fails the workflow so
+// the job retries — the marker cannot be silently lost.
+func TestIndexTokenFromEvent_ERC721_GuardMarkingFailureFailsWorkflow(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tcid := event.TokenCID()
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
+	markErr := errors.New("db unavailable")
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(markErr)
+
+	err := wf.IndexTokenFromEvent(ctx, event)
+	require.ErrorIs(t, err, markErr)
+}

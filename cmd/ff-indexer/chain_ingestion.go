@@ -44,7 +44,12 @@ func runEthereumIngestion(
 			StaleWindow:       cfg.Ethereum.BlockHeadStaleWindow * time.Second,
 			BlockTimestampTTL: 0,
 		}, clockAdapter)
-	ethereumClient, err := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider)
+	ethereumClient, err := ethereum.NewGuardedClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider,
+		ethereum.ClientGuards{
+			GetLogsSpanCap:         cfg.Ethereum.GetLogsSpanCap,
+			GetLogsCallBudget:      cfg.Ethereum.GetLogsCallBudget,
+			FullProvenanceDisabled: cfg.Ethereum.FullProvenanceDisabled,
+		})
 	if err != nil {
 		return fmt.Errorf("initialize ethereum client: %w", err)
 	}
