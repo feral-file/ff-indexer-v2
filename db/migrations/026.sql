@@ -23,8 +23,19 @@
 --
 -- ⚠️ Deployment ordering: run BEFORE deploying application code that relies on
 -- ON CONFLICT against this index (the standard migrations-before-deploy rule).
+--
+-- The table is locked against writes for the (short) duration of the
+-- transaction. Without the lock this migration races live traffic: the DELETE
+-- dedups only the rows in its own snapshot, while CREATE UNIQUE INDEX builds
+-- over every committed row — a worker inserting one more per-retry duplicate
+-- between the two statements fails the index build (observed in production:
+-- "Key (job_id)=... is duplicated" after DELETE 10696). EXCLUSIVE mode blocks
+-- writers but not readers; blocked workers simply wait out the migration.
+-- Safe to re-run after a failed attempt: the failed transaction rolled back.
 
 BEGIN;
+
+LOCK TABLE address_indexing_jobs IN EXCLUSIVE MODE;
 
 DELETE FROM address_indexing_jobs a
 USING address_indexing_jobs b
