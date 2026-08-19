@@ -827,3 +827,48 @@ func TestResolverRoutedMutationsUsePrimary(t *testing.T) {
 	require.NotNil(t, state.LatestTerminal)
 	require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
 }
+
+// TestAcquireAddressTriggerLockSerializes pins the advisory lock's contract:
+// a second acquirer for the same (chain, address) blocks until the holder
+// releases, while a different address acquires immediately.
+func TestAcquireAddressTriggerLockSerializes(t *testing.T) {
+	if testDB == nil {
+		t.Fatal("Test database not initialized")
+	}
+
+	st := NewPGStore(testDB)
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+	const addr = "0xtrigger-lock-serialize"
+
+	release1, err := st.AcquireAddressTriggerLock(ctx, addr, chain)
+	require.NoError(t, err)
+
+	// A different address is not serialized against this one.
+	releaseOther, err := st.AcquireAddressTriggerLock(ctx, addr+"-other", chain)
+	require.NoError(t, err)
+	releaseOther()
+
+	acquired := make(chan struct{})
+	go func() {
+		release2, err2 := st.AcquireAddressTriggerLock(ctx, addr, chain)
+		assert.NoError(t, err2)
+		close(acquired)
+		release2()
+	}()
+
+	// The second acquirer must still be blocked while the lock is held.
+	select {
+	case <-acquired:
+		t.Fatal("second acquirer obtained the lock while it was held")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	release1()
+
+	select {
+	case <-acquired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second acquirer did not obtain the lock after release")
+	}
+}

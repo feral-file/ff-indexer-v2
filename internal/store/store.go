@@ -682,6 +682,17 @@ type Store interface {
 	// GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
 	// Returns nil if no active job is found (not an error)
 	GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error)
+	// AcquireAddressTriggerLock blocks until this caller holds the per-(chain,
+	// address) trigger serialization lock, then returns a release function. The
+	// lock makes the trigger endpoint's gate-then-enqueue sequence atomic per
+	// address across all API instances: without it, two concurrent triggers can
+	// both pass the active-job and throttle checks before either enqueues, and a
+	// fast-terminating first scan lets the second bypass the cooldown/backoff
+	// window. Blocking (not try-lock) because serialization is the point — the
+	// hold spans a few store round-trips, and context cancellation aborts the
+	// wait. Callers must always invoke release.
+	AcquireAddressTriggerLock(ctx context.Context, address string, chainID domain.Chain) (release func(), err error)
+
 	// GetAddressIndexingThrottleState returns the request-throttle inputs for an
 	// address: the most recent terminal job (completed/failed/canceled; nil when
 	// none exists) and the current consecutive-failure streak — the number of

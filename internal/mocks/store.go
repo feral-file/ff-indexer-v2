@@ -45,6 +45,21 @@ func (m *MockStore) EXPECT() *MockStoreMockRecorder {
 	return m.recorder
 }
 
+// AcquireAddressTriggerLock mocks base method.
+func (m *MockStore) AcquireAddressTriggerLock(ctx context.Context, address string, chainID domain.Chain) (func(), error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AcquireAddressTriggerLock", ctx, address, chainID)
+	ret0, _ := ret[0].(func())
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AcquireAddressTriggerLock indicates an expected call of AcquireAddressTriggerLock.
+func (mr *MockStoreMockRecorder) AcquireAddressTriggerLock(ctx, address, chainID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcquireAddressTriggerLock", reflect.TypeOf((*MockStore)(nil).AcquireAddressTriggerLock), ctx, address, chainID)
+}
+
 // AcquireJobQueueLock mocks base method.
 func (m *MockStore) AcquireJobQueueLock(ctx context.Context, queue string) (bool, func(), error) {
 	m.ctrl.T.Helper()

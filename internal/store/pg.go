@@ -2685,6 +2685,38 @@ func (s *pgStore) GetActiveIndexingJobForAddress(ctx context.Context, address st
 	return nil, fmt.Errorf("failed to get active job for address %s on chain %s: %w", address, chainID, err)
 }
 
+// AcquireAddressTriggerLock blocks on a session advisory lock scoped to one
+// (chain, address) pair on a dedicated connection. See the Store interface doc
+// for the serialization contract. The dedicated connection is required because
+// session advisory locks belong to a connection, and the pool would otherwise
+// hand the lock's connection to unrelated queries.
+func (s *pgStore) AcquireAddressTriggerLock(ctx context.Context, address string, chainID domain.Chain) (func(), error) {
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	key := string(chainID) + ":" + address
+	if _, err := conn.ExecContext(ctx,
+		`SELECT pg_advisory_lock((hashtext('addr_trigger:' || $1::text))::bigint)`, key,
+	); err != nil {
+		_ = conn.Close() //nolint:errcheck // best-effort close after error
+		return nil, err
+	}
+	release := func() {
+		unlockCtx := context.WithoutCancel(ctx)
+		var ok bool
+		_ = conn.QueryRowContext(unlockCtx,
+			`SELECT pg_advisory_unlock((hashtext('addr_trigger:' || $1::text))::bigint)`, key,
+		).Scan(&ok) //nolint:errcheck // best-effort unlock; conn close drops the session lock anyway
+		_ = conn.Close() //nolint:errcheck
+	}
+	return release, nil
+}
+
 // GetAddressIndexingThrottleState returns the latest terminal job and the
 // consecutive-failure streak for an address. Both queries ride the
 // idx_address_indexing_jobs_address_chain_created index; the history per

@@ -3,6 +3,8 @@ package executor_test
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
@@ -29,11 +32,18 @@ type addressThrottleFixture struct {
 	Store *mocks.MockStore
 	JQ    *mocks.MockJobQueue
 	Clock *mocks.MockClock
+
+	lockHolds    atomic.Int64
+	lockReleases atomic.Int64
 }
+
+// initTestLoggerOnce guards the global logger swap: parallel tests racing
+// logger.Initialize is a test-harness data race, not a production one.
+var initTestLoggerOnce sync.Once
 
 func newAddressThrottleFixture(t *testing.T, throttle executor.AddressIndexingThrottle) *addressThrottleFixture {
 	t.Helper()
-	_ = logger.Initialize(logger.Config{Debug: true})
+	initTestLoggerOnce.Do(func() { _ = logger.Initialize(logger.Config{Debug: true}) })
 	ctrl := gomock.NewController(t)
 	mockStore := mocks.NewMockStore(ctrl)
 	mockJQ := mocks.NewMockJobQueue(ctrl)
@@ -49,7 +59,22 @@ func newAddressThrottleFixture(t *testing.T, throttle executor.AddressIndexingTh
 		domain.Chain("eip155:1"),
 		throttle,
 	)
-	return &addressThrottleFixture{Exec: exec, Store: mockStore, JQ: mockJQ, Clock: mockClock}
+	// Every trigger path first serializes on the per-address advisory lock;
+	// stub it by default and count releases so tests can assert the lock is
+	// never leaked. Ordering-sensitive tests register their own expectation.
+	f := &addressThrottleFixture{Exec: exec, Store: mockStore, JQ: mockJQ, Clock: mockClock}
+	mockStore.EXPECT().
+		AcquireAddressTriggerLock(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, string, domain.Chain) (func(), error) {
+			f.lockHolds.Add(1)
+			return func() { f.lockReleases.Add(1) }, nil
+		}).
+		AnyTimes()
+	t.Cleanup(func() {
+		require.Equal(t, f.lockHolds.Load(), f.lockReleases.Load(),
+			"every acquired trigger lock must be released")
+	})
+	return f
 }
 
 // expectEnqueueSuccess registers the expectations of the un-throttled path:
@@ -286,4 +311,98 @@ func TestTriggerAddressIndexing_DedupTrackingFailureDoesNotCancel(t *testing.T) 
 	require.NoError(t, err, "a dedup tracking failure must not fail the request")
 	require.Len(t, resp.Jobs, 1)
 	require.Equal(t, int64(40), resp.Jobs[0].JobID)
+}
+
+// TestTriggerAddressIndexing_ConcurrentTriggersSerializedByLock covers round-6
+// F1's exact scenario: two concurrent triggers for one address, where the first
+// one's scan reaches terminal completion before the second's gate would have
+// run unserialized. The advisory lock (a real mutex here) forces the second
+// trigger's gate reads to happen after the first finishes, so it observes the
+// fresh terminal state and is throttled — exactly one job is ever enqueued
+// (pinned by Times(1) on the strict queue mock).
+func TestTriggerAddressIndexing_ConcurrentTriggersSerializedByLock(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockStore := mocks.NewMockStore(ctrl)
+	mockJQ := mocks.NewMockJobQueue(ctrl)
+	mockClock := mocks.NewMockClock(ctrl)
+	exec := executor.NewExecutor(
+		mockStore, mockJQ, "token_index", mocks.NewMockBlacklistRegistry(ctrl),
+		adapter.NewJSON(), mockClock,
+		domain.Chain("tezos:mainnet"), domain.Chain("eip155:1"),
+		executor.AddressIndexingThrottle{SuccessCooldown: time.Hour},
+	)
+
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	mockClock.EXPECT().Now().Return(now).AnyTimes()
+
+	// The lock is a real mutex; shared state below simulates the DB: the first
+	// trigger's scan completes (terminal row written) while it still holds the
+	// lock, before the second trigger's gates can run.
+	var mu sync.Mutex
+	var terminal *schema.AddressIndexingJob
+	mockStore.EXPECT().
+		AcquireAddressTriggerLock(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
+		DoAndReturn(func(context.Context, string, domain.Chain) (func(), error) {
+			mu.Lock()
+			return mu.Unlock, nil
+		}).
+		Times(2)
+	mockStore.EXPECT().
+		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
+		Return(nil, nil).
+		Times(2)
+	mockStore.EXPECT().
+		GetAddressIndexingThrottleState(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
+		DoAndReturn(func(context.Context, string, domain.Chain) (*store.AddressIndexingThrottleState, error) {
+			return &store.AddressIndexingThrottleState{LatestTerminal: terminal}, nil
+		}).
+		Times(2)
+	// Exactly ONE enqueue across both triggers: the second must be throttled.
+	mockJQ.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 50, Status: schema.JobStatusPending}, true, nil).
+		Times(1)
+	mockStore.EXPECT().
+		CreateAddressIndexingJob(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, store.CreateAddressIndexingJobInput) error {
+			// Simulate the enqueued scan racing to completion inside the first
+			// trigger's critical section — before the second trigger's gates run.
+			completedAt := now.Add(-time.Minute)
+			terminal = &schema.AddressIndexingJob{
+				Status:      schema.IndexingJobStatusCompleted,
+				JobID:       50,
+				CompletedAt: &completedAt,
+			}
+			return nil
+		}).
+		Times(1)
+
+	var wg sync.WaitGroup
+	results := make([]*dto.TriggerAddressIndexingResponse, 2)
+	errs := make([]error, 2)
+	for i := range 2 {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx], errs[idx] = exec.TriggerAddressIndexing(context.Background(), []string{throttleTestAddress})
+		}(i)
+	}
+	wg.Wait()
+
+	var started, throttled int
+	for i := range 2 {
+		require.NoError(t, errs[i])
+		require.Len(t, results[i].Jobs, 1)
+		if results[i].Jobs[0].Throttled {
+			throttled++
+			require.NotNil(t, results[i].Jobs[0].RetryAt)
+		} else {
+			started++
+			require.Equal(t, int64(50), results[i].Jobs[0].JobID)
+		}
+	}
+	require.Equal(t, 1, started, "exactly one trigger may start a scan")
+	require.Equal(t, 1, throttled, "the serialized second trigger must observe the terminal state and throttle")
 }
