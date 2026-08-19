@@ -69,6 +69,8 @@ type ComplexityRoot struct {
 	AddressIndexingJobInfo struct {
 		Address    func(childComplexity int) int
 		JobID      func(childComplexity int) int
+		RetryAt    func(childComplexity int) int
+		Throttled  func(childComplexity int) int
 		WorkflowID func(childComplexity int) int
 	}
 
@@ -459,6 +461,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.AddressIndexingJobInfo.JobID(childComplexity), true
+	case "AddressIndexingJobInfo.retry_at":
+		if e.complexity.AddressIndexingJobInfo.RetryAt == nil {
+			break
+		}
+
+		return e.complexity.AddressIndexingJobInfo.RetryAt(childComplexity), true
+	case "AddressIndexingJobInfo.throttled":
+		if e.complexity.AddressIndexingJobInfo.Throttled == nil {
+			break
+		}
+
+		return e.complexity.AddressIndexingJobInfo.Throttled(childComplexity), true
 	case "AddressIndexingJobInfo.workflow_id":
 		if e.complexity.AddressIndexingJobInfo.WorkflowID == nil {
 			break
@@ -1997,6 +2011,14 @@ type AddressIndexingJobInfo {
   job_id: Int!
   # Deprecated: same as str(job_id); prefer job_id for new clients.
   workflow_id: String! @deprecated(reason: "Use job_id. Stored opaque correlation id (decimal jobs.id or legacy Temporal string).")
+  # True when no new job was started because the address is inside its
+  # post-completion cooldown or post-failure backoff window; job_id then
+  # refers to the most recent finished job. Absent/false for enqueued and
+  # already-active jobs.
+  throttled: Boolean!
+  # Earliest time a new indexing job may be started for this address.
+  # Only set when throttled is true.
+  retry_at: Time
 }
 
 # Result of triggering address indexing (returns array of jobs)
@@ -2759,6 +2781,64 @@ func (ec *executionContext) fieldContext_AddressIndexingJobInfo_workflow_id(_ co
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AddressIndexingJobInfo_throttled(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AddressIndexingJobInfo_throttled,
+		func(ctx context.Context) (any, error) {
+			return obj.Throttled, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_AddressIndexingJobInfo_throttled(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AddressIndexingJobInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AddressIndexingJobInfo_retry_at(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AddressIndexingJobInfo_retry_at,
+		func(ctx context.Context) (any, error) {
+			return obj.RetryAt, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_AddressIndexingJobInfo_retry_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AddressIndexingJobInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
 		},
 	}
 	return fc, nil
@@ -8378,6 +8458,10 @@ func (ec *executionContext) fieldContext_TriggerAddressIndexingResult_jobs(_ con
 				return ec.fieldContext_AddressIndexingJobInfo_job_id(ctx, field)
 			case "workflow_id":
 				return ec.fieldContext_AddressIndexingJobInfo_workflow_id(ctx, field)
+			case "throttled":
+				return ec.fieldContext_AddressIndexingJobInfo_throttled(ctx, field)
+			case "retry_at":
+				return ec.fieldContext_AddressIndexingJobInfo_retry_at(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type AddressIndexingJobInfo", field.Name)
 		},
@@ -10184,6 +10268,13 @@ func (ec *executionContext) _AddressIndexingJobInfo(ctx context.Context, sel ast
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "throttled":
+			out.Values[i] = ec._AddressIndexingJobInfo_throttled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "retry_at":
+			out.Values[i] = ec._AddressIndexingJobInfo_retry_at(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}

@@ -8,6 +8,11 @@ package graphql
 import (
 	"context"
 	"testing"
+	"time"
+
+	"github.com/99designs/gqlgen/client"
+	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/handler/transport"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -452,4 +457,65 @@ func TestReleaseResolverMembersForwardsIncludeModerated(t *testing.T) {
 	optIn := true
 	_, err := resolver.Release().Members(context.Background(), obj, nil, nil, nil, &optIn)
 	require.NoError(t, err)
+}
+
+// --- triggerAddressIndexing: throttled response contract ---
+
+// TestMutationTriggerAddressIndexing_ThrottledFieldsServed executes the real
+// mutation against the generated executable schema (not just the resolver
+// function) so the new throttled/retry_at schema fields are proven to bind to
+// the DTO — a schema/model mapping gap would fail this query at parse or
+// serve time, not just drop the fields.
+func TestMutationTriggerAddressIndexing_ThrottledFieldsServed(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	retryAt := time.Date(2026, 8, 19, 13, 0, 0, 0, time.UTC)
+	mockExec.EXPECT().
+		TriggerAddressIndexing(gomock.Any(), []string{"0x00000000000000000000000000000000000000Aa"}).
+		Return(&dto.TriggerAddressIndexingResponse{
+			Jobs: []dto.AddressIndexingJobInfo{
+				{
+					Address:    "0x00000000000000000000000000000000000000Aa",
+					JobID:      7,
+					WorkflowID: "legacy-wf-7",
+					Throttled:  true,
+					RetryAt:    &retryAt,
+				},
+			},
+		}, nil)
+
+	srv := handler.New(NewExecutableSchema(Config{Resolvers: NewResolver(false, mockExec)}))
+	srv.AddTransport(transport.POST{})
+	c := client.New(srv)
+
+	var resp struct {
+		TriggerAddressIndexing struct {
+			Jobs []struct {
+				Address    string  `json:"address"`
+				JobID      int     `json:"job_id"`
+				WorkflowID string  `json:"workflow_id"`
+				Throttled  bool    `json:"throttled"`
+				RetryAt    *string `json:"retry_at"`
+			} `json:"jobs"`
+		} `json:"triggerAddressIndexing"`
+	}
+	c.MustPost(`mutation {
+		triggerAddressIndexing(addresses: ["0x00000000000000000000000000000000000000Aa"]) {
+			jobs { address job_id workflow_id throttled retry_at }
+		}
+	}`, &resp)
+
+	require.Len(t, resp.TriggerAddressIndexing.Jobs, 1)
+	job := resp.TriggerAddressIndexing.Jobs[0]
+	assert.True(t, job.Throttled)
+	require.NotNil(t, job.RetryAt)
+	parsed, perr := time.Parse(time.RFC3339, *job.RetryAt)
+	require.NoError(t, perr)
+	assert.True(t, retryAt.Equal(parsed))
+	assert.Equal(t, "legacy-wf-7", job.WorkflowID, "throttled response must echo the stored opaque workflow id")
+	assert.Equal(t, 7, job.JobID)
 }

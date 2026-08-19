@@ -2698,11 +2698,22 @@ func (s *pgStore) GetAddressIndexingThrottleState(ctx context.Context, address s
 
 	state := &AddressIndexingThrottleState{}
 
+	// Throttle decisions must read the primary: a job's terminal status is
+	// written there moments before the next trigger arrives, and a lagging
+	// replica returning "no terminal job" (or a stale streak) would wave a new
+	// costly scan straight through the cooldown/backoff window. Unlike the
+	// active-job lookup above, there is no permissive fallback — the primary is
+	// authoritative for a gate whose failure mode is silent credit spend.
+	db := s.db
+	if hasDBResolver(db) {
+		db = db.Clauses(dbresolver.Write)
+	}
+
 	// Recency is ordered by id, not created_at: ids are monotonic with insertion,
 	// while created_at (default now()) ties for rows written in one transaction —
 	// and a tie here silently picks an arbitrary "latest" job.
 	var latest schema.AddressIndexingJob
-	err := s.db.WithContext(ctx).
+	err := db.WithContext(ctx).
 		Where("address = ? AND chain = ? AND status IN ?", address, chainID, terminalStatuses).
 		Order("id DESC").
 		First(&latest).Error
@@ -2721,7 +2732,7 @@ func (s *pgStore) GetAddressIndexingThrottleState(ctx context.Context, address s
 	// Streak = failed jobs newer than the last completed/canceled one. COALESCE
 	// to zero covers addresses whose entire history is failures.
 	var streak int64
-	if err := s.db.WithContext(ctx).
+	if err := db.WithContext(ctx).
 		Model(&schema.AddressIndexingJob{}).
 		Where("address = ? AND chain = ? AND status = ?", address, chainID, schema.IndexingJobStatusFailed).
 		Where(`id > COALESCE((

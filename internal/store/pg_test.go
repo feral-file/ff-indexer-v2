@@ -19,6 +19,7 @@ import (
 	pgdriver "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"gorm.io/plugin/dbresolver"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -27,6 +28,10 @@ import (
 var (
 	testDB      *gorm.DB
 	pgContainer *postgres.PostgresContainer
+	// testDSN is the DSN testDB was opened with, for tests that need their own
+	// connection (e.g. dbresolver routing, which cannot run inside the
+	// transaction-per-test store).
+	testDSN string
 )
 
 // TestMain sets up the test database before running tests
@@ -92,6 +97,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Connect to the database
+	testDSN = dsn
 	testDB, err = gorm.Open(pgdriver.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
@@ -669,4 +675,55 @@ func getVerdictRowForTest(t *testing.T, tokenID uint64) schema.TokenModerationVe
 	require.NoError(t, testDB.Where("token_id = ? AND source = ?",
 		tokenID, ModerationSourceForTest()).First(&row).Error)
 	return row
+}
+
+// TestGetAddressIndexingThrottleState_ReplicaRoutedToPrimary exercises the
+// dbresolver branch of the throttle-state reads: with a resolver registered,
+// both queries must run under the dbresolver.Write clause (the throttle is a
+// credit-protection gate, and a lagging replica returning "no terminal job"
+// would wave a costly scan through the window). The replica here points at the
+// same database — the test proves the primary-routing code path executes and
+// returns the just-written terminal state, not replica lag itself, which would
+// need a second server.
+func TestGetAddressIndexingThrottleState_ReplicaRoutedToPrimary(t *testing.T) {
+	if testDB == nil {
+		t.Fatal("Test database not initialized")
+	}
+
+	db, err := gorm.Open(pgdriver.Open(testDSN), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Use(dbresolver.Register(dbresolver.Config{
+		Replicas: []gorm.Dialector{pgdriver.Open(testDSN)},
+	})))
+	require.True(t, hasDBResolver(db), "harness must actually register a resolver")
+
+	st := NewPGStore(db)
+	ctx := context.Background()
+	const addr = "0xthrottle-replica-routing"
+
+	// Written through the same resolver-enabled store: the insert goes to the
+	// primary, and the throttle read must see it via the Write clause.
+	uk := "thr-replica-1"
+	j, _, err := st.EnqueueJob(ctx, EnqueueJobInput{
+		Queue:     "test_addr_idx",
+		Kind:      "IndexTokenOwner",
+		Payload:   []byte(`[]`),
+		UniqueKey: &uk,
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: addr,
+		Chain:   domain.ChainEthereumMainnet,
+		Status:  schema.IndexingJobStatusRunning,
+		JobID:   j.ID,
+	}))
+	require.NoError(t, st.UpdateAddressIndexingJobStatus(ctx, j.ID, schema.IndexingJobStatusFailed, time.Now().UTC()))
+
+	state, err := st.GetAddressIndexingThrottleState(ctx, addr, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+	require.NotNil(t, state.LatestTerminal)
+	require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
+	require.Equal(t, 1, state.ConsecutiveFailures)
 }

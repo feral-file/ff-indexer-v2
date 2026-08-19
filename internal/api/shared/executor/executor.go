@@ -851,10 +851,18 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 			if retryAt, restricted := e.addressThrottle.RetryAt(state); restricted && e.clock.Now().Before(retryAt) {
 				last := state.LatestTerminal
 				retryAtCopy := retryAt
+				// Echo the stored opaque workflow id (legacy rows may hold a
+				// non-decimal Temporal id that clients resolve jobs by), falling
+				// back to str(job_id) only when the column is empty — the same
+				// contract as the active-job branch above.
+				wf := strings.TrimSpace(last.WorkflowID)
+				if wf == "" {
+					wf = strconv.FormatInt(last.JobID, 10)
+				}
 				outJobs = append(outJobs, dto.AddressIndexingJobInfo{
 					Address:    address,
 					JobID:      last.JobID,
-					WorkflowID: strconv.FormatInt(last.JobID, 10),
+					WorkflowID: wf,
 					Throttled:  true,
 					RetryAt:    &retryAtCopy,
 				})
