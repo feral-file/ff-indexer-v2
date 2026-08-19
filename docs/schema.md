@@ -561,6 +561,7 @@ Tracks address-level indexing job status for owner-based indexing. Each row is k
 **Indexes**:
 - `idx_address_indexing_job_workflow_id` (unique partial) on `workflow_id` where status is `running` or `paused` — at most one active job per deprecated workflow id
 - `idx_address_indexing_jobs_address_chain_active` (unique partial) on (address, chain) where status is `running` or `paused` — at most one active job per address+chain
+- `idx_address_indexing_jobs_job_id` (unique) on (job_id) - one tracking row per queue job; closes the trigger-vs-worker create race (migration 026)
 - `idx_address_indexing_jobs_address_chain_created` on (address, chain, created_at DESC) - For querying jobs by address
 - `idx_address_indexing_jobs_status_created` on (status, created_at DESC) - For querying jobs by status
 
@@ -788,6 +789,7 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 - `024_reindex.sql` - Enqueues `IndexTokenMetadata` jobs for FA2 tokens whose stored metadata still carries the unsigned-fxhash placeholder (name/description markers or the placeholder page's CID in `animation_url`), so the resolver's big-map re-resolve path heals rows indexed while TzKT's metadata cache was stale. Run after deploying the application code. Safe to run on a fresh database (produces no rows).
 - `025.sql` - Adds `tokens.provenance_deferred_at` and the partial index `idx_tokens_provenance_deferred`, recording tokens whose full provenance was skipped by the EVM credit guard (`ethereum.full_provenance_disabled`). **Must be applied before the guard is enabled** — the application writes the column whenever a guard skip occurs.
 - `025_backfill.sql` - Operator-run recovery step, executed **after** the guard is disabled and workers restarted: enqueues `IndexTokenProvenances` for every token with `provenance_deferred_at` set. Requires the deployment's token queue as a psql parameter (`-v queue=<jobs.token_queue>`, default `token_index`) and fails loudly without it. Idempotent under `jobs_unique_key_active`; the file documents burst sizing (each token replays full history, ~0.7–1.3M Infura credits) and time-sliced execution. See the guard runbook in DEVELOPMENT.md.
+- `026.sql` - Adds the unique index `idx_address_indexing_jobs_job_id` on `address_indexing_jobs(job_id)` after deduplicating historical per-retry rows (newest row per `job_id` wins). One tracking row per queue job: closes the trigger-vs-worker create race that application-level checks cannot, since the partial active indexes only protect active rows. Run before deploying application code (standard ordering).
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data

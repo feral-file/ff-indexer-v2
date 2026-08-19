@@ -255,6 +255,14 @@ type AddressIndexingJobInfo {
   job_id: Int!
   # Deprecated: same as str(job_id); prefer job_id for new clients.
   workflow_id: String! @deprecated(reason: "Use job_id. Stored opaque correlation id (decimal jobs.id or legacy Temporal string).")
+  # True when no new job was started because the address is inside its
+  # post-completion cooldown or post-failure backoff window; job_id then
+  # refers to the most recent finished job. Absent/false for enqueued and
+  # already-active jobs.
+  throttled: Boolean!
+  # Earliest time a new indexing job may be started for this address.
+  # Only set when throttled is true.
+  retry_at: Time
 }
 
 # Result of triggering address indexing (returns array of jobs)

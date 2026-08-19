@@ -528,6 +528,9 @@ CREATE INDEX jobs_poll ON jobs (queue, run_after) WHERE status = 'pending';
 -- Address Indexing Jobs table indexes
 CREATE UNIQUE INDEX idx_address_indexing_job_workflow_id ON address_indexing_jobs(workflow_id) WHERE status IN ('running', 'paused');
 CREATE UNIQUE INDEX idx_address_indexing_jobs_address_chain_active ON address_indexing_jobs(address, chain) WHERE status IN ('running', 'paused');
+-- One tracking row per queue job: closes the trigger-vs-worker create race that
+-- application-level checks cannot (added in migration 026).
+CREATE UNIQUE INDEX idx_address_indexing_jobs_job_id ON address_indexing_jobs (job_id);
 CREATE INDEX idx_address_indexing_jobs_address_chain_created ON address_indexing_jobs(address, chain, created_at DESC);
 CREATE INDEX idx_address_indexing_jobs_status_created ON address_indexing_jobs(status, created_at DESC);
 

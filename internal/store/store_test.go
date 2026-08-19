@@ -8149,6 +8149,12 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"WebhookClients", testWebhookClients},
 		{"WebhookDeliveries", testWebhookDeliveries},
 		{"AddressIndexingJobs", testAddressIndexingJobs},
+		{"GetAddressIndexingThrottleState", testGetAddressIndexingThrottleState},
+		{"SweepCanceledPendingJobsSyncsAddressJobs", testSweepCanceledPendingJobsSyncsAddressJobs},
+		{"SweepOrphanedJobsSyncsAddressJobs", testSweepOrphanedJobsSyncsAddressJobs},
+		{"MarkJobTerminalSyncsAddressJobs", testMarkJobTerminalSyncsAddressJobs},
+		{"CreateAddressIndexingJobIdempotentPerJobID", testCreateAddressIndexingJobIdempotentPerJobID},
+		{"AddressIndexingJobUniquePerJobID", testAddressIndexingJobUniquePerJobID},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
 		{"MediaRenderProbeOperations", testMediaRenderProbeOperations},
@@ -8469,6 +8475,403 @@ func getModerationStatusEvents(t *testing.T, store Store, tokenID uint64) []sche
 		Order("id ASC").
 		Find(&events).Error)
 	return events
+}
+
+// =============================================================================
+// Test: GetAddressIndexingThrottleState
+// =============================================================================
+
+// throttleStateAddJob inserts one address_indexing_jobs row in a terminal (or
+// active) status for the throttle-state tests. Each row gets its own queue job.
+func throttleStateAddJob(t *testing.T, ctx context.Context, st Store, address string, chain domain.Chain, status schema.IndexingJobStatus, uniqueKey string) int64 {
+	t.Helper()
+	queueJobID := mustStubJobsRowID(t, ctx, st, uniqueKey)
+	require.NoError(t, st.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: address,
+		Chain:   chain,
+		Status:  schema.IndexingJobStatusRunning,
+		JobID:   queueJobID,
+	}))
+	if status != schema.IndexingJobStatusRunning {
+		require.NoError(t, st.UpdateAddressIndexingJobStatus(ctx, queueJobID, status, time.Now().UTC()))
+	}
+	return queueJobID
+}
+
+func testGetAddressIndexingThrottleState(t *testing.T, store Store) {
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+
+	t.Run("no history returns empty state", func(t *testing.T) {
+		state, err := store.GetAddressIndexingThrottleState(ctx, "0xthrottle-nohistory", chain)
+		require.NoError(t, err)
+		require.NotNil(t, state)
+		require.Nil(t, state.LatestTerminal)
+		require.Zero(t, state.ConsecutiveFailures)
+	})
+
+	t.Run("latest completed with zero streak", func(t *testing.T) {
+		addr := "0xthrottle-completed"
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-c-1")
+		jobID := throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusCompleted, "thr-c-2")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+		require.NoError(t, err)
+		require.NotNil(t, state.LatestTerminal)
+		require.Equal(t, schema.IndexingJobStatusCompleted, state.LatestTerminal.Status)
+		require.Equal(t, jobID, state.LatestTerminal.JobID)
+		require.NotNil(t, state.LatestTerminal.CompletedAt)
+		require.Zero(t, state.ConsecutiveFailures)
+	})
+
+	t.Run("consecutive failures counted since last success", func(t *testing.T) {
+		addr := "0xthrottle-failing"
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-f-0")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusCompleted, "thr-f-1")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-f-2")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-f-3")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+		require.NoError(t, err)
+		require.NotNil(t, state.LatestTerminal)
+		require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
+		require.Equal(t, 2, state.ConsecutiveFailures,
+			"the pre-success failure must not count toward the streak")
+	})
+
+	t.Run("all-failure history counts every failure", func(t *testing.T) {
+		addr := "0xthrottle-allfail"
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-a-1")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-a-2")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+		require.NoError(t, err)
+		require.Equal(t, 2, state.ConsecutiveFailures)
+	})
+
+	t.Run("canceled breaks the streak and is the latest terminal", func(t *testing.T) {
+		addr := "0xthrottle-canceled"
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusFailed, "thr-x-1")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusCanceled, "thr-x-2")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+		require.NoError(t, err)
+		require.Equal(t, schema.IndexingJobStatusCanceled, state.LatestTerminal.Status)
+		require.Zero(t, state.ConsecutiveFailures)
+	})
+
+	t.Run("active jobs are not terminal", func(t *testing.T) {
+		addr := "0xthrottle-active"
+		completedID := throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusCompleted, "thr-r-1")
+		throttleStateAddJob(t, ctx, store, addr, chain, schema.IndexingJobStatusRunning, "thr-r-2")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+		require.NoError(t, err)
+		require.Equal(t, completedID, state.LatestTerminal.JobID,
+			"a running job must not shadow the latest terminal one")
+	})
+
+	t.Run("state is scoped per chain", func(t *testing.T) {
+		addr := "0xthrottle-chains"
+		throttleStateAddJob(t, ctx, store, addr, domain.ChainEthereumMainnet, schema.IndexingJobStatusFailed, "thr-ch-1")
+
+		state, err := store.GetAddressIndexingThrottleState(ctx, addr, domain.ChainTezosMainnet)
+		require.NoError(t, err)
+		require.Nil(t, state.LatestTerminal)
+	})
+}
+
+// =============================================================================
+// Test: SweepCanceledPendingJobs synchronizes address_indexing_jobs
+// =============================================================================
+
+// testSweepCanceledPendingJobsSyncsAddressJobs pins the cancel-before-claim
+// path: a trigger creates its address_indexing_jobs row as `running` before the
+// queue job is claimed, so sweeping the canceled pending job must also
+// transition that row to canceled — otherwise the address-indexing active-job
+// check reports the address as permanently busy and it can never be
+// retriggered (nor benefit from the throttle's operator-cancel reset).
+func testSweepCanceledPendingJobsSyncsAddressJobs(t *testing.T, store Store) {
+	ctx := context.Background()
+	queue := "q_sweep_addr_sync"
+	addr := "0xsweep-cancel-sync"
+	chain := domain.ChainEthereumMainnet
+
+	// Trigger shape: queue job + running tracking row, job never claimed.
+	uk := "sweep-addr-sync-1"
+	j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+		Queue:     queue,
+		Kind:      "IndexTokenOwner",
+		Payload:   []byte(`[]`),
+		UniqueKey: &uk,
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: addr,
+		Chain:   chain,
+		Status:  schema.IndexingJobStatusRunning,
+		JobID:   j.ID,
+	}))
+
+	// Operator cancels while the job is still pending; the sweeper applies it.
+	require.NoError(t, store.RequestJobCancel(ctx, j.ID))
+	n, err := store.SweepCanceledPendingJobs(ctx, queue)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n)
+
+	// The tracking row followed the queue job into canceled.
+	addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+	require.NoError(t, err)
+	require.NotNil(t, addrJob)
+	require.Equal(t, schema.IndexingJobStatusCanceled, addrJob.Status)
+	require.NotNil(t, addrJob.CanceledAt)
+
+	// Retrigger eligibility: no active job blocks the address, and the throttle
+	// sees a canceled latest terminal (streak reset, no restriction).
+	active, err := store.GetActiveIndexingJobForAddress(ctx, addr, chain)
+	require.NoError(t, err)
+	require.Nil(t, active, "canceled tracking row must not read as active")
+
+	state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+	require.NoError(t, err)
+	require.NotNil(t, state.LatestTerminal)
+	require.Equal(t, schema.IndexingJobStatusCanceled, state.LatestTerminal.Status)
+	require.Zero(t, state.ConsecutiveFailures)
+}
+
+// testSweepOrphanedJobsSyncsAddressJobs pins the crash-loop path (feralfile-bot
+// #128 round 3): when the orphan sweeper permanently fails an exhausted running
+// job, the linked address_indexing_jobs row must fail with it — otherwise the
+// address reads as permanently active (blocking every retrigger) and the
+// throttle never observes the terminal failure for its backoff.
+func testSweepOrphanedJobsSyncsAddressJobs(t *testing.T, store Store) {
+	ctx := context.Background()
+	queue := "q_sweep_orphan_addr_sync"
+	addr := "0xsweep-orphan-sync"
+	chain := domain.ChainEthereumMainnet
+
+	uk := "sweep-orphan-sync-1"
+	j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+		Queue:     queue,
+		Kind:      "IndexTokenOwner",
+		Payload:   []byte(`[]`),
+		UniqueKey: &uk,
+	})
+	require.NoError(t, err)
+
+	// Claim the job (running, attempt_count=1) and create the tracking row the
+	// way the worker does on claim.
+	claimed, err := store.ClaimJobs(ctx, queue, 1)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: addr,
+		Chain:   chain,
+		Status:  schema.IndexingJobStatusRunning,
+		JobID:   j.ID,
+	}))
+
+	// Crash-loop terminal: maxAttempts=1 permanently fails the running job.
+	_, failed, err := store.SweepOrphanedJobs(ctx, queue, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), failed)
+
+	// The tracking row followed the queue job into failed.
+	addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+	require.NoError(t, err)
+	require.NotNil(t, addrJob)
+	require.Equal(t, schema.IndexingJobStatusFailed, addrJob.Status)
+	require.NotNil(t, addrJob.FailedAt)
+
+	// Retrigger eligibility + backoff visibility: no active job blocks the
+	// address, and the throttle sees the failure with a streak of one.
+	active, err := store.GetActiveIndexingJobForAddress(ctx, addr, chain)
+	require.NoError(t, err)
+	require.Nil(t, active)
+
+	state, err := store.GetAddressIndexingThrottleState(ctx, addr, chain)
+	require.NoError(t, err)
+	require.NotNil(t, state.LatestTerminal)
+	require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
+	require.Equal(t, 1, state.ConsecutiveFailures)
+}
+
+// testMarkJobTerminalSyncsAddressJobs pins round-4 F2: the worker's terminal
+// job transitions (succeeded/failed/canceled) are where a queue job actually
+// becomes terminal, and the workflow's own tracking updates are best-effort —
+// so each Mark* must move a still-active address_indexing_jobs row to the
+// matching terminal status in the same statement, or one transient DB error
+// leaves the address permanently "busy".
+func testMarkJobTerminalSyncsAddressJobs(t *testing.T, store Store) {
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+
+	cases := []struct {
+		name       string
+		mark       func(jobID int64) error
+		wantStatus schema.IndexingJobStatus
+		wantStamp  func(j *schema.AddressIndexingJob) *time.Time
+	}{
+		{
+			name:       "succeeded completes the tracking row",
+			mark:       func(id int64) error { return store.MarkJobSucceeded(ctx, id) },
+			wantStatus: schema.IndexingJobStatusCompleted,
+			wantStamp:  func(j *schema.AddressIndexingJob) *time.Time { return j.CompletedAt },
+		},
+		{
+			name:       "failed fails the tracking row",
+			mark:       func(id int64) error { return store.MarkJobFailed(ctx, id, "boom") },
+			wantStatus: schema.IndexingJobStatusFailed,
+			wantStamp:  func(j *schema.AddressIndexingJob) *time.Time { return j.FailedAt },
+		},
+		{
+			name:       "canceled cancels the tracking row",
+			mark:       func(id int64) error { return store.MarkJobCanceled(ctx, id) },
+			wantStatus: schema.IndexingJobStatusCanceled,
+			wantStamp:  func(j *schema.AddressIndexingJob) *time.Time { return j.CanceledAt },
+		},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			queue := fmt.Sprintf("q_mark_terminal_sync_%d", i)
+			addr := fmt.Sprintf("0xmark-terminal-sync-%d", i)
+			uk := fmt.Sprintf("mark-terminal-%d", i)
+
+			j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+				Queue:     queue,
+				Kind:      "IndexTokenOwner",
+				Payload:   []byte(`[]`),
+				UniqueKey: &uk,
+			})
+			require.NoError(t, err)
+			claimed, err := store.ClaimJobs(ctx, queue, 1)
+			require.NoError(t, err)
+			require.Len(t, claimed, 1)
+
+			// Tracking row created on claim; the workflow's own terminal update
+			// is simulated as failed by leaving the row running.
+			require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+				Address: addr,
+				Chain:   chain,
+				Status:  schema.IndexingJobStatusRunning,
+				JobID:   j.ID,
+			}))
+
+			require.NoError(t, tc.mark(j.ID))
+
+			addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+			require.NoError(t, err)
+			require.NotNil(t, addrJob)
+			require.Equal(t, tc.wantStatus, addrJob.Status)
+			require.NotNil(t, tc.wantStamp(addrJob), "terminal timestamp must be set")
+
+			active, err := store.GetActiveIndexingJobForAddress(ctx, addr, chain)
+			require.NoError(t, err)
+			require.Nil(t, active, "terminal tracking row must not read as active")
+		})
+	}
+
+	t.Run("workflow-written terminal state is not overwritten", func(t *testing.T) {
+		queue := "q_mark_terminal_sync_noop"
+		addr := "0xmark-terminal-sync-noop"
+		uk := "mark-terminal-noop"
+
+		j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+			Queue: queue, Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk,
+		})
+		require.NoError(t, err)
+		claimed, err := store.ClaimJobs(ctx, queue, 1)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
+		require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address: addr, Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+		}))
+
+		// The workflow already recorded failure; the queue job then succeeds
+		// (e.g. reschedule bookkeeping) — the sync must not resurrect the row.
+		require.NoError(t, store.UpdateAddressIndexingJobStatus(ctx, j.ID, schema.IndexingJobStatusFailed, time.Now().UTC()))
+		require.NoError(t, store.MarkJobSucceeded(ctx, j.ID))
+
+		addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+		require.NoError(t, err)
+		require.Equal(t, schema.IndexingJobStatusFailed, addrJob.Status,
+			"a terminal tracking status written by the workflow must be preserved")
+	})
+}
+
+// testCreateAddressIndexingJobIdempotentPerJobID pins round-7 F1: a worker can
+// claim, track, and terminalize a queue job before the trigger's own tracking
+// create runs. That late create must be a no-op — a second `running` row for
+// the same queue job would be orphaned forever, since the job's terminal
+// transition has already happened.
+func testCreateAddressIndexingJobIdempotentPerJobID(t *testing.T, store Store) {
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+	addr := "0xcreate-idempotent-jobid"
+
+	uk := "create-idem-1"
+	j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+		Queue: "q_create_idem", Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk,
+	})
+	require.NoError(t, err)
+
+	// Worker's lifecycle completes first: create tracking, then terminalize.
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: addr, Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+	}))
+	require.NoError(t, store.UpdateAddressIndexingJobStatus(ctx, j.ID, schema.IndexingJobStatusCompleted, time.Now().UTC()))
+
+	// The trigger's late create for the same queue job must be a no-op.
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: addr, Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+	}))
+
+	addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+	require.NoError(t, err)
+	require.Equal(t, schema.IndexingJobStatusCompleted, addrJob.Status,
+		"the terminal tracking row must not be shadowed by a late duplicate")
+
+	active, err := store.GetActiveIndexingJobForAddress(ctx, addr, chain)
+	require.NoError(t, err)
+	require.Nil(t, active, "no orphaned active row may exist for a finished job")
+}
+
+// testAddressIndexingJobUniquePerJobID pins round-8 F1 at the database layer:
+// the unique index on job_id is what closes the trigger-vs-worker create race
+// (check-then-insert cannot), and the store's conflict-safe insert treats the
+// late duplicate as a no-op rather than an error.
+func testAddressIndexingJobUniquePerJobID(t *testing.T, store Store) {
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+
+	uk := "unique-jobid-1"
+	j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+		Queue: "q_unique_jobid", Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk,
+	})
+	require.NoError(t, err)
+
+	// Worker's row reaches terminal state first.
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: "0xunique-jobid", Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+	}))
+	require.NoError(t, store.UpdateAddressIndexingJobStatus(ctx, j.ID, schema.IndexingJobStatusCompleted, time.Now().UTC()))
+
+	// A late create for the same queue job — even under a DIFFERENT address,
+	// which the active-per-address check cannot catch — must be a silent no-op:
+	// the job_id constraint is the backstop the interleaving race lands on.
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: "0xunique-jobid-other", Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+	}))
+
+	addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+	require.NoError(t, err)
+	require.Equal(t, schema.IndexingJobStatusCompleted, addrJob.Status)
+	require.Equal(t, "0xunique-jobid", addrJob.Address, "the original tracking row must be the only one")
+
+	active, err := store.GetActiveIndexingJobForAddress(ctx, "0xunique-jobid-other", chain)
+	require.NoError(t, err)
+	require.Nil(t, active, "the conflicting late create must not leave an active row")
 }
 
 // =============================================================================

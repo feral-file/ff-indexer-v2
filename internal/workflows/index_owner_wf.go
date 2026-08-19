@@ -66,8 +66,17 @@ func (w *coreWorkflows) IndexTokenOwner(ctx context.Context, address string) err
 	}()
 
 	if haveQueueJobID {
+		// The tracking row is the durable record the trigger endpoint's gates
+		// read (active-job check, throttle history). Rescheduling — not failing —
+		// is what actually retries until the row is durable: the worker maps
+		// ordinary handler errors to a TERMINAL MarkJobFailed, which would turn a
+		// transient database blip into a permanently failed scan plus a throttle
+		// backoff penalty. RescheduleError returns the job to pending with a
+		// bounded delay, and the retry cycle is cheap (this create is the first
+		// database call, before any RPC work).
 		if err := w.executor.CreateIndexingJob(ctx, address, chainID, queueJobID); err != nil {
-			logger.ErrorCtx(ctx, fmt.Errorf("failed to create/update job record"), zap.Error(err))
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to create/update job record; rescheduling"), zap.Error(err))
+			return jobs.ErrReschedule(time.Now().UTC().Add(30 * time.Second))
 		}
 		if err := w.executor.UpdateIndexingJobStatus(ctx,
 			queueJobID, schema.IndexingJobStatusRunning, time.Now().UTC()); err != nil {

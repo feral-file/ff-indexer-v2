@@ -296,6 +296,21 @@ func (mr *MockStoreMockRecorder) GetAddressIndexingJobByWorkflowID(ctx, workflow
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJobByWorkflowID", reflect.TypeOf((*MockStore)(nil).GetAddressIndexingJobByWorkflowID), ctx, workflowID)
 }
 
+// GetAddressIndexingThrottleState mocks base method.
+func (m *MockStore) GetAddressIndexingThrottleState(ctx context.Context, address string, chainID domain.Chain) (*store.AddressIndexingThrottleState, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAddressIndexingThrottleState", ctx, address, chainID)
+	ret0, _ := ret[0].(*store.AddressIndexingThrottleState)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAddressIndexingThrottleState indicates an expected call of GetAddressIndexingThrottleState.
+func (mr *MockStoreMockRecorder) GetAddressIndexingThrottleState(ctx, address, chainID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingThrottleState", reflect.TypeOf((*MockStore)(nil).GetAddressIndexingThrottleState), ctx, address, chainID)
+}
+
 // GetAllKeyValuesByPrefix mocks base method.
 func (m *MockStore) GetAllKeyValuesByPrefix(ctx context.Context, prefix string) (map[string]string, error) {
 	m.ctrl.T.Helper()
@@ -1359,4 +1374,18 @@ func (m *MockStore) UpsertTokenModerationVerdict(ctx context.Context, input stor
 func (mr *MockStoreMockRecorder) UpsertTokenModerationVerdict(ctx, input any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTokenModerationVerdict", reflect.TypeOf((*MockStore)(nil).UpsertTokenModerationVerdict), ctx, input)
+}
+
+// WithAddressTriggerLock mocks base method.
+func (m *MockStore) WithAddressTriggerLock(ctx context.Context, address string, chainID domain.Chain, fn func(store.Store) error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WithAddressTriggerLock", ctx, address, chainID, fn)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// WithAddressTriggerLock indicates an expected call of WithAddressTriggerLock.
+func (mr *MockStoreMockRecorder) WithAddressTriggerLock(ctx, address, chainID, fn any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WithAddressTriggerLock", reflect.TypeOf((*MockStore)(nil).WithAddressTriggerLock), ctx, address, chainID, fn)
 }

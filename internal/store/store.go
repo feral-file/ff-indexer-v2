@@ -330,6 +330,18 @@ type CreateWebhookClientInput struct {
 	RetryMaxAttempts int
 }
 
+// AddressIndexingThrottleState carries the per-address inputs for the API-side
+// indexing throttle: the most recent finished job and how many consecutive
+// failures preceded now. See Store.GetAddressIndexingThrottleState.
+type AddressIndexingThrottleState struct {
+	// LatestTerminal is the most recent job in a terminal status
+	// (completed, failed, or canceled); nil when the address has no history.
+	LatestTerminal *schema.AddressIndexingJob
+	// ConsecutiveFailures counts failed jobs newer than the most recent
+	// completed or canceled job (zero when the latest terminal is not a failure).
+	ConsecutiveFailures int
+}
+
 // CreateAddressIndexingJobInput represents input for creating an address indexing job
 type CreateAddressIndexingJobInput struct {
 	Address string
@@ -679,6 +691,28 @@ type Store interface {
 	// GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
 	// Returns nil if no active job is found (not an error)
 	GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error)
+	// WithAddressTriggerLock runs fn inside one database transaction that holds
+	// the per-(chain, address) trigger serialization lock
+	// (pg_advisory_xact_lock), passing a Store bound to that transaction. It
+	// makes the trigger endpoint's gate-then-enqueue sequence atomic per address
+	// across all API instances: without it, two concurrent triggers can both
+	// pass the active-job and throttle checks before either enqueues, and a
+	// fast-terminating first scan lets the second bypass the cooldown/backoff
+	// window. Transaction-scoped (not a session lock on a dedicated connection)
+	// so the lock, the gate reads, and the enqueue all use ONE pooled
+	// connection — N concurrent lock holders otherwise reserve N connections
+	// while each waits for another one to do its work, which can exhaust the
+	// pool. fn's error rolls the transaction back (undoing any enqueue) and the
+	// lock releases automatically at transaction end.
+	WithAddressTriggerLock(ctx context.Context, address string, chainID domain.Chain, fn func(txStore Store) error) error
+
+	// GetAddressIndexingThrottleState returns the request-throttle inputs for an
+	// address: the most recent terminal job (completed/failed/canceled; nil when
+	// none exists) and the current consecutive-failure streak — the number of
+	// failed jobs newer than the last completed or canceled one. Canceled breaks
+	// the streak: an operator cancel is an explicit intervention, and backing off
+	// from it would lock out the retry the operator is about to make.
+	GetAddressIndexingThrottleState(ctx context.Context, address string, chainID domain.Chain) (*AddressIndexingThrottleState, error)
 	// UpdateAddressIndexingJobStatus updates job status with timestamp
 	UpdateAddressIndexingJobStatus(ctx context.Context, jobID int64, status schema.IndexingJobStatus, timestamp time.Time) error
 	// UpdateAddressIndexingJobProgress updates job progress metrics
@@ -732,8 +766,11 @@ type Store interface {
 	// out jobs with cancel_requested=true (preventing their execution).
 	//
 	// Reason: Canceled pending jobs remain in pending state indefinitely without an explicit transition.
+	// Active address_indexing_jobs rows tracking a swept job are transitioned to canceled in the same
+	// statement — a trigger creates them as `running` before the queue job is claimed, and leaving them
+	// active would block the address from ever being retriggered (and from the throttle's cancel reset).
 	// Constraints: Only rows with the given queue, status=pending, and cancel_requested=true are updated.
-	// Returns the number of rows changed.
+	// Returns the number of jobs rows changed.
 	SweepCanceledPendingJobs(ctx context.Context, queue string) (int64, error)
 	// AcquireJobQueueLock tries to take a session-level advisory lock for this queue on a single dedicated connection.
 	// If acquired, the returned release function unlocks and closes the connection. If not acquired, callers

@@ -4,9 +4,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +21,7 @@ import (
 	pgdriver "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"gorm.io/plugin/dbresolver"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -27,6 +30,10 @@ import (
 var (
 	testDB      *gorm.DB
 	pgContainer *postgres.PostgresContainer
+	// testDSN is the DSN testDB was opened with, for tests that need their own
+	// connection (e.g. dbresolver routing, which cannot run inside the
+	// transaction-per-test store).
+	testDSN string
 )
 
 // TestMain sets up the test database before running tests
@@ -92,6 +99,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Connect to the database
+	testDSN = dsn
 	testDB, err = gorm.Open(pgdriver.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
@@ -669,4 +677,224 @@ func getVerdictRowForTest(t *testing.T, tokenID uint64) schema.TokenModerationVe
 	require.NoError(t, testDB.Where("token_id = ? AND source = ?",
 		tokenID, ModerationSourceForTest()).First(&row).Error)
 	return row
+}
+
+// TestGetAddressIndexingThrottleState_ReplicaRoutedToPrimary exercises the
+// dbresolver branch of the throttle-state reads: with a resolver registered,
+// both queries must run under the dbresolver.Write clause (the throttle is a
+// credit-protection gate, and a lagging replica returning "no terminal job"
+// would wave a costly scan through the window). The replica here points at the
+// same database — the test proves the primary-routing code path executes and
+// returns the just-written terminal state, not replica lag itself, which would
+// need a second server.
+func TestGetAddressIndexingThrottleState_ReplicaRoutedToPrimary(t *testing.T) {
+	if testDB == nil {
+		t.Fatal("Test database not initialized")
+	}
+
+	db, err := gorm.Open(pgdriver.Open(testDSN), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Use(dbresolver.Register(dbresolver.Config{
+		Replicas: []gorm.Dialector{pgdriver.Open(testDSN)},
+	})))
+	require.True(t, hasDBResolver(db), "harness must actually register a resolver")
+
+	st := NewPGStore(db)
+	ctx := context.Background()
+	const addr = "0xthrottle-replica-routing"
+
+	// Written through the same resolver-enabled store: the insert goes to the
+	// primary, and the throttle read must see it via the Write clause.
+	uk := "thr-replica-1"
+	j, _, err := st.EnqueueJob(ctx, EnqueueJobInput{
+		Queue:     "test_addr_idx",
+		Kind:      "IndexTokenOwner",
+		Payload:   []byte(`[]`),
+		UniqueKey: &uk,
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: addr,
+		Chain:   domain.ChainEthereumMainnet,
+		Status:  schema.IndexingJobStatusRunning,
+		JobID:   j.ID,
+	}))
+	require.NoError(t, st.UpdateAddressIndexingJobStatus(ctx, j.ID, schema.IndexingJobStatusFailed, time.Now().UTC()))
+
+	state, err := st.GetAddressIndexingThrottleState(ctx, addr, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+	require.NotNil(t, state.LatestTerminal)
+	require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
+	require.Equal(t, 1, state.ConsecutiveFailures)
+}
+
+// readOnlyReplicaDSN derives a DSN identical to the test database but with
+// default_transaction_read_only=on, so any statement mis-routed to the
+// "replica" fails loudly instead of silently writing to the same database.
+func readOnlyReplicaDSN() string {
+	if strings.Contains(testDSN, "://") { // URL form (testcontainers)
+		sep := "?"
+		if strings.Contains(testDSN, "?") {
+			sep = "&"
+		}
+		return testDSN + sep + "options=-c%20default_transaction_read_only%3Don"
+	}
+	// Keyword form (external DB via TEST_DB_* env).
+	return testDSN + " options='-c default_transaction_read_only=on'"
+}
+
+// TestResolverRoutedMutationsUsePrimary pins the round-5 routing contract: the
+// raw mutating CTEs (terminal job marks, both sweeps) and the throttle-state
+// read must all run on the primary when a DB resolver is configured. The
+// replica here is the same database opened read-only, so a mis-routed
+// statement errors ("cannot execute ... in a read-only transaction") rather
+// than passing by accident.
+func TestResolverRoutedMutationsUsePrimary(t *testing.T) {
+	if testDB == nil {
+		t.Fatal("Test database not initialized")
+	}
+
+	db, err := gorm.Open(pgdriver.Open(testDSN), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Use(dbresolver.Register(dbresolver.Config{
+		Replicas: []gorm.Dialector{pgdriver.Open(readOnlyReplicaDSN())},
+	})))
+	require.True(t, hasDBResolver(db))
+
+	st := NewPGStore(db)
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+
+	// Sanity: prove the replica is reachable, replica-routed, and genuinely
+	// read-only. dbresolver routes select-prefixed raw SQL to the replica
+	// (switchGuess), so this must observe the replica's read-only setting —
+	// guarding the test against a silently writable replica, which would let
+	// mis-routed mutations pass. (Non-select raw SQL is routed to Write by the
+	// same heuristic; the explicit dbresolver.Write pins in the store make that
+	// intent independent of the plugin's guess.)
+	var roSetting string
+	require.NoError(t, db.WithContext(ctx).Raw(
+		`select current_setting('default_transaction_read_only')`,
+	).Scan(&roSetting).Error)
+	require.Equal(t, "on", roSetting, "replica route must land on the read-only connection")
+
+	mkJob := func(queue, addr, uk string) int64 {
+		j, _, err := st.EnqueueJob(ctx, EnqueueJobInput{
+			Queue: queue, Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk,
+		})
+		require.NoError(t, err)
+		claimed, err := st.ClaimJobs(ctx, queue, 1)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
+		require.NoError(t, st.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address: addr, Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+		}))
+		return j.ID
+	}
+
+	// Terminal marks route to the primary.
+	id1 := mkJob("q_resolver_route_1", "0xresolver-route-1", "resolver-route-1")
+	require.NoError(t, st.MarkJobSucceeded(ctx, id1))
+	id2 := mkJob("q_resolver_route_2", "0xresolver-route-2", "resolver-route-2")
+	require.NoError(t, st.MarkJobFailed(ctx, id2, "boom"))
+	id3 := mkJob("q_resolver_route_3", "0xresolver-route-3", "resolver-route-3")
+	require.NoError(t, st.MarkJobCanceled(ctx, id3))
+
+	// Orphan sweep (failed branch) routes to the primary.
+	id4 := mkJob("q_resolver_route_4", "0xresolver-route-4", "resolver-route-4")
+	_, failed, err := st.SweepOrphanedJobs(ctx, "q_resolver_route_4", 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), failed)
+	_ = id4
+
+	// Pending-cancel sweep routes to the primary.
+	uk5 := "resolver-route-5"
+	j5, _, err := st.EnqueueJob(ctx, EnqueueJobInput{
+		Queue: "q_resolver_route_5", Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk5,
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.RequestJobCancel(ctx, j5.ID))
+	swept, err := st.SweepCanceledPendingJobs(ctx, "q_resolver_route_5")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), swept)
+
+	// Throttle-state read stays pinned to the primary (round-1 contract).
+	state, err := st.GetAddressIndexingThrottleState(ctx, "0xresolver-route-2", chain)
+	require.NoError(t, err)
+	require.NotNil(t, state.LatestTerminal)
+	require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
+}
+
+// TestWithAddressTriggerLockSerializes pins the advisory lock's contract:
+// a second caller for the same (chain, address) blocks until the holder's
+// transaction ends, while a different address proceeds immediately, and the
+// callback's Store operates inside the lock's transaction (rolled back on
+// error, so nothing persists).
+func TestWithAddressTriggerLockSerializes(t *testing.T) {
+	if testDB == nil {
+		t.Fatal("Test database not initialized")
+	}
+
+	st := NewPGStore(testDB)
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+	const addr = "0xtrigger-lock-serialize"
+
+	holding := make(chan struct{})
+	releaseHold := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- st.WithAddressTriggerLock(ctx, addr, chain, func(txStore Store) error {
+			close(holding)
+			<-releaseHold
+			return nil
+		})
+	}()
+	<-holding
+
+	// A different address is not serialized against this one.
+	require.NoError(t, st.WithAddressTriggerLock(ctx, addr+"-other", chain, func(Store) error { return nil }))
+
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- st.WithAddressTriggerLock(ctx, addr, chain, func(Store) error { return nil })
+	}()
+
+	// The second caller must still be blocked while the first holds the lock.
+	select {
+	case err := <-secondDone:
+		t.Fatalf("second caller finished while the lock was held: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	close(releaseHold)
+	require.NoError(t, <-firstDone)
+
+	select {
+	case err := <-secondDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("second caller did not proceed after the lock was released")
+	}
+
+	// Rollback contract: writes made through the callback's Store vanish when
+	// fn errors — the enqueue can never outlive a failed trigger.
+	sentinel := errors.New("boom")
+	uk := "trigger-lock-rollback"
+	err := st.WithAddressTriggerLock(ctx, addr, chain, func(txStore Store) error {
+		j, _, err := txStore.EnqueueJob(ctx, EnqueueJobInput{
+			Queue: "q_trigger_lock_rb", Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, j)
+		return sentinel
+	})
+	require.ErrorIs(t, err, sentinel)
+	var count int64
+	require.NoError(t, testDB.Model(&schema.Job{}).Where("queue = ?", "q_trigger_lock_rb").Count(&count).Error)
+	require.Zero(t, count, "rolled-back trigger transaction must not leave the enqueued job behind")
 }

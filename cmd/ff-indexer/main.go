@@ -20,6 +20,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/server"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
@@ -303,6 +304,11 @@ func newAPIServer(
 		},
 		TezosChainID:    cfg.Tezos.ChainID,
 		EthereumChainID: cfg.Ethereum.ChainID,
+		AddressThrottle: executor.AddressIndexingThrottle{
+			SuccessCooldown:    cfg.AddressIndexingSuccessCooldown,
+			FailureBackoffBase: cfg.AddressIndexingFailureBackoff,
+			FailureBackoffCap:  cfg.AddressIndexingFailureBackoffCap,
+		},
 	}
 	return server.New(serverConfig, dataStore, jq, blacklistRegistry, jsonAdapter, clockAdapter)
 }

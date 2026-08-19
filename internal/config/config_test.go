@@ -819,3 +819,61 @@ func TestLoadAppConfig_NegativeCallBudgetRejected(t *testing.T) {
 	_, err := LoadAppConfig("", "")
 	require.ErrorContains(t, err, "getlogs_call_budget")
 }
+
+// TestLoadAppConfig_AddressThrottleEnvVarsReachConfig pins that the address
+// indexing throttle loads from environment variables alone, the way deploy
+// configuration reaches production — a throttle that silently stays disabled is
+// this feature's worst failure mode.
+func TestLoadAppConfig_AddressThrottleEnvVarsReachConfig(t *testing.T) {
+	t.Setenv("FF_INDEXER_DATABASE_HOST", "localhost")
+	t.Setenv("FF_INDEXER_DATABASE_DBNAME", "ff")
+	t.Setenv("FF_INDEXER_JOBS_TOKEN_QUEUE", "token_index")
+	t.Setenv("FF_INDEXER_ETHEREUM_RPC_URL", "http://rpc.invalid")
+	t.Setenv("FF_INDEXER_ETHEREUM_WEBSOCKET_URL", "ws://rpc.invalid")
+	t.Setenv("FF_INDEXER_TEZOS_API_URL", "http://tzkt.invalid")
+	t.Setenv("FF_INDEXER_TEZOS_WEBSOCKET_URL", "ws://tzkt.invalid")
+
+	t.Setenv("FF_INDEXER_ADDRESS_INDEXING_SUCCESS_COOLDOWN", "1h")
+	t.Setenv("FF_INDEXER_ADDRESS_INDEXING_FAILURE_BACKOFF", "30m")
+	t.Setenv("FF_INDEXER_ADDRESS_INDEXING_FAILURE_BACKOFF_CAP", "12h")
+
+	cfg, err := LoadAppConfig("", "")
+	require.NoError(t, err)
+	require.Equal(t, time.Hour, cfg.AddressIndexingSuccessCooldown)
+	require.Equal(t, 30*time.Minute, cfg.AddressIndexingFailureBackoff)
+	require.Equal(t, 12*time.Hour, cfg.AddressIndexingFailureBackoffCap)
+
+	// And the API view the server is built from carries them too.
+	api := cfg.ToAPIConfig()
+	require.Equal(t, time.Hour, api.AddressIndexingSuccessCooldown)
+}
+
+// TestLoadAppConfig_AddressThrottleValidation pins the startup rejections:
+// negative durations (which would silently disable the throttle) and a cap
+// below the base (which the first backoff would immediately exceed).
+func TestLoadAppConfig_AddressThrottleValidation(t *testing.T) {
+	setRequired := func(t *testing.T) {
+		t.Setenv("FF_INDEXER_DATABASE_HOST", "localhost")
+		t.Setenv("FF_INDEXER_DATABASE_DBNAME", "ff")
+		t.Setenv("FF_INDEXER_JOBS_TOKEN_QUEUE", "token_index")
+		t.Setenv("FF_INDEXER_ETHEREUM_RPC_URL", "http://rpc.invalid")
+		t.Setenv("FF_INDEXER_ETHEREUM_WEBSOCKET_URL", "ws://rpc.invalid")
+		t.Setenv("FF_INDEXER_TEZOS_API_URL", "http://tzkt.invalid")
+		t.Setenv("FF_INDEXER_TEZOS_WEBSOCKET_URL", "ws://tzkt.invalid")
+	}
+
+	t.Run("negative cooldown rejected", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("FF_INDEXER_ADDRESS_INDEXING_SUCCESS_COOLDOWN", "-1h")
+		_, err := LoadAppConfig("", "")
+		require.ErrorContains(t, err, "address_indexing_success_cooldown")
+	})
+
+	t.Run("cap below base rejected", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("FF_INDEXER_ADDRESS_INDEXING_FAILURE_BACKOFF", "2h")
+		t.Setenv("FF_INDEXER_ADDRESS_INDEXING_FAILURE_BACKOFF_CAP", "1h")
+		_, err := LoadAppConfig("", "")
+		require.ErrorContains(t, err, "address_indexing_failure_backoff_cap")
+	})
+}

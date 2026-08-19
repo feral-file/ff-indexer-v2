@@ -38,6 +38,7 @@ func newTestExecutor(t *testing.T, ctrl *gomock.Controller) (executor.Executor, 
 		adapter.NewClock(),
 		domain.Chain("tezos:mainnet"),
 		domain.Chain("eip155:1"),
+		executor.AddressIndexingThrottle{},
 	)
 	return exec, mockStore
 }
@@ -640,6 +641,7 @@ func newReleaseIndexingExecutor(t *testing.T) executor.Executor {
 		adapter.NewClock(),
 		domain.Chain("tezos:mainnet"),
 		domain.Chain("eip155:1"),
+		executor.AddressIndexingThrottle{},
 	)
 }
 
@@ -775,6 +777,7 @@ func newReleaseIndexingExecutorWithEnqueue(t *testing.T) executor.Executor {
 		adapter.NewClock(),
 		domain.Chain("tezos:mainnet"),
 		domain.Chain("eip155:1"),
+		executor.AddressIndexingThrottle{},
 	)
 }
 
@@ -843,6 +846,7 @@ func TestTriggerReleaseIndexing_WhitespacePaddedIDIsNormalized(t *testing.T) {
 		mockStore, mockJobQueue, "token_index", mockBlacklist,
 		adapter.NewJSON(), adapter.NewClock(),
 		domain.Chain("tezos:mainnet"), domain.Chain("eip155:1"),
+		executor.AddressIndexingThrottle{},
 	)
 
 	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "  some-id  ", "", []int64{1})
@@ -873,6 +877,7 @@ func TestTriggerReleaseIndexing_WhitespacePaddedSlugIsNormalized(t *testing.T) {
 		mockStore, mockJobQueue, "token_index", mockBlacklist,
 		adapter.NewJSON(), adapter.NewClock(),
 		domain.Chain("tezos:mainnet"), domain.Chain("eip155:1"),
+		executor.AddressIndexingThrottle{},
 	)
 
 	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "", "\t industrial-park \n", []int64{1})

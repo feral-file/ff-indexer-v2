@@ -116,7 +116,14 @@ func TestIndexTokenOwner_Tezos_EmptyFirstRun(t *testing.T) {
 	require.NoError(t, wf.IndexTokenOwner(ctx, addr))
 }
 
-func TestIndexTokenOwner_JobCreateFailure_StillIndexes(t *testing.T) {
+// TestIndexTokenOwner_JobCreateFailure_Reschedules pins the tracking-durability
+// contract (feralfile-bot #128 rounds 3 and 9): the address_indexing_jobs row
+// is the durable record every trigger-endpoint gate reads, so a failure to
+// create it must RESCHEDULE the queue job — the worker maps ordinary errors to
+// a terminal MarkJobFailed, which would turn a transient database blip into a
+// permanently failed scan plus a throttle backoff penalty. The strict mock has
+// no scan expectations, proving indexing does not proceed untracked.
+func TestIndexTokenOwner_JobCreateFailure_Reschedules(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
 	defer d.Ctrl.Finish()
@@ -124,19 +131,12 @@ func TestIndexTokenOwner_JobCreateFailure_StillIndexes(t *testing.T) {
 	exec, wf := d.Exec, d.Wf
 	addr := "0x1234567890123456789012345678901234567890"
 	chainID := domain.ChainEthereumMainnet
-	latest := uint64(5000)
 	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(errors.New("db error"))
-	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
-	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
-	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
-	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
-	exec.EXPECT().GetEthereumTokenCIDsByOwnerWithinBlockRange(
-		gomock.Any(), addr, uint64(1000), latest, gomock.Any(), domain.BlockScanOrderDesc,
-	).Return(domain.TokenWithBlockRangeResult{EffectiveFromBlock: 1000, EffectiveToBlock: latest}, nil)
-	exec.EXPECT().UpdateIndexingBlockRangeForAddress(gomock.Any(), addr, chainID, uint64(1000), latest).Return(nil)
-	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusCompleted, gomock.Any()).Return(nil)
 
-	require.NoError(t, wf.IndexTokenOwner(ctx, addr))
+	err := wf.IndexTokenOwner(ctx, addr)
+	var re *jobs.RescheduleError
+	require.ErrorAs(t, err, &re, "tracking-create failure must reschedule, not terminally fail")
+	require.False(t, re.At.IsZero())
 }
 
 // TestIndexTokenOwner_IndexingError_MarksJobFailed matches the “child/owner path failed and job is marked failed”

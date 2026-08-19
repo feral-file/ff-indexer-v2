@@ -33,6 +33,8 @@ type Config struct {
 	Auth            middleware.AuthConfig
 	TezosChainID    domain.Chain
 	EthereumChainID domain.Chain
+	// AddressThrottle rate-limits per-address indexing triggers; zero disables.
+	AddressThrottle executor.AddressIndexingThrottle
 }
 
 // Server wraps the HTTP server
@@ -78,7 +80,7 @@ func (s *Server) Start(ctx context.Context) error {
 	router.Use(middleware.SetupCORS())
 
 	// Create shared executor (contains business logic shared between REST and GraphQL)
-	exec := executor.NewExecutor(s.store, s.jobQueue, s.config.TokenQueue, s.blacklist, s.json, s.clock, s.config.TezosChainID, s.config.EthereumChainID)
+	exec := executor.NewExecutor(s.store, s.jobQueue, s.config.TokenQueue, s.blacklist, s.json, s.clock, s.config.TezosChainID, s.config.EthereumChainID, s.config.AddressThrottle)
 
 	// Create REST handler
 	restHandler := rest.NewHandler(s.config.Debug, exec)

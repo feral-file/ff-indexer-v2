@@ -2559,11 +2559,18 @@ func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddr
 	if input.JobID < 1 {
 		return fmt.Errorf("job_id is required and must be positive")
 	}
+	// Idempotent on two axes: an active row for the address (another trigger or
+	// worker already tracks a scan), and ANY row for this queue job. The job_id
+	// check is what prevents a late create from resurrecting a finished job: a
+	// worker can claim, track, and terminalize the row before this runs, and a
+	// second `running` row for the same job would be orphaned forever — its
+	// terminal transition (markJobTerminal) has already happened.
 	var n int64
 	err := s.db.WithContext(ctx).Model(&schema.AddressIndexingJob{}).
-		Where("address = ? AND chain = ? AND status IN ?",
+		Where("(address = ? AND chain = ? AND status IN ?) OR job_id = ?",
 			input.Address, input.Chain,
-			[]schema.IndexingJobStatus{schema.IndexingJobStatusRunning, schema.IndexingJobStatusPaused}).
+			[]schema.IndexingJobStatus{schema.IndexingJobStatusRunning, schema.IndexingJobStatusPaused},
+			input.JobID).
 		Count(&n).Error
 	if err != nil {
 		return fmt.Errorf("failed to check address indexing job: %w", err)
@@ -2596,11 +2603,17 @@ func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddr
 	case schema.IndexingJobStatusCanceled:
 		job.CanceledAt = &now
 	}
-	err = s.db.WithContext(ctx).Create(job).Error
+	// ON CONFLICT DO NOTHING (untargeted, so it covers both the per-job unique
+	// index and the active-per-address partial index) is what actually closes
+	// the create race: the check above is a cheap short-circuit, but a worker
+	// can create and terminalize a row for this job between that check and this
+	// insert, and only the database constraint can reject the late duplicate
+	// atomically.
+	err = s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(job).Error
 	if err == nil {
 		return nil
 	}
-	// Another worker may have inserted the active row; treat as idempotent
+	// Belt-and-suspenders for drivers surfacing the conflict as an error anyway.
 	if isPostgresUniqueViolation(err) {
 		return nil
 	}
@@ -2701,6 +2714,88 @@ func (s *pgStore) GetActiveIndexingJobForAddress(ctx context.Context, address st
 		return nil, nil // No active job found (not an error)
 	}
 	return nil, fmt.Errorf("failed to get active job for address %s on chain %s: %w", address, chainID, err)
+}
+
+// WithAddressTriggerLock runs fn inside one transaction holding the
+// per-(chain, address) advisory lock. See the Store interface doc for the
+// serialization and pool-safety contract. pg_advisory_xact_lock ties the lock
+// to the transaction's connection and lifetime: no separate lock connection to
+// starve the pool, and no release path to leak — commit or rollback frees it.
+func (s *pgStore) WithAddressTriggerLock(ctx context.Context, address string, chainID domain.Chain, fn func(txStore Store) error) error {
+	key := string(chainID) + ":" + address
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(
+			`SELECT pg_advisory_xact_lock((hashtext('addr_trigger:' || $1::text))::bigint)`, key,
+		).Error; err != nil {
+			return fmt.Errorf("failed to acquire address trigger lock: %w", err)
+		}
+		return fn(NewPGStore(tx))
+	})
+}
+
+// GetAddressIndexingThrottleState returns the latest terminal job and the
+// consecutive-failure streak for an address. Both queries ride the
+// idx_address_indexing_jobs_address_chain_created index; the history per
+// address is small (one row per triggered scan).
+func (s *pgStore) GetAddressIndexingThrottleState(ctx context.Context, address string, chainID domain.Chain) (*AddressIndexingThrottleState, error) {
+	terminalStatuses := []schema.IndexingJobStatus{
+		schema.IndexingJobStatusCompleted,
+		schema.IndexingJobStatusFailed,
+		schema.IndexingJobStatusCanceled,
+	}
+
+	state := &AddressIndexingThrottleState{}
+
+	// Throttle decisions must read the primary: a job's terminal status is
+	// written there moments before the next trigger arrives, and a lagging
+	// replica returning "no terminal job" (or a stale streak) would wave a new
+	// costly scan straight through the cooldown/backoff window. Unlike the
+	// active-job lookup above, there is no permissive fallback — the primary is
+	// authoritative for a gate whose failure mode is silent credit spend.
+	db := s.db
+	if hasDBResolver(db) {
+		db = db.Clauses(dbresolver.Write)
+	}
+
+	// Recency is ordered by id, not created_at: ids are monotonic with insertion,
+	// while created_at (default now()) ties for rows written in one transaction —
+	// and a tie here silently picks an arbitrary "latest" job.
+	var latest schema.AddressIndexingJob
+	err := db.WithContext(ctx).
+		Where("address = ? AND chain = ? AND status IN ?", address, chainID, terminalStatuses).
+		Order("id DESC").
+		First(&latest).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return state, nil // no history: nothing to throttle on
+	case err != nil:
+		return nil, fmt.Errorf("failed to get latest terminal job for address %s on chain %s: %w", address, chainID, err)
+	}
+	state.LatestTerminal = &latest
+
+	if latest.Status != schema.IndexingJobStatusFailed {
+		return state, nil // streak is zero by definition
+	}
+
+	// Streak = failed jobs newer than the last completed/canceled one. COALESCE
+	// to zero covers addresses whose entire history is failures.
+	var streak int64
+	if err := db.WithContext(ctx).
+		Model(&schema.AddressIndexingJob{}).
+		Where("address = ? AND chain = ? AND status = ?", address, chainID, schema.IndexingJobStatusFailed).
+		Where(`id > COALESCE((
+			SELECT max(id) FROM address_indexing_jobs
+			WHERE address = ? AND chain = ? AND status IN ?
+		), 0)`, address, chainID, []schema.IndexingJobStatus{
+			schema.IndexingJobStatusCompleted,
+			schema.IndexingJobStatusCanceled,
+		}).
+		Count(&streak).Error; err != nil {
+		return nil, fmt.Errorf("failed to count consecutive failures for address %s on chain %s: %w", address, chainID, err)
+	}
+	state.ConsecutiveFailures = int(streak)
+
+	return state, nil
 }
 
 // UpdateAddressIndexingJobStatus updates job status with timestamp
@@ -4319,41 +4414,67 @@ RETURNING jobs.id, jobs.queue, jobs.kind, jobs.payload, jobs.status, jobs.unique
 
 // MarkJobSucceeded marks a running job as terminal success.
 func (s *pgStore) MarkJobSucceeded(ctx context.Context, id int64) error {
+	return s.markJobTerminal(ctx, id, schema.JobStatusSucceeded, schema.IndexingJobStatusCompleted, "completed_at", nil)
+}
+
+// markJobTerminal transitions a running queue job to a terminal status and, in
+// the same statement, moves any still-active address_indexing_jobs row tracking
+// it to the matching terminal status.
+//
+// Reason: the workflow writes richer tracking transitions itself, but those
+// writes are best-effort — if one fails, the queue job would go terminal while
+// the tracking row stayed `running`, permanently reporting the address as busy
+// (blocking retriggers and hiding the outcome from the trigger throttle). This
+// choke point is where jobs actually become terminal, so syncing here makes the
+// pair converge on every path (success, failure, cancel) atomically; the
+// tracking update is a no-op when the workflow's own write already landed.
+// Non-owner jobs have no tracking row and the join simply matches nothing.
+func (s *pgStore) markJobTerminal(
+	ctx context.Context,
+	id int64,
+	jobStatus schema.JobStatus,
+	trackingStatus schema.IndexingJobStatus,
+	trackingTimeColumn string,
+	lastErr *string,
+) error {
 	now := time.Now().UTC()
-	result := s.db.WithContext(ctx).Model(&schema.Job{}).
-		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
-		Updates(map[string]any{
-			"status":      schema.JobStatusSucceeded,
-			"finished_at": now,
-			"updated_at":  now,
-		})
-	if result.Error != nil {
-		return result.Error
+	var count int64
+	// Raw() executes through gorm's query callback, which the DB resolver routes
+	// to a read replica by default — these CTEs mutate, so pin them to the
+	// primary explicitly (the pre-refactor Updates() calls got this for free via
+	// the update callback).
+	db := s.db
+	if hasDBResolver(db) {
+		db = db.Clauses(dbresolver.Write)
 	}
-	if result.RowsAffected == 0 {
+	err := db.WithContext(ctx).Raw(fmt.Sprintf(`
+		WITH terminal AS (
+			UPDATE jobs
+			SET status = $1, finished_at = $2, updated_at = $2,
+			    last_error = COALESCE($5, last_error)
+			WHERE id = $3 AND status = 'running'
+			RETURNING id
+		), synced AS (
+			UPDATE address_indexing_jobs
+			SET status = $4, %s = $2, updated_at = $2
+			WHERE job_id IN (SELECT id FROM terminal)
+			  AND status IN ('running', 'paused')
+		)
+		SELECT count(*) FROM terminal`, trackingTimeColumn),
+		jobStatus, now, id, trackingStatus, lastErr).Scan(&count).Error
+	if err != nil {
+		return err
+	}
+	if count == 0 {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
 }
 
 // MarkJobFailed marks a running job as failed with a message.
+// The linked address-tracking row (if still active) fails with it; see markJobTerminal.
 func (s *pgStore) MarkJobFailed(ctx context.Context, id int64, lastErr string) error {
-	now := time.Now().UTC()
-	result := s.db.WithContext(ctx).Model(&schema.Job{}).
-		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
-		Updates(map[string]any{
-			"status":      schema.JobStatusFailed,
-			"last_error":  lastErr,
-			"finished_at": now,
-			"updated_at":  now,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return s.markJobTerminal(ctx, id, schema.JobStatusFailed, schema.IndexingJobStatusFailed, "failed_at", &lastErr)
 }
 
 // RescheduleJob moves a running job back to pending with a new run_after.
@@ -4403,22 +4524,9 @@ func (s *pgStore) RequestJobCancel(ctx context.Context, id int64) error {
 }
 
 // MarkJobCanceled sets status=canceled for a still-running job.
+// The linked address-tracking row (if still active) is canceled with it; see markJobTerminal.
 func (s *pgStore) MarkJobCanceled(ctx context.Context, id int64) error {
-	now := time.Now().UTC()
-	result := s.db.WithContext(ctx).Model(&schema.Job{}).
-		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
-		Updates(map[string]any{
-			"status":      schema.JobStatusCanceled,
-			"finished_at": now,
-			"updated_at":  now,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return s.markJobTerminal(ctx, id, schema.JobStatusCanceled, schema.IndexingJobStatusCanceled, "canceled_at", nil)
 }
 
 // SweepOrphanedJobs recovers running jobs left behind by a crashed worker process.
@@ -4443,16 +4551,34 @@ func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string, maxAttemp
 
 	// Permanently fail jobs that have crashed maxAttempts or more times.
 	// These will never be retried, giving operators a clear terminal signal.
-	failedResult := s.db.WithContext(ctx).Model(&schema.Job{}).
-		Where("queue = ? AND status = ? AND attempt_count >= ?", queue, schema.JobStatusRunning, maxAttempts).
-		Updates(map[string]any{
-			"status":      schema.JobStatusFailed,
-			"last_error":  fmt.Sprintf("crash-loop terminated: job failed %d time(s) without completing (process crash or SIGABRT)", maxAttempts),
-			"finished_at": now,
-			"updated_at":  now,
-		})
-	if failedResult.Error != nil {
-		return 0, 0, failedResult.Error
+	// Active address_indexing_jobs rows tracking a failed job are failed in the
+	// same statement: the tracking row was created as `running` when the job was
+	// claimed, and leaving it active would report the address as permanently busy
+	// (blocking every retrigger) while hiding the terminal failure from the
+	// trigger throttle's backoff. The CTE keeps both statuses atomic.
+	var failedCount int64
+	// Mutating CTE via Raw(): pin to the primary (see markJobTerminal).
+	db := s.db
+	if hasDBResolver(db) {
+		db = db.Clauses(dbresolver.Write)
+	}
+	err := db.WithContext(ctx).Raw(`
+		WITH failed AS (
+			UPDATE jobs
+			SET status = 'failed', last_error = $1, finished_at = $2, updated_at = $2
+			WHERE queue = $3 AND status = 'running' AND attempt_count >= $4
+			RETURNING id
+		), synced AS (
+			UPDATE address_indexing_jobs
+			SET status = 'failed', failed_at = $2, updated_at = $2
+			WHERE job_id IN (SELECT id FROM failed)
+			  AND status IN ('running', 'paused')
+		)
+		SELECT count(*) FROM failed`,
+		fmt.Sprintf("crash-loop terminated: job failed %d time(s) without completing (process crash or SIGABRT)", maxAttempts),
+		now, queue, maxAttempts).Scan(&failedCount).Error
+	if err != nil {
+		return 0, 0, err
 	}
 
 	// Reset remaining orphaned jobs (attempt_count < maxAttempts) back to pending for retry.
@@ -4464,27 +4590,47 @@ func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string, maxAttemp
 			"updated_at": now,
 		})
 	if resetResult.Error != nil {
-		return 0, failedResult.RowsAffected, resetResult.Error
+		return 0, failedCount, resetResult.Error
 	}
 
-	return resetResult.RowsAffected, failedResult.RowsAffected, nil
+	return resetResult.RowsAffected, failedCount, nil
 }
 
 // SweepCanceledPendingJobs transitions pending jobs with cancel_requested to canceled status.
 // Returns the number of jobs transitioned.
+//
+// Address-indexing tracking rows are synchronized in the same statement: a
+// trigger creates its address_indexing_jobs row as `running` before the queue
+// job is claimed, so canceling a still-pending job would otherwise leave that
+// row active forever — the trigger endpoint's active-job check would then
+// report the address as permanently busy and it could never be retriggered
+// (and the throttle's operator-cancel reset would never apply). One CTE keeps
+// both statuses atomic: they cannot diverge under a crash between updates.
 func (s *pgStore) SweepCanceledPendingJobs(ctx context.Context, queue string) (int64, error) {
 	now := time.Now().UTC()
-	result := s.db.WithContext(ctx).Model(&schema.Job{}).
-		Where("queue = ? AND status = ? AND cancel_requested = ?", queue, schema.JobStatusPending, true).
-		Updates(map[string]any{
-			"status":      schema.JobStatusCanceled,
-			"finished_at": now,
-			"updated_at":  now,
-		})
-	if result.Error != nil {
-		return 0, result.Error
+	var count int64
+	// Mutating CTE via Raw(): pin to the primary (see markJobTerminal).
+	db := s.db
+	if hasDBResolver(db) {
+		db = db.Clauses(dbresolver.Write)
 	}
-	return result.RowsAffected, nil
+	err := db.WithContext(ctx).Raw(`
+		WITH canceled AS (
+			UPDATE jobs
+			SET status = 'canceled', finished_at = $1, updated_at = $1
+			WHERE queue = $2 AND status = 'pending' AND cancel_requested = true
+			RETURNING id
+		), synced AS (
+			UPDATE address_indexing_jobs
+			SET status = 'canceled', canceled_at = $1, updated_at = $1
+			WHERE job_id IN (SELECT id FROM canceled)
+			  AND status IN ('running', 'paused')
+		)
+		SELECT count(*) FROM canceled`, now, queue).Scan(&count).Error
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // AcquireJobQueueLock tries a session advisory lock (one worker per process per queue) on a dedicated connection.

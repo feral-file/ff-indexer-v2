@@ -109,10 +109,13 @@ type executor struct {
 	clock           adapter.Clock
 	tezosChainID    domain.Chain
 	ethereumChainID domain.Chain
+	// addressThrottle rate-limits per-address scan triggers; zero value disables.
+	addressThrottle AddressIndexingThrottle
 }
 
 // NewExecutor builds the API executor. tokenQueue is jobs.token_queue (e.g. token_index).
-func NewExecutor(store store.Store, jobQueue jobs.JobQueue, tokenQueue string, blacklist registry.BlacklistRegistry, json adapter.JSON, clock adapter.Clock, tezosChainID domain.Chain, ethereumChainID domain.Chain) Executor {
+// addressThrottle rate-limits TriggerAddressIndexing per address; the zero value disables it.
+func NewExecutor(store store.Store, jobQueue jobs.JobQueue, tokenQueue string, blacklist registry.BlacklistRegistry, json adapter.JSON, clock adapter.Clock, tezosChainID domain.Chain, ethereumChainID domain.Chain, addressThrottle AddressIndexingThrottle) Executor {
 	return &executor{
 		store:           store,
 		jobQueue:        jobQueue,
@@ -122,6 +125,7 @@ func NewExecutor(store store.Store, jobQueue jobs.JobQueue, tokenQueue string, b
 		clock:           clock,
 		tezosChainID:    tezosChainID,
 		ethereumChainID: ethereumChainID,
+		addressThrottle: addressThrottle,
 	}
 }
 
@@ -803,76 +807,222 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 			return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported blockchain for address: %s", address))
 		}
 
-		// Check for existing active job (running or paused)
-		existingJob, err := e.store.GetActiveIndexingJobForAddress(ctx, address, chainID)
+		info, err := e.triggerAddressIndexingLocked(ctx, address, chainID)
 		if err != nil {
-			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to check existing jobs for address %s: %v", address, err))
+			return nil, err
+		}
+		outJobs = append(outJobs, info)
+	}
+
+	// Return job information for all addresses
+	return &dto.TriggerAddressIndexingResponse{Jobs: outJobs}, nil
+}
+
+// triggerAddressIndexingLocked runs the gate-then-enqueue sequence for one
+// address while holding the per-(chain, address) trigger lock, so the active-job
+// check, the throttle decision, and the enqueue are atomic per address across
+// all API instances. Without the lock, two concurrent triggers can both pass
+// the gates before either enqueues; a fast-terminating first scan then lets the
+// second start a fresh job inside the cooldown/backoff window it should have
+// been throttled by.
+func (e *executor) triggerAddressIndexingLocked(ctx context.Context, address string, chainID domain.Chain) (dto.AddressIndexingJobInfo, error) {
+	var out dto.AddressIndexingJobInfo
+	lockErr := e.store.WithAddressTriggerLock(ctx, address, chainID, func(txStore store.Store) error {
+		// All gated reads and writes run on the lock's own transaction: one
+		// pooled connection for lock + gates + enqueue + tracking (pool-safe),
+		// and an error rolls the whole trigger back — an enqueue can never
+		// outlive a failed tracking insert.
+		txQueue := jobs.NewJobQueue(txStore, e.json)
+		info, err := e.runAddressIndexingGates(ctx, txStore, txQueue, address, chainID)
+		if err != nil {
+			return err
+		}
+		out = info
+		return nil
+	})
+	if lockErr != nil {
+		var apiErr *apierrors.APIError
+		if errors.As(lockErr, &apiErr) {
+			return dto.AddressIndexingJobInfo{}, lockErr
+		}
+		return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
+			fmt.Sprintf("Failed to serialize indexing trigger for address %s: %v", address, lockErr))
+	}
+	return out, nil
+}
+
+// runAddressIndexingGates executes the per-address gate-then-enqueue sequence.
+// It must only be called while holding the per-address trigger lock, with st
+// and jq bound to the lock's transaction.
+func (e *executor) runAddressIndexingGates(ctx context.Context, st store.Store, jq jobs.JobQueue, address string, chainID domain.Chain) (dto.AddressIndexingJobInfo, error) {
+
+	// Check for existing active job (running or paused)
+	existingJob, err := st.GetActiveIndexingJobForAddress(ctx, address, chainID)
+	if err != nil {
+		return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(fmt.Sprintf("Failed to check existing jobs for address %s: %v", address, err))
+	}
+
+	// An "active" tracking row can belong to a pending queue job that is already
+	// cancel-requested — doomed, the sweeper will terminate it, but until it
+	// runs the row blocks every retrigger. Finalize the pending cancellation now
+	// (the sweep also cancels the tracking row atomically) so an operator's
+	// cancel-then-retry works immediately instead of returning the doomed job.
+	if existingJob != nil && existingJob.JobID != 0 {
+		qj, jerr := st.GetJob(ctx, existingJob.JobID)
+		if jerr != nil {
+			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
+				fmt.Sprintf("Failed to inspect queue job for address %s: %v", address, jerr))
+		}
+		if qj != nil && qj.Status == schema.JobStatusPending && qj.CancelRequested {
+			if _, sweepErr := st.SweepCanceledPendingJobs(ctx, e.tokenQueue); sweepErr != nil {
+				return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
+					fmt.Sprintf("Failed to finalize canceled job for address %s: %v", address, sweepErr))
+			}
+			existingJob, err = st.GetActiveIndexingJobForAddress(ctx, address, chainID)
+			if err != nil {
+				return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
+					fmt.Sprintf("Failed to check existing jobs for address %s: %v", address, err))
+			}
+		}
+	}
+
+	if existingJob != nil {
+		if existingJob.JobID == 0 {
+			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
+				fmt.Sprintf("active indexing job for %s is missing job_id; cannot report progress", address))
+		}
+		// Deprecated response field workflow_id (JSON); mirrors address_indexing_jobs.workflow_id.
+		wf := strings.TrimSpace(existingJob.WorkflowID)
+		if wf == "" {
+			wf = strconv.FormatInt(existingJob.JobID, 10)
+		}
+		info := dto.AddressIndexingJobInfo{
+			Address:    address,
+			JobID:      existingJob.JobID,
+			WorkflowID: wf,
 		}
 
-		if existingJob != nil {
-			if existingJob.JobID == 0 {
-				return nil, apierrors.NewServiceError(
-					fmt.Sprintf("active indexing job for %s is missing job_id; cannot report progress", address))
-			}
-			// Deprecated response field workflow_id (JSON); mirrors address_indexing_jobs.workflow_id.
-			wf := strings.TrimSpace(existingJob.WorkflowID)
+		logger.Info(fmt.Sprintf("Found existing %s job for address", existingJob.Status),
+			zap.String("address", address),
+			zap.Int64("job_id", existingJob.JobID),
+			zap.String("status", string(existingJob.Status)),
+		)
+		return info, nil
+	}
+
+	// Throttle: an address that just finished a scan (cooldown) or keeps
+	// failing one (exponential backoff) does not get a fresh job; the caller
+	// receives the last job's info plus the earliest retry time. This gate
+	// sits after the active-job check on purpose — an active job already
+	// answers "what is happening for this address" better than a throttle
+	// verdict would.
+	if e.addressThrottle.Enabled() {
+		state, err := st.GetAddressIndexingThrottleState(ctx, address, chainID)
+		if err != nil {
+			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(fmt.Sprintf("Failed to check indexing throttle for address %s: %v", address, err))
+		}
+		if retryAt, restricted := e.addressThrottle.RetryAt(state); restricted && e.clock.Now().Before(retryAt) {
+			last := state.LatestTerminal
+			retryAtCopy := retryAt
+			// Echo the stored opaque workflow id (legacy rows may hold a
+			// non-decimal Temporal id that clients resolve jobs by), falling
+			// back to str(job_id) only when the column is empty — the same
+			// contract as the active-job branch above.
+			wf := strings.TrimSpace(last.WorkflowID)
 			if wf == "" {
-				wf = strconv.FormatInt(existingJob.JobID, 10)
+				wf = strconv.FormatInt(last.JobID, 10)
 			}
-			outJobs = append(outJobs, dto.AddressIndexingJobInfo{
-				Address:    address,
-				JobID:      existingJob.JobID,
-				WorkflowID: wf,
-			})
-
-			logger.Info(fmt.Sprintf("Found existing %s job for address", existingJob.Status),
+			logger.Info("Address indexing throttled",
 				zap.String("address", address),
-				zap.Int64("job_id", existingJob.JobID),
-				zap.String("status", string(existingJob.Status)),
+				zap.String("lastStatus", string(last.Status)),
+				zap.Time("retryAt", retryAt),
 			)
-			continue
+			return dto.AddressIndexingJobInfo{
+				Address:    address,
+				JobID:      last.JobID,
+				WorkflowID: wf,
+				Throttled:  true,
+				RetryAt:    &retryAtCopy,
+			}, nil
 		}
+	}
 
-		uk := jobs.IndexTokenOwnerUniqueKey(chainID, address)
-		pj, _, err := e.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+	uk := jobs.IndexTokenOwnerUniqueKey(chainID, address)
+	pj, created, err := jq.Enqueue(ctx, jobs.EnqueueOptions{
+		Queue:     e.tokenQueue,
+		Kind:      "IndexTokenOwner",
+		Args:      []any{address},
+		UniqueKey: &uk,
+	})
+	if err != nil {
+		return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing for address %s: %v", address, err))
+	}
+	if pj == nil {
+		return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing for address %s: empty job", address))
+	}
+
+	// A deduplicated pending job that is already cancel-requested will never
+	// run (the cancellation sweeper terminates it), so reporting it as
+	// started would hand the caller a doomed job id. Apply the pending
+	// cancellation now (the sweep also finalizes its tracking row), which
+	// frees the unique key, then enqueue replacement work.
+	if !created && pj.Status == schema.JobStatusPending && pj.CancelRequested {
+		if _, sweepErr := st.SweepCanceledPendingJobs(ctx, e.tokenQueue); sweepErr != nil {
+			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
+				fmt.Sprintf("Failed to finalize canceled job for address %s: %v", address, sweepErr))
+		}
+		pj, created, err = jq.Enqueue(ctx, jobs.EnqueueOptions{
 			Queue:     e.tokenQueue,
 			Kind:      "IndexTokenOwner",
 			Args:      []any{address},
 			UniqueKey: &uk,
 		})
-		if err != nil {
-			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing for address %s: %v", address, err))
+		if err != nil || pj == nil {
+			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing for address %s: %v", address, err))
 		}
-		if pj == nil {
-			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing for address %s: empty job", address))
-		}
-		err = e.store.CreateAddressIndexingJob(ctx, store.CreateAddressIndexingJobInput{
-			Address: address,
-			Chain:   chainID,
-			Status:  schema.IndexingJobStatusRunning,
-			JobID:   pj.ID,
-		})
-		if err != nil {
-			logger.Warn(fmt.Sprintf("Failed to create indexing job: %v", err),
+		if !created {
+			// Another trigger raced us to the freed unique key; its job is
+			// the one to report, and this request must not cancel it below.
+			logger.Info("Concurrent trigger re-enqueued indexing job after cancel sweep",
 				zap.String("address", address),
 				zap.Int64("job_id", pj.ID))
 		}
-
-		outJobs = append(outJobs, dto.AddressIndexingJobInfo{
-			Address: address,
-			JobID:   pj.ID,
-			// Deprecated JSON workflow_id; new rows use str(job_id).
-			WorkflowID: strconv.FormatInt(pj.ID, 10),
-		})
-
-		logger.Info("Started new indexing job for address",
+	}
+	err = st.CreateAddressIndexingJob(ctx, store.CreateAddressIndexingJobInput{
+		Address: address,
+		Chain:   chainID,
+		Status:  schema.IndexingJobStatusRunning,
+		JobID:   pj.ID,
+	})
+	if err != nil {
+		// The tracking row is the durable record every gate on this endpoint
+		// reads (active-job check, throttle history). For a job THIS request
+		// created, failing here rolls the whole trigger transaction back — the
+		// enqueue is undone with it, so no untracked scan can run. A
+		// deduplicated job belongs to a concurrent trigger and must survive
+		// this request's rollback: its tracking row is (or will durably
+		// become, on claim) that trigger's responsibility, so log and return
+		// it as the existing job.
+		if created {
+			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
+				fmt.Sprintf("Failed to record indexing job for address %s: %v", address, err))
+		}
+		logger.Warn(fmt.Sprintf("Failed to upsert tracking for existing indexing job: %v", err),
 			zap.String("address", address),
-			zap.Int64("job_id", pj.ID),
-		)
+			zap.Int64("job_id", pj.ID))
 	}
 
-	// Return job information for all addresses
-	return &dto.TriggerAddressIndexingResponse{Jobs: outJobs}, nil
+	logger.Info("Started new indexing job for address",
+		zap.String("address", address),
+		zap.Int64("job_id", pj.ID),
+	)
+
+	return dto.AddressIndexingJobInfo{
+		Address: address,
+		JobID:   pj.ID,
+		// Deprecated JSON workflow_id; new rows use str(job_id).
+		WorkflowID: strconv.FormatInt(pj.ID, 10),
+	}, nil
 }
 
 func (e *executor) TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint64, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error) {
