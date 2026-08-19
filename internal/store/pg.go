@@ -4366,41 +4366,59 @@ RETURNING jobs.id, jobs.queue, jobs.kind, jobs.payload, jobs.status, jobs.unique
 
 // MarkJobSucceeded marks a running job as terminal success.
 func (s *pgStore) MarkJobSucceeded(ctx context.Context, id int64) error {
+	return s.markJobTerminal(ctx, id, schema.JobStatusSucceeded, schema.IndexingJobStatusCompleted, "completed_at", nil)
+}
+
+// markJobTerminal transitions a running queue job to a terminal status and, in
+// the same statement, moves any still-active address_indexing_jobs row tracking
+// it to the matching terminal status.
+//
+// Reason: the workflow writes richer tracking transitions itself, but those
+// writes are best-effort — if one fails, the queue job would go terminal while
+// the tracking row stayed `running`, permanently reporting the address as busy
+// (blocking retriggers and hiding the outcome from the trigger throttle). This
+// choke point is where jobs actually become terminal, so syncing here makes the
+// pair converge on every path (success, failure, cancel) atomically; the
+// tracking update is a no-op when the workflow's own write already landed.
+// Non-owner jobs have no tracking row and the join simply matches nothing.
+func (s *pgStore) markJobTerminal(
+	ctx context.Context,
+	id int64,
+	jobStatus schema.JobStatus,
+	trackingStatus schema.IndexingJobStatus,
+	trackingTimeColumn string,
+	lastErr *string,
+) error {
 	now := time.Now().UTC()
-	result := s.db.WithContext(ctx).Model(&schema.Job{}).
-		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
-		Updates(map[string]any{
-			"status":      schema.JobStatusSucceeded,
-			"finished_at": now,
-			"updated_at":  now,
-		})
-	if result.Error != nil {
-		return result.Error
+	var count int64
+	err := s.db.WithContext(ctx).Raw(fmt.Sprintf(`
+		WITH terminal AS (
+			UPDATE jobs
+			SET status = $1, finished_at = $2, updated_at = $2,
+			    last_error = COALESCE($5, last_error)
+			WHERE id = $3 AND status = 'running'
+			RETURNING id
+		), synced AS (
+			UPDATE address_indexing_jobs
+			SET status = $4, %s = $2, updated_at = $2
+			WHERE job_id IN (SELECT id FROM terminal)
+			  AND status IN ('running', 'paused')
+		)
+		SELECT count(*) FROM terminal`, trackingTimeColumn),
+		jobStatus, now, id, trackingStatus, lastErr).Scan(&count).Error
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
+	if count == 0 {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
 }
 
 // MarkJobFailed marks a running job as failed with a message.
+// The linked address-tracking row (if still active) fails with it; see markJobTerminal.
 func (s *pgStore) MarkJobFailed(ctx context.Context, id int64, lastErr string) error {
-	now := time.Now().UTC()
-	result := s.db.WithContext(ctx).Model(&schema.Job{}).
-		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
-		Updates(map[string]any{
-			"status":      schema.JobStatusFailed,
-			"last_error":  lastErr,
-			"finished_at": now,
-			"updated_at":  now,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return s.markJobTerminal(ctx, id, schema.JobStatusFailed, schema.IndexingJobStatusFailed, "failed_at", &lastErr)
 }
 
 // RescheduleJob moves a running job back to pending with a new run_after.
@@ -4450,22 +4468,9 @@ func (s *pgStore) RequestJobCancel(ctx context.Context, id int64) error {
 }
 
 // MarkJobCanceled sets status=canceled for a still-running job.
+// The linked address-tracking row (if still active) is canceled with it; see markJobTerminal.
 func (s *pgStore) MarkJobCanceled(ctx context.Context, id int64) error {
-	now := time.Now().UTC()
-	result := s.db.WithContext(ctx).Model(&schema.Job{}).
-		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
-		Updates(map[string]any{
-			"status":      schema.JobStatusCanceled,
-			"finished_at": now,
-			"updated_at":  now,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return s.markJobTerminal(ctx, id, schema.JobStatusCanceled, schema.IndexingJobStatusCanceled, "canceled_at", nil)
 }
 
 // SweepOrphanedJobs recovers running jobs left behind by a crashed worker process.

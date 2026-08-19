@@ -8151,6 +8151,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetAddressIndexingThrottleState", testGetAddressIndexingThrottleState},
 		{"SweepCanceledPendingJobsSyncsAddressJobs", testSweepCanceledPendingJobsSyncsAddressJobs},
 		{"SweepOrphanedJobsSyncsAddressJobs", testSweepOrphanedJobsSyncsAddressJobs},
+		{"MarkJobTerminalSyncsAddressJobs", testMarkJobTerminalSyncsAddressJobs},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
 		{"MediaRenderProbeOperations", testMediaRenderProbeOperations},
@@ -8690,4 +8691,108 @@ func testSweepOrphanedJobsSyncsAddressJobs(t *testing.T, store Store) {
 	require.NotNil(t, state.LatestTerminal)
 	require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
 	require.Equal(t, 1, state.ConsecutiveFailures)
+}
+
+// testMarkJobTerminalSyncsAddressJobs pins round-4 F2: the worker's terminal
+// job transitions (succeeded/failed/canceled) are where a queue job actually
+// becomes terminal, and the workflow's own tracking updates are best-effort —
+// so each Mark* must move a still-active address_indexing_jobs row to the
+// matching terminal status in the same statement, or one transient DB error
+// leaves the address permanently "busy".
+func testMarkJobTerminalSyncsAddressJobs(t *testing.T, store Store) {
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+
+	cases := []struct {
+		name       string
+		mark       func(jobID int64) error
+		wantStatus schema.IndexingJobStatus
+		wantStamp  func(j *schema.AddressIndexingJob) *time.Time
+	}{
+		{
+			name:       "succeeded completes the tracking row",
+			mark:       func(id int64) error { return store.MarkJobSucceeded(ctx, id) },
+			wantStatus: schema.IndexingJobStatusCompleted,
+			wantStamp:  func(j *schema.AddressIndexingJob) *time.Time { return j.CompletedAt },
+		},
+		{
+			name:       "failed fails the tracking row",
+			mark:       func(id int64) error { return store.MarkJobFailed(ctx, id, "boom") },
+			wantStatus: schema.IndexingJobStatusFailed,
+			wantStamp:  func(j *schema.AddressIndexingJob) *time.Time { return j.FailedAt },
+		},
+		{
+			name:       "canceled cancels the tracking row",
+			mark:       func(id int64) error { return store.MarkJobCanceled(ctx, id) },
+			wantStatus: schema.IndexingJobStatusCanceled,
+			wantStamp:  func(j *schema.AddressIndexingJob) *time.Time { return j.CanceledAt },
+		},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			queue := fmt.Sprintf("q_mark_terminal_sync_%d", i)
+			addr := fmt.Sprintf("0xmark-terminal-sync-%d", i)
+			uk := fmt.Sprintf("mark-terminal-%d", i)
+
+			j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+				Queue:     queue,
+				Kind:      "IndexTokenOwner",
+				Payload:   []byte(`[]`),
+				UniqueKey: &uk,
+			})
+			require.NoError(t, err)
+			claimed, err := store.ClaimJobs(ctx, queue, 1)
+			require.NoError(t, err)
+			require.Len(t, claimed, 1)
+
+			// Tracking row created on claim; the workflow's own terminal update
+			// is simulated as failed by leaving the row running.
+			require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+				Address: addr,
+				Chain:   chain,
+				Status:  schema.IndexingJobStatusRunning,
+				JobID:   j.ID,
+			}))
+
+			require.NoError(t, tc.mark(j.ID))
+
+			addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+			require.NoError(t, err)
+			require.NotNil(t, addrJob)
+			require.Equal(t, tc.wantStatus, addrJob.Status)
+			require.NotNil(t, tc.wantStamp(addrJob), "terminal timestamp must be set")
+
+			active, err := store.GetActiveIndexingJobForAddress(ctx, addr, chain)
+			require.NoError(t, err)
+			require.Nil(t, active, "terminal tracking row must not read as active")
+		})
+	}
+
+	t.Run("workflow-written terminal state is not overwritten", func(t *testing.T) {
+		queue := "q_mark_terminal_sync_noop"
+		addr := "0xmark-terminal-sync-noop"
+		uk := "mark-terminal-noop"
+
+		j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+			Queue: queue, Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk,
+		})
+		require.NoError(t, err)
+		claimed, err := store.ClaimJobs(ctx, queue, 1)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
+		require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address: addr, Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+		}))
+
+		// The workflow already recorded failure; the queue job then succeeds
+		// (e.g. reschedule bookkeeping) — the sync must not resurrect the row.
+		require.NoError(t, store.UpdateAddressIndexingJobStatus(ctx, j.ID, schema.IndexingJobStatusFailed, time.Now().UTC()))
+		require.NoError(t, store.MarkJobSucceeded(ctx, j.ID))
+
+		addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+		require.NoError(t, err)
+		require.Equal(t, schema.IndexingJobStatusFailed, addrJob.Status,
+			"a terminal tracking status written by the workflow must be preserved")
+	})
 }

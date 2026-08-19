@@ -877,7 +877,7 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 		}
 
 		uk := jobs.IndexTokenOwnerUniqueKey(chainID, address)
-		pj, _, err := e.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+		pj, created, err := e.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
 			Queue:     e.tokenQueue,
 			Kind:      "IndexTokenOwner",
 			Args:      []any{address},
@@ -889,6 +889,34 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 		if pj == nil {
 			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing for address %s: empty job", address))
 		}
+
+		// A deduplicated pending job that is already cancel-requested will never
+		// run (the cancellation sweeper terminates it), so reporting it as
+		// started would hand the caller a doomed job id. Apply the pending
+		// cancellation now (the sweep also finalizes its tracking row), which
+		// frees the unique key, then enqueue replacement work.
+		if !created && pj.Status == schema.JobStatusPending && pj.CancelRequested {
+			if _, sweepErr := e.store.SweepCanceledPendingJobs(ctx, e.tokenQueue); sweepErr != nil {
+				return nil, apierrors.NewServiceError(
+					fmt.Sprintf("Failed to finalize canceled job for address %s: %v", address, sweepErr))
+			}
+			pj, created, err = e.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+				Queue:     e.tokenQueue,
+				Kind:      "IndexTokenOwner",
+				Args:      []any{address},
+				UniqueKey: &uk,
+			})
+			if err != nil || pj == nil {
+				return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing for address %s: %v", address, err))
+			}
+			if !created {
+				// Another trigger raced us to the freed unique key; its job is
+				// the one to report, and this request must not cancel it below.
+				logger.Info("Concurrent trigger re-enqueued indexing job after cancel sweep",
+					zap.String("address", address),
+					zap.Int64("job_id", pj.ID))
+			}
+		}
 		err = e.store.CreateAddressIndexingJob(ctx, store.CreateAddressIndexingJobInput{
 			Address: address,
 			Chain:   chainID,
@@ -897,18 +925,24 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 		})
 		if err != nil {
 			// The tracking row is the durable record every gate on this endpoint
-			// reads (active-job check, throttle history). Reporting success while
-			// it is missing would leave an untracked scan running and the next
-			// trigger free to start another. Best-effort cancel of the just
-			// enqueued job (the worker re-creates the row on claim as a fallback,
-			// but a canceled job never runs at all), then surface the failure.
-			if cancelErr := e.store.RequestJobCancel(ctx, pj.ID); cancelErr != nil {
-				logger.Warn(fmt.Sprintf("Failed to cancel untracked indexing job: %v", cancelErr),
-					zap.String("address", address),
-					zap.Int64("job_id", pj.ID))
+			// reads (active-job check, throttle history). For a job THIS request
+			// created, best-effort cancel it (a canceled pending job never runs)
+			// and surface the failure rather than report success-untracked. A
+			// deduplicated job belongs to a concurrent trigger and must not be
+			// canceled: its tracking row is (or will durably become, on claim)
+			// that trigger's responsibility, so return it as the existing job.
+			if created {
+				if cancelErr := e.store.RequestJobCancel(ctx, pj.ID); cancelErr != nil {
+					logger.Warn(fmt.Sprintf("Failed to cancel untracked indexing job: %v", cancelErr),
+						zap.String("address", address),
+						zap.Int64("job_id", pj.ID))
+				}
+				return nil, apierrors.NewServiceError(
+					fmt.Sprintf("Failed to record indexing job for address %s: %v", address, err))
 			}
-			return nil, apierrors.NewServiceError(
-				fmt.Sprintf("Failed to record indexing job for address %s: %v", address, err))
+			logger.Warn(fmt.Sprintf("Failed to upsert tracking for existing indexing job: %v", err),
+				zap.String("address", address),
+				zap.Int64("job_id", pj.ID))
 		}
 
 		outJobs = append(outJobs, dto.AddressIndexingJobInfo{

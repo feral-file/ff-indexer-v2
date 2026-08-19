@@ -227,3 +227,63 @@ func TestTriggerAddressIndexing_TrackingFailureCancelsAndErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
+
+// TestTriggerAddressIndexing_DoomedDedupJobIsSweptAndReplaced pins round-4 F1:
+// when Enqueue deduplicates onto a pending job that is already
+// cancel-requested (doomed — the sweeper will terminate it), the trigger must
+// not report it as started. Instead the pending cancellation is applied
+// immediately (freeing the unique key) and replacement work is enqueued.
+func TestTriggerAddressIndexing_DoomedDedupJobIsSweptAndReplaced(t *testing.T) {
+	t.Parallel()
+	f := newAddressThrottleFixture(t, executor.AddressIndexingThrottle{})
+
+	f.Store.EXPECT().
+		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
+		Return(nil, nil)
+	first := f.JQ.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 30, Status: schema.JobStatusPending, CancelRequested: true}, false, nil)
+	sweep := f.Store.EXPECT().
+		SweepCanceledPendingJobs(gomock.Any(), "token_index").
+		Return(int64(1), nil).
+		After(first)
+	f.JQ.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 31, Status: schema.JobStatusPending}, true, nil).
+		After(sweep)
+	f.Store.EXPECT().
+		CreateAddressIndexingJob(gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	resp, err := f.Exec.TriggerAddressIndexing(context.Background(), []string{throttleTestAddress})
+	require.NoError(t, err)
+	require.Len(t, resp.Jobs, 1)
+	require.Equal(t, int64(31), resp.Jobs[0].JobID, "the replacement job must be reported, not the doomed one")
+	require.False(t, resp.Jobs[0].Throttled)
+}
+
+// TestTriggerAddressIndexing_DedupTrackingFailureDoesNotCancel pins the other
+// half of round-4 F1: a tracking-write failure against a DEDUPLICATED job must
+// not cancel that job — it belongs to a concurrent trigger, and its tracking
+// row becomes durable when the worker claims it (which fails the job until the
+// row exists). The strict mock has no RequestJobCancel expectation, and the
+// existing job is still reported.
+func TestTriggerAddressIndexing_DedupTrackingFailureDoesNotCancel(t *testing.T) {
+	t.Parallel()
+	f := newAddressThrottleFixture(t, executor.AddressIndexingThrottle{})
+
+	f.Store.EXPECT().
+		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
+		Return(nil, nil)
+	f.JQ.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 40, Status: schema.JobStatusPending}, false, nil)
+	f.Store.EXPECT().
+		CreateAddressIndexingJob(gomock.Any(), gomock.Any()).
+		Return(errors.New("db unavailable"))
+
+	resp, err := f.Exec.TriggerAddressIndexing(context.Background(), []string{throttleTestAddress})
+	require.NoError(t, err, "a dedup tracking failure must not fail the request")
+	require.Len(t, resp.Jobs, 1)
+	require.Equal(t, int64(40), resp.Jobs[0].JobID)
+}
