@@ -33,8 +33,7 @@ type addressThrottleFixture struct {
 	JQ    *mocks.MockJobQueue
 	Clock *mocks.MockClock
 
-	lockHolds    atomic.Int64
-	lockReleases atomic.Int64
+	lockHolds atomic.Int64
 }
 
 // initTestLoggerOnce guards the global logger swap: parallel tests racing
@@ -59,21 +58,17 @@ func newAddressThrottleFixture(t *testing.T, throttle executor.AddressIndexingTh
 		domain.Chain("eip155:1"),
 		throttle,
 	)
-	// Every trigger path first serializes on the per-address advisory lock;
-	// stub it by default and count releases so tests can assert the lock is
-	// never leaked. Ordering-sensitive tests register their own expectation.
+	// Every trigger path serializes inside the transactional per-address lock;
+	// stub it to execute the gated body against the same mock store (the real
+	// implementation passes a transaction-bound Store).
 	f := &addressThrottleFixture{Exec: exec, Store: mockStore, JQ: mockJQ, Clock: mockClock}
 	mockStore.EXPECT().
-		AcquireAddressTriggerLock(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(context.Context, string, domain.Chain) (func(), error) {
+		WithAddressTriggerLock(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ domain.Chain, fn func(store.Store) error) error {
 			f.lockHolds.Add(1)
-			return func() { f.lockReleases.Add(1) }, nil
+			return fn(mockStore)
 		}).
 		AnyTimes()
-	t.Cleanup(func() {
-		require.Equal(t, f.lockHolds.Load(), f.lockReleases.Load(),
-			"every acquired trigger lock must be released")
-	})
 	return f
 }
 
@@ -83,8 +78,8 @@ func (f *addressThrottleFixture) expectEnqueueSuccess(jobID int64) {
 	f.Store.EXPECT().
 		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
 		Return(nil, nil)
-	f.JQ.EXPECT().
-		Enqueue(gomock.Any(), gomock.Any()).
+	f.Store.EXPECT().
+		EnqueueJob(gomock.Any(), gomock.Any()).
 		Return(&schema.Job{ID: jobID}, true, nil)
 	f.Store.EXPECT().
 		CreateAddressIndexingJob(gomock.Any(), gomock.Any()).
@@ -225,28 +220,25 @@ func TestTriggerAddressIndexing_ActiveJobWinsOverThrottle(t *testing.T) {
 	require.Equal(t, int64(13), resp.Jobs[0].JobID)
 }
 
-// TestTriggerAddressIndexing_TrackingFailureCancelsAndErrors pins the
+// TestTriggerAddressIndexing_TrackingFailureRollsBackAndErrors pins the
 // durability contract on the API path: if the address_indexing_jobs tracking
-// row cannot be created, the trigger must not report success — the just
-// enqueued queue job is cancel-requested (a canceled pending job never runs)
-// and the request fails, instead of leaving an untracked scan invisible to the
-// active-job check and the throttle.
-func TestTriggerAddressIndexing_TrackingFailureCancelsAndErrors(t *testing.T) {
+// row cannot be created for a job this request enqueued, the request fails —
+// and because gates and enqueue share the lock transaction, the returned error
+// rolls the enqueue back too (no cancel dance, no untracked scan). The strict
+// mock proves no RequestJobCancel is attempted.
+func TestTriggerAddressIndexing_TrackingFailureRollsBackAndErrors(t *testing.T) {
 	t.Parallel()
 	f := newAddressThrottleFixture(t, executor.AddressIndexingThrottle{})
 
 	f.Store.EXPECT().
 		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
 		Return(nil, nil)
-	f.JQ.EXPECT().
-		Enqueue(gomock.Any(), gomock.Any()).
+	f.Store.EXPECT().
+		EnqueueJob(gomock.Any(), gomock.Any()).
 		Return(&schema.Job{ID: 21}, true, nil)
 	f.Store.EXPECT().
 		CreateAddressIndexingJob(gomock.Any(), gomock.Any()).
 		Return(errors.New("db unavailable"))
-	f.Store.EXPECT().
-		RequestJobCancel(gomock.Any(), int64(21)).
-		Return(nil)
 
 	resp, err := f.Exec.TriggerAddressIndexing(context.Background(), []string{throttleTestAddress})
 	require.Error(t, err)
@@ -265,15 +257,15 @@ func TestTriggerAddressIndexing_DoomedDedupJobIsSweptAndReplaced(t *testing.T) {
 	f.Store.EXPECT().
 		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
 		Return(nil, nil)
-	first := f.JQ.EXPECT().
-		Enqueue(gomock.Any(), gomock.Any()).
+	first := f.Store.EXPECT().
+		EnqueueJob(gomock.Any(), gomock.Any()).
 		Return(&schema.Job{ID: 30, Status: schema.JobStatusPending, CancelRequested: true}, false, nil)
 	sweep := f.Store.EXPECT().
 		SweepCanceledPendingJobs(gomock.Any(), "token_index").
 		Return(int64(1), nil).
 		After(first)
-	f.JQ.EXPECT().
-		Enqueue(gomock.Any(), gomock.Any()).
+	f.Store.EXPECT().
+		EnqueueJob(gomock.Any(), gomock.Any()).
 		Return(&schema.Job{ID: 31, Status: schema.JobStatusPending}, true, nil).
 		After(sweep)
 	f.Store.EXPECT().
@@ -300,8 +292,8 @@ func TestTriggerAddressIndexing_DedupTrackingFailureDoesNotCancel(t *testing.T) 
 	f.Store.EXPECT().
 		GetActiveIndexingJobForAddress(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
 		Return(nil, nil)
-	f.JQ.EXPECT().
-		Enqueue(gomock.Any(), gomock.Any()).
+	f.Store.EXPECT().
+		EnqueueJob(gomock.Any(), gomock.Any()).
 		Return(&schema.Job{ID: 40, Status: schema.JobStatusPending}, false, nil)
 	f.Store.EXPECT().
 		CreateAddressIndexingJob(gomock.Any(), gomock.Any()).
@@ -322,6 +314,7 @@ func TestTriggerAddressIndexing_DedupTrackingFailureDoesNotCancel(t *testing.T) 
 // (pinned by Times(1) on the strict queue mock).
 func TestTriggerAddressIndexing_ConcurrentTriggersSerializedByLock(t *testing.T) {
 	t.Parallel()
+	initTestLoggerOnce.Do(func() { _ = logger.Initialize(logger.Config{Debug: true}) })
 
 	ctrl := gomock.NewController(t)
 	mockStore := mocks.NewMockStore(ctrl)
@@ -343,10 +336,11 @@ func TestTriggerAddressIndexing_ConcurrentTriggersSerializedByLock(t *testing.T)
 	var mu sync.Mutex
 	var terminal *schema.AddressIndexingJob
 	mockStore.EXPECT().
-		AcquireAddressTriggerLock(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1")).
-		DoAndReturn(func(context.Context, string, domain.Chain) (func(), error) {
+		WithAddressTriggerLock(gomock.Any(), throttleTestAddress, domain.Chain("eip155:1"), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ domain.Chain, fn func(store.Store) error) error {
 			mu.Lock()
-			return mu.Unlock, nil
+			defer mu.Unlock()
+			return fn(mockStore)
 		}).
 		Times(2)
 	mockStore.EXPECT().
@@ -360,8 +354,8 @@ func TestTriggerAddressIndexing_ConcurrentTriggersSerializedByLock(t *testing.T)
 		}).
 		Times(2)
 	// Exactly ONE enqueue across both triggers: the second must be throttled.
-	mockJQ.EXPECT().
-		Enqueue(gomock.Any(), gomock.Any()).
+	mockStore.EXPECT().
+		EnqueueJob(gomock.Any(), gomock.Any()).
 		Return(&schema.Job{ID: 50, Status: schema.JobStatusPending}, true, nil).
 		Times(1)
 	mockStore.EXPECT().

@@ -8152,6 +8152,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"SweepCanceledPendingJobsSyncsAddressJobs", testSweepCanceledPendingJobsSyncsAddressJobs},
 		{"SweepOrphanedJobsSyncsAddressJobs", testSweepOrphanedJobsSyncsAddressJobs},
 		{"MarkJobTerminalSyncsAddressJobs", testMarkJobTerminalSyncsAddressJobs},
+		{"CreateAddressIndexingJobIdempotentPerJobID", testCreateAddressIndexingJobIdempotentPerJobID},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
 		{"MediaRenderProbeOperations", testMediaRenderProbeOperations},
@@ -8795,4 +8796,41 @@ func testMarkJobTerminalSyncsAddressJobs(t *testing.T, store Store) {
 		require.Equal(t, schema.IndexingJobStatusFailed, addrJob.Status,
 			"a terminal tracking status written by the workflow must be preserved")
 	})
+}
+
+// testCreateAddressIndexingJobIdempotentPerJobID pins round-7 F1: a worker can
+// claim, track, and terminalize a queue job before the trigger's own tracking
+// create runs. That late create must be a no-op — a second `running` row for
+// the same queue job would be orphaned forever, since the job's terminal
+// transition has already happened.
+func testCreateAddressIndexingJobIdempotentPerJobID(t *testing.T, store Store) {
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+	addr := "0xcreate-idempotent-jobid"
+
+	uk := "create-idem-1"
+	j, _, err := store.EnqueueJob(ctx, EnqueueJobInput{
+		Queue: "q_create_idem", Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk,
+	})
+	require.NoError(t, err)
+
+	// Worker's lifecycle completes first: create tracking, then terminalize.
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: addr, Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+	}))
+	require.NoError(t, store.UpdateAddressIndexingJobStatus(ctx, j.ID, schema.IndexingJobStatusCompleted, time.Now().UTC()))
+
+	// The trigger's late create for the same queue job must be a no-op.
+	require.NoError(t, store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+		Address: addr, Chain: chain, Status: schema.IndexingJobStatusRunning, JobID: j.ID,
+	}))
+
+	addrJob, err := store.GetAddressIndexingJobByJobID(ctx, j.ID)
+	require.NoError(t, err)
+	require.Equal(t, schema.IndexingJobStatusCompleted, addrJob.Status,
+		"the terminal tracking row must not be shadowed by a late duplicate")
+
+	active, err := store.GetActiveIndexingJobForAddress(ctx, addr, chain)
+	require.NoError(t, err)
+	require.Nil(t, active, "no orphaned active row may exist for a finished job")
 }

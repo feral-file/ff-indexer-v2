@@ -2541,11 +2541,18 @@ func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddr
 	if input.JobID < 1 {
 		return fmt.Errorf("job_id is required and must be positive")
 	}
+	// Idempotent on two axes: an active row for the address (another trigger or
+	// worker already tracks a scan), and ANY row for this queue job. The job_id
+	// check is what prevents a late create from resurrecting a finished job: a
+	// worker can claim, track, and terminalize the row before this runs, and a
+	// second `running` row for the same job would be orphaned forever — its
+	// terminal transition (markJobTerminal) has already happened.
 	var n int64
 	err := s.db.WithContext(ctx).Model(&schema.AddressIndexingJob{}).
-		Where("address = ? AND chain = ? AND status IN ?",
+		Where("(address = ? AND chain = ? AND status IN ?) OR job_id = ?",
 			input.Address, input.Chain,
-			[]schema.IndexingJobStatus{schema.IndexingJobStatusRunning, schema.IndexingJobStatusPaused}).
+			[]schema.IndexingJobStatus{schema.IndexingJobStatusRunning, schema.IndexingJobStatusPaused},
+			input.JobID).
 		Count(&n).Error
 	if err != nil {
 		return fmt.Errorf("failed to check address indexing job: %w", err)
@@ -2685,36 +2692,21 @@ func (s *pgStore) GetActiveIndexingJobForAddress(ctx context.Context, address st
 	return nil, fmt.Errorf("failed to get active job for address %s on chain %s: %w", address, chainID, err)
 }
 
-// AcquireAddressTriggerLock blocks on a session advisory lock scoped to one
-// (chain, address) pair on a dedicated connection. See the Store interface doc
-// for the serialization contract. The dedicated connection is required because
-// session advisory locks belong to a connection, and the pool would otherwise
-// hand the lock's connection to unrelated queries.
-func (s *pgStore) AcquireAddressTriggerLock(ctx context.Context, address string, chainID domain.Chain) (func(), error) {
-	sqlDB, err := s.db.DB()
-	if err != nil {
-		return nil, err
-	}
-	conn, err := sqlDB.Conn(ctx)
-	if err != nil {
-		return nil, err
-	}
+// WithAddressTriggerLock runs fn inside one transaction holding the
+// per-(chain, address) advisory lock. See the Store interface doc for the
+// serialization and pool-safety contract. pg_advisory_xact_lock ties the lock
+// to the transaction's connection and lifetime: no separate lock connection to
+// starve the pool, and no release path to leak — commit or rollback frees it.
+func (s *pgStore) WithAddressTriggerLock(ctx context.Context, address string, chainID domain.Chain, fn func(txStore Store) error) error {
 	key := string(chainID) + ":" + address
-	if _, err := conn.ExecContext(ctx,
-		`SELECT pg_advisory_lock((hashtext('addr_trigger:' || $1::text))::bigint)`, key,
-	); err != nil {
-		_ = conn.Close() //nolint:errcheck // best-effort close after error
-		return nil, err
-	}
-	release := func() {
-		unlockCtx := context.WithoutCancel(ctx)
-		var ok bool
-		_ = conn.QueryRowContext(unlockCtx,
-			`SELECT pg_advisory_unlock((hashtext('addr_trigger:' || $1::text))::bigint)`, key,
-		).Scan(&ok) //nolint:errcheck // best-effort unlock; conn close drops the session lock anyway
-		_ = conn.Close() //nolint:errcheck
-	}
-	return release, nil
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(
+			`SELECT pg_advisory_xact_lock((hashtext('addr_trigger:' || $1::text))::bigint)`, key,
+		).Error; err != nil {
+			return fmt.Errorf("failed to acquire address trigger lock: %w", err)
+		}
+		return fn(NewPGStore(tx))
+	})
 }
 
 // GetAddressIndexingThrottleState returns the latest terminal job and the

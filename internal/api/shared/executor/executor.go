@@ -826,15 +826,38 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 // second start a fresh job inside the cooldown/backoff window it should have
 // been throttled by.
 func (e *executor) triggerAddressIndexingLocked(ctx context.Context, address string, chainID domain.Chain) (dto.AddressIndexingJobInfo, error) {
-	release, err := e.store.AcquireAddressTriggerLock(ctx, address, chainID)
-	if err != nil {
+	var out dto.AddressIndexingJobInfo
+	lockErr := e.store.WithAddressTriggerLock(ctx, address, chainID, func(txStore store.Store) error {
+		// All gated reads and writes run on the lock's own transaction: one
+		// pooled connection for lock + gates + enqueue + tracking (pool-safe),
+		// and an error rolls the whole trigger back — an enqueue can never
+		// outlive a failed tracking insert.
+		txQueue := jobs.NewJobQueue(txStore, e.json)
+		info, err := e.runAddressIndexingGates(ctx, txStore, txQueue, address, chainID)
+		if err != nil {
+			return err
+		}
+		out = info
+		return nil
+	})
+	if lockErr != nil {
+		var apiErr *apierrors.APIError
+		if errors.As(lockErr, &apiErr) {
+			return dto.AddressIndexingJobInfo{}, lockErr
+		}
 		return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
-			fmt.Sprintf("Failed to serialize indexing trigger for address %s: %v", address, err))
+			fmt.Sprintf("Failed to serialize indexing trigger for address %s: %v", address, lockErr))
 	}
-	defer release()
+	return out, nil
+}
+
+// runAddressIndexingGates executes the per-address gate-then-enqueue sequence.
+// It must only be called while holding the per-address trigger lock, with st
+// and jq bound to the lock's transaction.
+func (e *executor) runAddressIndexingGates(ctx context.Context, st store.Store, jq jobs.JobQueue, address string, chainID domain.Chain) (dto.AddressIndexingJobInfo, error) {
 
 	// Check for existing active job (running or paused)
-	existingJob, err := e.store.GetActiveIndexingJobForAddress(ctx, address, chainID)
+	existingJob, err := st.GetActiveIndexingJobForAddress(ctx, address, chainID)
 	if err != nil {
 		return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(fmt.Sprintf("Failed to check existing jobs for address %s: %v", address, err))
 	}
@@ -870,7 +893,7 @@ func (e *executor) triggerAddressIndexingLocked(ctx context.Context, address str
 	// answers "what is happening for this address" better than a throttle
 	// verdict would.
 	if e.addressThrottle.Enabled() {
-		state, err := e.store.GetAddressIndexingThrottleState(ctx, address, chainID)
+		state, err := st.GetAddressIndexingThrottleState(ctx, address, chainID)
 		if err != nil {
 			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(fmt.Sprintf("Failed to check indexing throttle for address %s: %v", address, err))
 		}
@@ -901,7 +924,7 @@ func (e *executor) triggerAddressIndexingLocked(ctx context.Context, address str
 	}
 
 	uk := jobs.IndexTokenOwnerUniqueKey(chainID, address)
-	pj, created, err := e.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+	pj, created, err := jq.Enqueue(ctx, jobs.EnqueueOptions{
 		Queue:     e.tokenQueue,
 		Kind:      "IndexTokenOwner",
 		Args:      []any{address},
@@ -920,11 +943,11 @@ func (e *executor) triggerAddressIndexingLocked(ctx context.Context, address str
 	// cancellation now (the sweep also finalizes its tracking row), which
 	// frees the unique key, then enqueue replacement work.
 	if !created && pj.Status == schema.JobStatusPending && pj.CancelRequested {
-		if _, sweepErr := e.store.SweepCanceledPendingJobs(ctx, e.tokenQueue); sweepErr != nil {
+		if _, sweepErr := st.SweepCanceledPendingJobs(ctx, e.tokenQueue); sweepErr != nil {
 			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
 				fmt.Sprintf("Failed to finalize canceled job for address %s: %v", address, sweepErr))
 		}
-		pj, created, err = e.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+		pj, created, err = jq.Enqueue(ctx, jobs.EnqueueOptions{
 			Queue:     e.tokenQueue,
 			Kind:      "IndexTokenOwner",
 			Args:      []any{address},
@@ -941,7 +964,7 @@ func (e *executor) triggerAddressIndexingLocked(ctx context.Context, address str
 				zap.Int64("job_id", pj.ID))
 		}
 	}
-	err = e.store.CreateAddressIndexingJob(ctx, store.CreateAddressIndexingJobInput{
+	err = st.CreateAddressIndexingJob(ctx, store.CreateAddressIndexingJobInput{
 		Address: address,
 		Chain:   chainID,
 		Status:  schema.IndexingJobStatusRunning,
@@ -950,17 +973,13 @@ func (e *executor) triggerAddressIndexingLocked(ctx context.Context, address str
 	if err != nil {
 		// The tracking row is the durable record every gate on this endpoint
 		// reads (active-job check, throttle history). For a job THIS request
-		// created, best-effort cancel it (a canceled pending job never runs)
-		// and surface the failure rather than report success-untracked. A
-		// deduplicated job belongs to a concurrent trigger and must not be
-		// canceled: its tracking row is (or will durably become, on claim)
-		// that trigger's responsibility, so return it as the existing job.
+		// created, failing here rolls the whole trigger transaction back — the
+		// enqueue is undone with it, so no untracked scan can run. A
+		// deduplicated job belongs to a concurrent trigger and must survive
+		// this request's rollback: its tracking row is (or will durably
+		// become, on claim) that trigger's responsibility, so log and return
+		// it as the existing job.
 		if created {
-			if cancelErr := e.store.RequestJobCancel(ctx, pj.ID); cancelErr != nil {
-				logger.Warn(fmt.Sprintf("Failed to cancel untracked indexing job: %v", cancelErr),
-					zap.String("address", address),
-					zap.Int64("job_id", pj.ID))
-			}
 			return dto.AddressIndexingJobInfo{}, apierrors.NewServiceError(
 				fmt.Sprintf("Failed to record indexing job for address %s: %v", address, err))
 		}

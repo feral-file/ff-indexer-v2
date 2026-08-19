@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -828,10 +829,12 @@ func TestResolverRoutedMutationsUsePrimary(t *testing.T) {
 	require.Equal(t, schema.IndexingJobStatusFailed, state.LatestTerminal.Status)
 }
 
-// TestAcquireAddressTriggerLockSerializes pins the advisory lock's contract:
-// a second acquirer for the same (chain, address) blocks until the holder
-// releases, while a different address acquires immediately.
-func TestAcquireAddressTriggerLockSerializes(t *testing.T) {
+// TestWithAddressTriggerLockSerializes pins the advisory lock's contract:
+// a second caller for the same (chain, address) blocks until the holder's
+// transaction ends, while a different address proceeds immediately, and the
+// callback's Store operates inside the lock's transaction (rolled back on
+// error, so nothing persists).
+func TestWithAddressTriggerLockSerializes(t *testing.T) {
 	if testDB == nil {
 		t.Fatal("Test database not initialized")
 	}
@@ -841,34 +844,57 @@ func TestAcquireAddressTriggerLockSerializes(t *testing.T) {
 	chain := domain.ChainEthereumMainnet
 	const addr = "0xtrigger-lock-serialize"
 
-	release1, err := st.AcquireAddressTriggerLock(ctx, addr, chain)
-	require.NoError(t, err)
+	holding := make(chan struct{})
+	releaseHold := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- st.WithAddressTriggerLock(ctx, addr, chain, func(txStore Store) error {
+			close(holding)
+			<-releaseHold
+			return nil
+		})
+	}()
+	<-holding
 
 	// A different address is not serialized against this one.
-	releaseOther, err := st.AcquireAddressTriggerLock(ctx, addr+"-other", chain)
-	require.NoError(t, err)
-	releaseOther()
+	require.NoError(t, st.WithAddressTriggerLock(ctx, addr+"-other", chain, func(Store) error { return nil }))
 
-	acquired := make(chan struct{})
+	secondDone := make(chan error, 1)
 	go func() {
-		release2, err2 := st.AcquireAddressTriggerLock(ctx, addr, chain)
-		assert.NoError(t, err2)
-		close(acquired)
-		release2()
+		secondDone <- st.WithAddressTriggerLock(ctx, addr, chain, func(Store) error { return nil })
 	}()
 
-	// The second acquirer must still be blocked while the lock is held.
+	// The second caller must still be blocked while the first holds the lock.
 	select {
-	case <-acquired:
-		t.Fatal("second acquirer obtained the lock while it was held")
+	case err := <-secondDone:
+		t.Fatalf("second caller finished while the lock was held: %v", err)
 	case <-time.After(300 * time.Millisecond):
 	}
 
-	release1()
+	close(releaseHold)
+	require.NoError(t, <-firstDone)
 
 	select {
-	case <-acquired:
+	case err := <-secondDone:
+		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("second acquirer did not obtain the lock after release")
+		t.Fatal("second caller did not proceed after the lock was released")
 	}
+
+	// Rollback contract: writes made through the callback's Store vanish when
+	// fn errors — the enqueue can never outlive a failed trigger.
+	sentinel := errors.New("boom")
+	uk := "trigger-lock-rollback"
+	err := st.WithAddressTriggerLock(ctx, addr, chain, func(txStore Store) error {
+		j, _, err := txStore.EnqueueJob(ctx, EnqueueJobInput{
+			Queue: "q_trigger_lock_rb", Kind: "IndexTokenOwner", Payload: []byte(`[]`), UniqueKey: &uk,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, j)
+		return sentinel
+	})
+	require.ErrorIs(t, err, sentinel)
+	var count int64
+	require.NoError(t, testDB.Model(&schema.Job{}).Where("queue = ?", "q_trigger_lock_rb").Count(&count).Error)
+	require.Zero(t, count, "rolled-back trigger transaction must not leave the enqueued job behind")
 }
