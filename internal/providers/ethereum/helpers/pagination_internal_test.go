@@ -88,8 +88,8 @@ func TestPaceStateCadence(t *testing.T) {
 	initPaceTestLogger.Do(func() { _ = logger.Initialize(logger.Config{Debug: true}) })
 
 	p := paceState{target: 42}
-	for i := 0; i < 2*paceLogEvery; i++ {
-		p.windowDone(context.Background(), uint64(i), 16)
+	for range 2 * paceLogEvery {
+		p.windowDone(context.Background(), 100, 16)
 	}
 	require.Equal(t, 2*paceLogEvery, p.windowsDone)
 }
