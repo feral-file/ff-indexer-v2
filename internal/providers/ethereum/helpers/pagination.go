@@ -42,6 +42,38 @@ type PaginationGuards struct {
 	CallBudget int
 }
 
+// paceState is the walk-scoped progress heartbeat: long walks against a
+// range-capped, rate-limited provider are legitimately slow (thousands of
+// windows); without a heartbeat the only observable states are "running" and
+// "dead at the deadline". It lives at the FilterLogsWithPagination level and is
+// threaded through getLogsWithRetry because window completions must accumulate
+// across outer windows — see the getLogsWithRetry doc.
+type paceState struct {
+	walkStart   time.Time
+	target      uint64
+	windowsDone int
+}
+
+// paceLogEvery is the heartbeat cadence in successful windows: a full
+// cap-seeded mainnet walk (~2,600 windows at a 10k span cap) logs ~10 times.
+const paceLogEvery = 250
+
+// windowDone records one successfully fetched window and emits the heartbeat
+// every paceLogEvery windows. atBlock is the next block the walk will fetch.
+func (p *paceState) windowDone(ctx context.Context, atBlock, stepSize uint64) {
+	p.windowsDone++
+	if p.windowsDone%paceLogEvery != 0 {
+		return
+	}
+	logger.InfoCtx(ctx, "Log pagination walk progress",
+		zap.Uint64("atBlock", atBlock),
+		zap.Uint64("targetBlock", p.target),
+		zap.Uint64("stepSize", stepSize),
+		zap.Int("windowsDone", p.windowsDone),
+		zap.Duration("elapsed", time.Since(p.walkStart)),
+	)
+}
+
 // PaginationHelper paginates eth_getLogs queries with adaptive step sizing and retry.
 type PaginationHelper struct {
 	ethClient     ethadapter.EthClient
@@ -122,6 +154,11 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 	currentFrom := new(big.Int).Set(fromBlock)
 	stepSize := h.calculateStepSize(timeoutCtx, query)
 	callsUsed := 0
+	// Walk-scoped pace state: with a configured span cap the outer and inner
+	// window sizes coincide, so every getLogsWithRetry call completes after ONE
+	// window — a counter local to that function can never reach the heartbeat
+	// threshold, silently killing the progress log the moment the guard is on.
+	pace := paceState{walkStart: time.Now(), target: toBlock.Uint64()}
 
 	for currentFrom.Cmp(toBlock) <= 0 {
 		select {
@@ -148,7 +185,7 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 		rangeQuery.FromBlock = new(big.Int).Set(currentFrom)
 		rangeQuery.ToBlock = currentTo
 
-		logs, cappedStep, err := h.getLogsWithRetry(timeoutCtx, rangeQuery, stepSize, &callsUsed)
+		logs, cappedStep, err := h.getLogsWithRetry(timeoutCtx, rangeQuery, stepSize, &callsUsed, &pace)
 		if err != nil {
 			if timeoutCtx.Err() != nil {
 				return allLogs, timeoutCtx.Err()
@@ -264,7 +301,11 @@ func (h *PaginationHelper) heuristicStepSize(ctx context.Context, query ethereum
 // callsUsed counts FilterLogs calls across the whole FilterLogsWithPagination
 // walk (all outer windows share one budget); when guards.CallBudget is set and
 // exhausted, the walk aborts with ErrCallBudgetExhausted before the next call.
-func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64, callsUsed *int) ([]types.Log, uint64, error) {
+// pace is likewise walk-scoped: successful windows accumulate across every
+// outer window so the progress heartbeat fires regardless of how the walk is
+// partitioned (a span-cap-seeded walk completes exactly one window per call
+// here, which would starve any per-call counter).
+func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64, callsUsed *int, pace *paceState) ([]types.Log, uint64, error) {
 	currentStepSize := stepSize
 	// maxStepSize is the ceiling the step may ramp back up to after successes.
 	// It starts at the caller's step size and shrinks permanently when the
@@ -275,13 +316,6 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 
 	var allLogs []types.Log
 	currentFrom := new(big.Int).Set(query.FromBlock)
-
-	// Pace log: long walks against a range-capped, rate-limited provider are
-	// legitimately slow (thousands of windows); without a heartbeat the only
-	// observable states are "running" and "dead at the deadline".
-	walkStart := time.Now()
-	successCount := 0
-	const paceLogEvery = 250
 
 	for currentFrom.Cmp(query.ToBlock) <= 0 {
 		select {
@@ -309,17 +343,7 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 		if err == nil {
 			allLogs = append(allLogs, logs...)
 			currentFrom.SetUint64(currentTo.Uint64() + 1)
-			successCount++
-			if successCount%paceLogEvery == 0 {
-				logger.InfoCtx(ctx, "Log pagination walk progress",
-					zap.Uint64("atBlock", currentFrom.Uint64()),
-					zap.Uint64("targetBlock", query.ToBlock.Uint64()),
-					zap.Uint64("stepSize", currentStepSize),
-					zap.Int("windowsDone", successCount),
-					zap.Int("logsCollected", len(allLogs)),
-					zap.Duration("elapsed", time.Since(walkStart)),
-				)
-			}
+			pace.windowDone(ctx, currentFrom.Uint64(), currentStepSize)
 			// Ramp the step back up gradually instead of resetting to the
 			// original. Against providers with a hard block-range cap the
 			// original step fails on every window, so a full reset re-pays
