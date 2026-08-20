@@ -156,13 +156,16 @@ type ContractAdapter interface {
 
 	// PostProcessOwnerLogs inspects the merged owner-scan log pool and returns
 	// ADDITIONAL logs the queries alone cannot surface. The only current use is the
-	// CryptoPunks corrupted-PunkBought repair, which follows internal Transfer logs
-	// to transaction receipts. Standard adapters return (nil, nil).
+	// CryptoPunks corrupted-PunkBought repair, which follows the owner's buyer-side
+	// internal Transfer logs to transaction receipts. Standard adapters return
+	// (nil, nil).
 	//
-	// Constraints: implementations must ignore logs from other contracts (the pool
-	// is shared across adapters and unscoped) and must be idempotent — returned
-	// logs are deduplicated with the pool afterwards.
-	PostProcessOwnerLogs(ctx context.Context, logs []types.Log) ([]types.Log, error)
+	// Constraints: implementations must ignore logs from other contracts and logs
+	// not involving the scanned owner (the pool is shared across adapters, unscoped,
+	// and — because queries merge by topic position — contains logs matched for
+	// other owner roles), and must be idempotent: returned logs are deduplicated
+	// with the pool afterwards.
+	PostProcessOwnerLogs(ctx context.Context, owner common.Address, logs []types.Log) ([]types.Log, error)
 
 	// GetTokensByOwner returns tokens owned by the address at the end of the block range.
 	//

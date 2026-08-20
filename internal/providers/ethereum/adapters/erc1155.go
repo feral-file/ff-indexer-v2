@@ -227,7 +227,7 @@ func (a *ERC1155Adapter) OwnerQuerySpecs() []OwnerQuerySpec {
 }
 
 // PostProcessOwnerLogs is a no-op: standard ERC-1155 needs no receipt-based repair.
-func (a *ERC1155Adapter) PostProcessOwnerLogs(_ context.Context, _ []types.Log) ([]types.Log, error) {
+func (a *ERC1155Adapter) PostProcessOwnerLogs(_ context.Context, _ common.Address, _ []types.Log) ([]types.Log, error) {
 	return nil, nil
 }
 

@@ -375,23 +375,33 @@ func (a *GenericAdapter) OwnerQuerySpecs() []OwnerQuerySpec {
 // punks internal Transfer logs in the pool to their transaction receipts and
 // returns the PunkBought logs found there.
 //
-// Constraints: only inspects logs emitted by this adapter's contract, so the
-// shared unscoped pool from the client's merged scan is safe. Seller-side
-// internal Transfers (owner at topic 1) also land here via the merged pool; the
-// PunkBought logs they surface involve the owner as seller, which the replay
-// handles as an ordinary ownership-affecting event.
-func (a *GenericAdapter) PostProcessOwnerLogs(ctx context.Context, logs []types.Log) ([]types.Log, error) {
+// Constraints: only inspects logs emitted by this adapter's contract AND whose
+// buyer (topic 2) is the scanned owner. The merged pool also carries the owner's
+// seller-side internal Transfers (owner at topic 1), but those need no receipt
+// lookup: only PunkBought's indexed buyer is ever corrupted, so a sale BY the
+// owner is matched directly by the owner-at-topic-2 PunkBought query and its
+// buyer restored by the replay's inline repair. Following seller-side transfers
+// here would pay one receipt RPC per historical sale and let a transient
+// receipt failure abort an otherwise valid scan.
+func (a *GenericAdapter) PostProcessOwnerLogs(ctx context.Context, owner common.Address, logs []types.Log) ([]types.Log, error) {
 	if !a.hasPunkBoughtEvent() {
 		return nil, nil
 	}
-	return a.findCorruptedPunkBoughtFromInternalTransfers(ctx, logs, common.HexToAddress(a.contractAddress))
+	return a.findCorruptedPunkBoughtFromInternalTransfers(ctx, owner, logs, common.HexToAddress(a.contractAddress))
 }
 
 // findCorruptedPunkBoughtFromInternalTransfers extracts corrupted PunkBought events by
-// fetching transaction receipts for internal Transfer logs and finding PunkBought events
-// in the same transactions.
+// fetching transaction receipts for the owner's buyer-side internal Transfer logs and
+// finding PunkBought events in the same transactions.
+//
+// Constraints: only internal Transfers whose recipient (topic 2) is the scanned owner
+// are followed — the corruption is always in PunkBought's indexed buyer, so only
+// purchases BY the owner need receipt recovery. Seller-side transfers in the pool are
+// skipped: their PunkBought is matched directly by the owner queries, and following
+// them would pay one receipt RPC per historical sale.
 func (a *GenericAdapter) findCorruptedPunkBoughtFromInternalTransfers(
 	ctx context.Context,
+	owner common.Address,
 	logs []types.Log,
 	contractAddr common.Address,
 ) ([]types.Log, error) {
@@ -399,12 +409,14 @@ func (a *GenericAdapter) findCorruptedPunkBoughtFromInternalTransfers(
 		return nil, nil
 	}
 
-	// Find internal Transfer logs
+	// Find the owner's buyer-side internal Transfer logs
+	ownerHash := common.BytesToHash(owner.Bytes())
 	var internalTransferLogs []types.Log
 	for _, vLog := range logs {
 		if vLog.Address == contractAddr &&
 			len(vLog.Topics) == 3 &&
 			vLog.Topics[0] == helpers.TransferEventSignature &&
+			vLog.Topics[2] == ownerHash &&
 			len(vLog.Data) >= 32 {
 			value := new(big.Int).SetBytes(vLog.Data[:32])
 			if value.Cmp(big.NewInt(1)) == 0 {
@@ -483,7 +495,7 @@ func (a *GenericAdapter) GetTokensByOwner(
 		return nil, fmt.Errorf("failed to query configured contract logs: %w", err)
 	}
 
-	repaired, err := a.PostProcessOwnerLogs(ctx, logs)
+	repaired, err := a.PostProcessOwnerLogs(ctx, owner, logs)
 	if err != nil {
 		return nil, err
 	}

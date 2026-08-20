@@ -448,9 +448,10 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 	}
 
 	// Receipt-based repairs (CryptoPunks corrupted PunkBought) run over the merged
-	// pool after fetching; each adapter ignores other contracts' logs.
+	// pool after fetching; each adapter ignores other contracts' logs and logs not
+	// involving the scanned owner in the role it repairs for.
 	for _, adp := range adaptersToQuery {
-		repaired, err := adp.PostProcessOwnerLogs(ctx, allLogs)
+		repaired, err := adp.PostProcessOwnerLogs(ctx, owner, allLogs)
 		if err != nil {
 			return domain.TokenWithBlockRangeResult{}, fmt.Errorf("owner log post-process failed: %w", err)
 		}

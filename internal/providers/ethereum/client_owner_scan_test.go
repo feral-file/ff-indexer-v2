@@ -190,3 +190,55 @@ func TestClient_OwnerScan_CorruptedPunkBoughtRepairViaMergedPool(t *testing.T) {
 	require.Equal(t, expectedCID, result.Tokens[0].TokenCID)
 	require.Equal(t, uint64(700), result.Tokens[0].BlockNumber)
 }
+
+// TestClient_OwnerScan_SellerSideInternalTransferSkipsReceipt pins the repair
+// pass's owner filter: the merged owner-at-topic-1 walk returns the punks
+// internal Transfer(owner, buyer, 1) when the scanned owner is the SELLER, but
+// only PunkBought's indexed buyer is ever corrupted — a sale by the owner is
+// matched directly by the owner-at-topic-2 PunkBought query. Following
+// seller-side transfers would pay one receipt RPC per historical sale and let a
+// transient receipt failure abort an otherwise valid scan. The strict mock has
+// no TransactionReceipt expectation, so any receipt fetch fails this test.
+func TestClient_OwnerScan_SellerSideInternalTransferSkipsReceipt(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockEth := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
+
+	seller := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	buyer := common.HexToAddress("0x3333333333333333333333333333333333333333")
+	sellerHash := common.BytesToHash(seller.Bytes())
+	punksContract := common.HexToAddress(cryptoPunksAddress)
+
+	// The owner's seller-side internal Transfer(seller, buyer, 1): arrives via
+	// the merged owner-at-topic-1 walk (shared Transfer signature hash).
+	sellerSideInternalTransfer := types.Log{
+		Address:     punksContract,
+		BlockNumber: 800,
+		TxHash:      common.HexToHash("0xfeed"),
+		Index:       0,
+		Topics: []common.Hash{
+			helpers.TransferEventSignature,
+			sellerHash,
+			common.BytesToHash(buyer.Bytes()),
+		},
+		Data: common.LeftPadBytes(big.NewInt(1).Bytes(), 32),
+	}
+
+	mockEth.EXPECT().
+		FilterLogs(gomock.Any(), gomock.Any()).
+		Times(3).
+		DoAndReturn(func(_ context.Context, q goethereum.FilterQuery) ([]types.Log, error) {
+			if len(q.Topics) == 2 && len(q.Topics[1]) == 1 && q.Topics[1][0] == sellerHash {
+				return []types.Log{sellerSideInternalTransfer}, nil
+			}
+			return nil, nil
+		})
+
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
+
+	result, err := client.GetTokenCIDsByOwnerAndBlockRange(
+		context.Background(), seller.Hex(), 0, 1000, 100, domain.BlockScanOrderAsc, nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Tokens, "an internal Transfer alone must not surface a token")
+}
