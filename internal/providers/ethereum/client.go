@@ -424,34 +424,37 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 		adaptersToQuery = append(adaptersToQuery, adapter)
 	}
 
-	// A cancellable child context stops the sibling adapter walks as soon as one
-	// fails — without it, a credit-guard abort (helpers.ErrCallBudgetExhausted) in
-	// one leg leaves the other full-range walks spending RPC credits under the
-	// still-live parent context. The buffered channel lets canceled siblings
-	// deliver their result without blocking after the early return.
-	fanoutCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	type adapterResult struct {
-		logs []types.Log
-		err  error
-	}
-
-	resultsCh := make(chan adapterResult, len(adaptersToQuery))
+	// Merge every adapter's query shapes into at most one query per owner topic
+	// position (three total) and fetch them as one set of concurrent walks.
+	//
+	// Reason: each query walks the full block range on a span-capped provider
+	// (~2,500 eth_getLogs calls per walk for a mainnet history scan), so the
+	// query count IS the scan's RPC cost: merging 2 ERC-721 + 2 ERC-1155 + 4
+	// CryptoPunks walks into 3 cuts every wallet scan by ~62%. Merging cannot
+	// change results — eth_getLogs ORs within a topic position, so the union
+	// query returns exactly the union of the per-adapter results; the extra
+	// cross-contract matches it admits (same signature, other contracts) were
+	// already reaching the replay via the unscoped standard queries, which
+	// filters them by contract and topic shape.
+	var specs []adapters.OwnerQuerySpec
 	for _, adp := range adaptersToQuery {
-		go func(adapter adapters.ContractAdapter) {
-			logs, err := adapter.GetOwnerLogs(fanoutCtx, ownerAddress, requestedFromBlock, requestedToBlock)
-			resultsCh <- adapterResult{logs: logs, err: err}
-		}(adp)
+		specs = append(specs, adp.OwnerQuerySpecs()...)
+	}
+	ownerHash := common.BytesToHash(owner.Bytes())
+	allLogs, err := adapters.FetchOwnerLogs(ctx, f.pagination,
+		adapters.MergeOwnerQuerySpecs(specs), ownerHash, nil, requestedFromBlock, requestedToBlock)
+	if err != nil {
+		return domain.TokenWithBlockRangeResult{}, fmt.Errorf("owner log query failed: %w", err)
 	}
 
-	var allLogs []types.Log
-	for range adaptersToQuery {
-		result := <-resultsCh
-		if result.err != nil {
-			return domain.TokenWithBlockRangeResult{}, fmt.Errorf("adapter owner log query failed: %w", result.err)
+	// Receipt-based repairs (CryptoPunks corrupted PunkBought) run over the merged
+	// pool after fetching; each adapter ignores other contracts' logs.
+	for _, adp := range adaptersToQuery {
+		repaired, err := adp.PostProcessOwnerLogs(ctx, allLogs)
+		if err != nil {
+			return domain.TokenWithBlockRangeResult{}, fmt.Errorf("owner log post-process failed: %w", err)
 		}
-		allLogs = append(allLogs, result.logs...)
+		allLogs = append(allLogs, repaired...)
 	}
 
 	allLogs = deduplicateOwnerLogs(allLogs)

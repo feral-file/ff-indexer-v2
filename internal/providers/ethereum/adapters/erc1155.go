@@ -211,55 +211,24 @@ func (a *ERC1155Adapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	return events, nil
 }
 
-// GetOwnerLogs fetches ERC-1155 transfer logs where the owner is sender or recipient.
-func (a *ERC1155Adapter) GetOwnerLogs(
-	ctx context.Context,
-	ownerAddress string,
-	fromBlock uint64,
-	toBlock uint64,
-) ([]types.Log, error) {
-	owner := common.HexToAddress(ownerAddress)
-	ownerHash := common.BytesToHash(owner.Bytes())
-
-	// TransferSingle and TransferBatch share the (operator, from, to) indexed-topic
-	// layout, so one query per owner position covers both event types: entries in
-	// topics[0] are OR'd by the node. Two queries instead of four halves the walk
-	// cost against span-capped providers, where each query walks the entire block
-	// range regardless of how many logs it matches.
+// OwnerQuerySpecs declares the ERC-1155 owner-scan shapes. TransferSingle and
+// TransferBatch share the (operator, from, to) indexed-topic layout, so one spec
+// per owner position covers both event types: owner as sender (topic 2) and as
+// recipient (topic 3). Topic 1 is the operator, which does not affect ownership.
+func (a *ERC1155Adapter) OwnerQuerySpecs() []OwnerQuerySpec {
 	transferSigs := []common.Hash{
 		helpers.ERC1155TransferSingleEventSignature,
 		helpers.ERC1155TransferBatchEventSignature,
 	}
-	queries := []ethereum.FilterQuery{
-		// Owner as sender (topic[2]).
-		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
-			Topics: [][]common.Hash{
-				transferSigs,
-				nil,
-				{ownerHash},
-			},
-		},
-		// Owner as recipient (topic[3]).
-		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
-			Topics: [][]common.Hash{
-				transferSigs,
-				nil,
-				nil,
-				{ownerHash},
-			},
-		},
+	return []OwnerQuerySpec{
+		{EventSigs: transferSigs, OwnerTopicIndex: 2},
+		{EventSigs: transferSigs, OwnerTopicIndex: 3},
 	}
+}
 
-	logs, err := filterLogsInParallel(ctx, a.pagination, queries)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query ERC1155 logs: %w", err)
-	}
-
-	return logs, nil
+// PostProcessOwnerLogs is a no-op: standard ERC-1155 needs no receipt-based repair.
+func (a *ERC1155Adapter) PostProcessOwnerLogs(_ context.Context, _ []types.Log) ([]types.Log, error) {
+	return nil, nil
 }
 
 // GetTokensByOwner returns ERC1155 tokens owned by the address at the end of the block range.
@@ -272,9 +241,9 @@ func (a *ERC1155Adapter) GetTokensByOwner(
 ) ([]domain.TokenWithBlock, error) {
 	owner := common.HexToAddress(ownerAddress)
 
-	logs, err := a.GetOwnerLogs(ctx, ownerAddress, fromBlock, toBlock)
+	logs, err := FetchOwnerLogs(ctx, a.pagination, a.OwnerQuerySpecs(), common.BytesToHash(owner.Bytes()), nil, fromBlock, toBlock)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query ERC1155 logs: %w", err)
 	}
 
 	logs = deduplicateLogs(logs)

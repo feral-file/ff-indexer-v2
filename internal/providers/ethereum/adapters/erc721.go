@@ -209,42 +209,23 @@ func (a *ERC721Adapter) GetTokenEvents(ctx context.Context, contractAddress, tok
 	return events, nil
 }
 
-// GetOwnerLogs fetches ERC-721 Transfer logs where the owner is sender or recipient.
-func (a *ERC721Adapter) GetOwnerLogs(
-	ctx context.Context,
-	ownerAddress string,
-	fromBlock uint64,
-	toBlock uint64,
-) ([]types.Log, error) {
-	owner := common.HexToAddress(ownerAddress)
-	ownerHash := common.BytesToHash(owner.Bytes())
-
-	queries := []ethereum.FilterQuery{
-		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
-			Topics: [][]common.Hash{
-				{helpers.TransferEventSignature},
-				{ownerHash},
-			},
-		},
-		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
-			Topics: [][]common.Hash{
-				{helpers.TransferEventSignature},
-				nil,
-				{ownerHash},
-			},
-		},
+// OwnerQuerySpecs declares the ERC-721 owner-scan shapes: Transfer with the owner
+// as sender (topic 1) and as recipient (topic 2). Topic 3 is the tokenId, so the
+// owner hash must never be placed there.
+//
+// The same signature hash also matches ERC-20 Transfer (2 indexed params, 3
+// topics) and the CryptoPunks internal Transfer; replay drops those by topic
+// count, and the punks repair pass consumes the internal ones.
+func (a *ERC721Adapter) OwnerQuerySpecs() []OwnerQuerySpec {
+	return []OwnerQuerySpec{
+		{EventSigs: []common.Hash{helpers.TransferEventSignature}, OwnerTopicIndex: 1},
+		{EventSigs: []common.Hash{helpers.TransferEventSignature}, OwnerTopicIndex: 2},
 	}
+}
 
-	logs, err := filterLogsInParallel(ctx, a.pagination, queries)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query ERC721 logs: %w", err)
-	}
-
-	return logs, nil
+// PostProcessOwnerLogs is a no-op: standard ERC-721 needs no receipt-based repair.
+func (a *ERC721Adapter) PostProcessOwnerLogs(_ context.Context, _ []types.Log) ([]types.Log, error) {
+	return nil, nil
 }
 
 // GetTokensByOwner returns ERC721 tokens owned by the address at the end of the block range.
@@ -257,9 +238,9 @@ func (a *ERC721Adapter) GetTokensByOwner(
 ) ([]domain.TokenWithBlock, error) {
 	owner := common.HexToAddress(ownerAddress)
 
-	logs, err := a.GetOwnerLogs(ctx, ownerAddress, fromBlock, toBlock)
+	logs, err := FetchOwnerLogs(ctx, a.pagination, a.OwnerQuerySpecs(), common.BytesToHash(owner.Bytes()), nil, fromBlock, toBlock)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query ERC721 logs: %w", err)
 	}
 
 	logs = deduplicateLogs(logs)

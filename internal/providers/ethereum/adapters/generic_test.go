@@ -889,7 +889,7 @@ func TestGenericAdapter_GetTokensByOwner_CorruptedPunkBoughtBuyerDiscovery(t *te
 
 			// Check if this is the internal Transfer query (topic[0] = Transfer, topic[2] = buyer)
 			if len(q.Topics) == 3 && q.Topics[0][0] == helpers.TransferEventSignature {
-				if q.Topics[2] != nil && len(q.Topics[2]) > 0 && q.Topics[2][0] == common.BytesToHash(buyer.Bytes()) {
+				if len(q.Topics[2]) > 0 && q.Topics[2][0] == common.BytesToHash(buyer.Bytes()) {
 					// Return the internal Transfer log
 					return []types.Log{{
 						Address:     common.HexToAddress(contractAddr),
@@ -942,7 +942,7 @@ func TestGenericAdapter_GetTokensByOwner_CorruptedPunkBoughtBuyerDiscovery(t *te
 				},
 				Data: common.LeftPadBytes(big.NewInt(1).Bytes(), 32),
 			},
-		}}, nil).Times(2) // Called twice: once in GetOwnerLogs, once in repair
+		}}, nil).Times(2) // Called twice: once in the PostProcessOwnerLogs discovery pass, once in repair
 
 	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
 		Chain:          domain.ChainEthereumMainnet,
