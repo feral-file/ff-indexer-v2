@@ -83,12 +83,11 @@ flowchart TD
 2. If an **active** address job already exists, the API returns that job instead of duplicating work.
 3. Worker runs `IndexTokenOwner`, which branches to **`IndexEthereumTokenOwner`** or **`IndexTezosTokenOwner`**.
 
-**Owner indexing strategy (both chains)** — conceptually:
+**Owner indexing strategy** — both chains ensure a **`watched_addresses`** row (budget / quota defaults apply when budgeted mode is on) and track a per-chain **indexed block range** watermark, but discovery differs:
 
-- Ensure a **`watched_addresses`** row exists (budget / quota defaults apply when budgeted mode is on).
-- Load the last **indexed block range** for that address (for resumability).
-- Query upstream (RPC / TzKT, etc.) for **token IDs + block numbers** in ranges, sort **newest-first**, split into **chunks** that do not split a block across chunks.
-- For each chunk: **`IndexTokens`** with the **owner address passed through** (important for ERC-1155 / FA2 behavior).
+- **Ethereum** uses **checkpointed scan sessions** (see [Address scan sessions](address_scan_sessions.md)): a cursor walks the un-scanned range in provider-cap-sized windows, each window's merged owner logs commit to Postgres atomically with the cursor, a replay derives the **persisted token list**, and the daily quota paces indexing of that list — failures resume from the cursor and quota pauses resume from the pending tokens with **zero re-scan RPC**. The watermark advances only when a session completes.
+- **Tezos** queries TzKT for **token IDs + block numbers** per range and advances the watermark per chunk.
+- Both sort **newest-first**, split into **chunks** that do not split a block across chunks, and run **`IndexTokens`** per chunk with the **owner address passed through** (important for ERC-1155 / FA2 behavior).
 
 ```mermaid
 flowchart TD

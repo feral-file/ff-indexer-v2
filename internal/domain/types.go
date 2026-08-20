@@ -99,13 +99,6 @@ type TokenWithBlock struct {
 	BlockNumber uint64   `json:"block_number"`
 }
 
-// TokenWithBlockRangeResult represents token results and the effective block range used.
-type TokenWithBlockRangeResult struct {
-	Tokens             []TokenWithBlock `json:"tokens"`
-	EffectiveFromBlock uint64           `json:"effective_from_block"`
-	EffectiveToBlock   uint64           `json:"effective_to_block"`
-}
-
 // BlockchainEvent represents the normalized event model shared by chain event
 // sources and ingestion.
 type BlockchainEvent struct {

@@ -467,6 +467,58 @@ For owner-based indexing functionality with budgeted indexing mode support.
 
 **Note**: The budgeted indexing mode fields (`daily_token_quota`, `quota_reset_at`, `tokens_indexed_today`) are used to throttle token indexing to prevent excessive API calls or quota usage.
 
+### address_scan_sessions
+
+Checkpointed Ethereum owner-scan progress (migration 027). One active session per (chain, address); completed sessions are deleted. See [Address scan sessions](address_scan_sessions.md) for the design.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Primary key |
+| chain | blockchain_chain | Blockchain identifier |
+| address | TEXT | Owner address being scanned |
+| from_block | BIGINT | Inclusive lower bound of the scanned range |
+| to_block | BIGINT | Inclusive upper bound of the scanned range |
+| cursor_block | BIGINT | Next un-fetched block; > to_block means fetching complete |
+| status | address_scan_session_status | `scanning` or `replayed` |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp |
+
+**Constraints**: `UNIQUE (chain, address)` — one session at a time per address; also protects against concurrent workers racing session creation.
+
+### address_scan_logs
+
+Raw owner-scoped logs staged per scan window; the identity primary key makes window re-fetch after a crash idempotent (`ON CONFLICT DO NOTHING`). Deleted in the same transaction that persists the replayed token list.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| session_id | BIGINT | FK to address_scan_sessions (CASCADE delete) |
+| block_number | BIGINT | Block containing the log |
+| tx_hash | TEXT | Transaction hash |
+| log_index | INTEGER | Log index within the block |
+| address | TEXT | Emitting contract address |
+| topics | TEXT[] | Topic hashes as 0x-prefixed hex, in topic order |
+| data | BYTEA | Raw log data payload |
+| tx_index | INTEGER | Transaction index within the block |
+| block_hash | TEXT | Block hash |
+
+**Primary Key**: `(session_id, block_number, tx_hash, log_index)`
+
+### address_scan_tokens
+
+Durable owner-scan discovery result. `indexed_at IS NULL` means pending, so daily-quota resumes continue from here with zero re-scan RPC.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| session_id | BIGINT | FK to address_scan_sessions (CASCADE delete) |
+| token_cid | TEXT | Discovered token's chain-scoped identifier |
+| block_number | BIGINT | Last ownership-affecting block (drives block-aligned chunking) |
+| indexed_at | TIMESTAMPTZ | When indexed; NULL = pending |
+
+**Primary Key**: `(session_id, token_cid)`
+
+**Indexes**:
+- `idx_address_scan_tokens_pending` on (session_id, block_number DESC) WHERE indexed_at IS NULL
+
 ### key_value_store
 
 Configuration and state management (cursors, version, etc.).

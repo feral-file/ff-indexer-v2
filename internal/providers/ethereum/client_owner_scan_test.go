@@ -67,10 +67,9 @@ func TestClient_OwnerScan_ThreeMergedWalks(t *testing.T) {
 	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 	require.NoError(t, err)
 
-	result, err := client.GetTokenCIDsByOwnerAndBlockRange(
-		context.Background(), owner.Hex(), 0, 1000, 100, domain.BlockScanOrderAsc, nil)
+	logs, err := client.FetchOwnerLogsWindow(context.Background(), owner.Hex(), 0, 1000)
 	require.NoError(t, err)
-	require.Empty(t, result.Tokens)
+	require.Empty(t, logs)
 	require.Len(t, queries, 3)
 
 	byPosition := make(map[int]goethereum.FilterQuery, 3)
@@ -181,14 +180,15 @@ func TestClient_OwnerScan_CorruptedPunkBoughtRepairViaMergedPool(t *testing.T) {
 	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 	require.NoError(t, err)
 
-	result, err := client.GetTokenCIDsByOwnerAndBlockRange(
-		context.Background(), buyer.Hex(), 0, 1000, 100, domain.BlockScanOrderAsc, nil)
+	logs, err := client.FetchOwnerLogsWindow(context.Background(), buyer.Hex(), 0, 1000)
 	require.NoError(t, err)
-	require.Len(t, result.Tokens, 1)
+	tokens, err := client.DiscoverOwnedTokensFromLogs(context.Background(), buyer.Hex(), logs, nil)
+	require.NoError(t, err)
+	require.Len(t, tokens, 1)
 
 	expectedCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, cryptoPunksAddress, "7")
-	require.Equal(t, expectedCID, result.Tokens[0].TokenCID)
-	require.Equal(t, uint64(700), result.Tokens[0].BlockNumber)
+	require.Equal(t, expectedCID, tokens[0].TokenCID)
+	require.Equal(t, uint64(700), tokens[0].BlockNumber)
 }
 
 // TestClient_OwnerScan_SellerSideInternalTransferSkipsReceipt pins the repair
@@ -237,8 +237,9 @@ func TestClient_OwnerScan_SellerSideInternalTransferSkipsReceipt(t *testing.T) {
 	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 	require.NoError(t, err)
 
-	result, err := client.GetTokenCIDsByOwnerAndBlockRange(
-		context.Background(), seller.Hex(), 0, 1000, 100, domain.BlockScanOrderAsc, nil)
+	logs, err := client.FetchOwnerLogsWindow(context.Background(), seller.Hex(), 0, 1000)
 	require.NoError(t, err)
-	require.Empty(t, result.Tokens, "an internal Transfer alone must not surface a token")
+	tokens, err := client.DiscoverOwnedTokensFromLogs(context.Background(), seller.Hex(), logs, nil)
+	require.NoError(t, err)
+	require.Empty(t, tokens, "an internal Transfer alone must not surface a token")
 }

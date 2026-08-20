@@ -166,6 +166,7 @@ func registerWorkerCore(
 			TezosTokenSweepStartBlock:          cfg.TezosTokenSweepStartBlock,
 			EthereumChainID:                    cfg.Ethereum.ChainID,
 			TezosChainID:                       cfg.Tezos.ChainID,
+			EthereumScanWindowBlocks:           scanWindowBlocksFromSpanCap(cfg.Ethereum.GetLogsSpanCap),
 			EthereumOwnerFirstBatchTarget:      cfg.EthereumOwnerFirstBatchTarget,
 			EthereumOwnerSubsequentBatchTarget: cfg.EthereumOwnerSubsequentBatchTarget,
 			TezosOwnerFirstBatchTarget:         cfg.TezosOwnerFirstBatchTarget,
@@ -224,4 +225,16 @@ func registerWorkerCore(
 		return nil
 	}
 	return run, cleanup, nil
+}
+
+// scanWindowBlocksFromSpanCap derives the owner-scan window size from the
+// provider's getLogs span cap: cap+1 blocks means every window is exactly one
+// accepted eth_getLogs call per merged query. Without a configured cap
+// (self-hosted node), a 1M-block window keeps checkpoints frequent while the
+// pagination helper's adaptive halving absorbs dense windows internally.
+func scanWindowBlocksFromSpanCap(spanCap uint64) uint64 {
+	if spanCap > 0 {
+		return spanCap + 1
+	}
+	return 1_000_000
 }
