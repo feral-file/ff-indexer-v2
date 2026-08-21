@@ -16,6 +16,7 @@ CREATE TYPE job_status AS ENUM ('pending', 'running', 'succeeded', 'failed', 'ca
 CREATE TYPE moderation_source AS ENUM ('opensea', 'objkt', 'feralfile');  -- added in migration 021
 CREATE TYPE moderation_status AS ENUM ('none', 'spam');  -- added in migration 021
 CREATE TYPE render_probe_verdict AS ENUM ('rendered_ok', 'blank', 'stalled', 'known_bad_fingerprint');  -- added in migration 023
+CREATE TYPE address_scan_session_status AS ENUM ('scanning', 'replayed');  -- added in migration 027
 
 -- ============================================================================
 -- CORE TABLES
@@ -408,6 +409,52 @@ CREATE TABLE address_indexing_jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Address Scan Sessions - Checkpointed Ethereum owner-scan progress (migration 027)
+-- See docs/address_scan_sessions.md for the design.
+CREATE TABLE address_scan_sessions (
+    id BIGSERIAL PRIMARY KEY,
+    chain blockchain_chain NOT NULL,
+    address TEXT NOT NULL,
+    -- Inclusive block range this session covers.
+    from_block BIGINT NOT NULL,
+    to_block BIGINT NOT NULL,
+    -- Next un-fetched block; > to_block means the window loop is complete.
+    cursor_block BIGINT NOT NULL,
+    status address_scan_session_status NOT NULL DEFAULT 'scanning',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- One session at a time per address: range selection is sequential
+    -- (backward gap, then forward gap), and the unique constraint also
+    -- protects against concurrent workers racing session creation.
+    CONSTRAINT uq_address_scan_sessions_chain_address UNIQUE (chain, address)
+);
+
+-- Address Scan Logs - Raw owner-scoped logs staged per scan window (migration 027)
+CREATE TABLE address_scan_logs (
+    session_id BIGINT NOT NULL REFERENCES address_scan_sessions (id) ON DELETE CASCADE,
+    block_number BIGINT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    log_index INTEGER NOT NULL,
+    -- Emitting contract address.
+    address TEXT NOT NULL,
+    -- Topic hashes as 0x-prefixed hex strings, in topic order.
+    topics TEXT[] NOT NULL,
+    data BYTEA,
+    tx_index INTEGER NOT NULL DEFAULT 0,
+    block_hash TEXT,
+    PRIMARY KEY (session_id, block_number, tx_hash, log_index)
+);
+
+-- Address Scan Tokens - Durable owner-scan discovery result (migration 027)
+CREATE TABLE address_scan_tokens (
+    session_id BIGINT NOT NULL REFERENCES address_scan_sessions (id) ON DELETE CASCADE,
+    token_cid TEXT NOT NULL,
+    -- Last ownership-affecting block for this token; drives block-aligned chunking.
+    block_number BIGINT NOT NULL,
+    indexed_at TIMESTAMPTZ,
+    PRIMARY KEY (session_id, token_cid)
+);
+
 -- ============================================================================
 -- INDEXES FOR PERFORMANCE
 -- ============================================================================
@@ -525,6 +572,11 @@ CREATE INDEX idx_webhook_deliveries_client ON webhook_deliveries(client_id, crea
 CREATE UNIQUE INDEX jobs_unique_key_active ON jobs (queue, kind, unique_key) WHERE status IN ('pending', 'running') AND unique_key IS NOT NULL;
 CREATE INDEX jobs_poll ON jobs (queue, run_after) WHERE status = 'pending';
 
+-- Address Scan Tokens: resume query — pending tokens for a session, newest blocks first
+CREATE INDEX idx_address_scan_tokens_pending
+    ON address_scan_tokens (session_id, block_number DESC)
+    WHERE indexed_at IS NULL;
+
 -- Address Indexing Jobs table indexes
 CREATE UNIQUE INDEX idx_address_indexing_job_workflow_id ON address_indexing_jobs(workflow_id) WHERE status IN ('running', 'paused');
 CREATE UNIQUE INDEX idx_address_indexing_jobs_address_chain_active ON address_indexing_jobs(address, chain) WHERE status IN ('running', 'paused');
@@ -609,6 +661,11 @@ CREATE TRIGGER update_provenance_events_updated_at
     BEFORE UPDATE ON provenance_events
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply updated_at trigger to address_scan_sessions
+CREATE TRIGGER update_address_scan_sessions_updated_at
+    BEFORE UPDATE ON address_scan_sessions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Apply updated_at trigger to watched_addresses
 CREATE TRIGGER update_watched_addresses_updated_at 
     BEFORE UPDATE ON watched_addresses 
@@ -684,6 +741,9 @@ COMMENT ON COLUMN tokens.moderation_status IS 'Materialized combined moderation 
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';
 COMMENT ON TABLE token_ownership_provenance IS 'Tracks the most recent provenance event per token-owner pair. Enables fast owner-filtered queries without LATERAL JOINs by denormalizing latest timestamp for each address that received tokens (to_address only, not from_address). Maintained by application code with monotonic timestamp enforcement in UPSERT WHERE clause.';
 COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';
+COMMENT ON TABLE address_scan_sessions IS 'Checkpointed Ethereum owner-scan progress: one active session per (chain, address); cursor_block resumes the window loop after any interruption (see docs/address_scan_sessions.md)';
+COMMENT ON TABLE address_scan_logs IS 'Raw owner-scoped logs staged per scan window; identity PK makes window re-fetch idempotent; deleted when the session replays into address_scan_tokens';
+COMMENT ON TABLE address_scan_tokens IS 'Durable owner-scan discovery result; indexed_at IS NULL = pending, so quota-paced indexing resumes with zero re-scan RPC';
 COMMENT ON TABLE key_value_store IS 'For configuration and state management';
 COMMENT ON TABLE webhook_clients IS 'Registered webhook clients for event notifications with HTTPS endpoints and event filtering';
 COMMENT ON TABLE webhook_deliveries IS 'Audit log of webhook delivery attempts with status tracking and response details';

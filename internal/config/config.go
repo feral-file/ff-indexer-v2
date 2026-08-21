@@ -76,6 +76,27 @@ type EthereumConfig struct {
 	// aborts the walk. Size above ceil(chain head / span cap) — mainnet at a 10k cap
 	// needs ~2,600 calls per full-history walk.
 	GetLogsCallBudget int `mapstructure:"getlogs_call_budget"`
+	// ScanWindowConcurrency: how many owner-scan windows are fetched from the
+	// provider concurrently. The scan is purely RPC-latency-bound (measured: one
+	// ~0.9s round-trip per window, windows independent of each other), so
+	// wall-clock divides by roughly this factor at identical total credit cost —
+	// only the request RATE rises. Windows still commit to the checkpoint cursor
+	// strictly in order, so resumability is unaffected.
+	//
+	// Sizing is an operations decision per RPC vendor — credit-metered, flat-rate,
+	// and self-hosted providers all want different values, so the binary ships a
+	// conservative default (2) and deploy config sets the real number. Reason
+	// from the full fan-out: every window issues the THREE merged owner-topic
+	// eth_getLogs queries at once, and every token worker may run a scan, so
+	//
+	//   peak concurrent eth_getLogs = jobs.token_worker.concurrency × this × 3
+	//
+	// (5 × 2 × 3 = 30 at binary defaults; a 30-worker deployment at 4 is 360).
+	// Throttling (429) is retried with backoff and the checkpoint resumes the
+	// walk, so over-sizing degrades to "slower", not "broken" — but sustained
+	// 429s burn the per-call retry budget, so size from the vendor's actual
+	// limit rather than upward from symptoms.
+	ScanWindowConcurrency int `mapstructure:"scan_window_concurrency"`
 	// FullProvenanceDisabled: skip per-token history walks (full provenance and the
 	// ERC-1155 owner event replay); tokens keep minimal provenance until backfilled.
 	FullProvenanceDisabled bool `mapstructure:"full_provenance_disabled"`
@@ -599,6 +620,11 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 	if cfg.Ethereum.GetLogsCallBudget < 0 {
 		return fmt.Errorf("ethereum.getlogs_call_budget must be >= 0, got %d", cfg.Ethereum.GetLogsCallBudget)
 	}
+	// Zero concurrency would stall the owner scan forever (no window ever
+	// fetched), and the unbounded case is what rate-limit discipline is for.
+	if cfg.Ethereum.ScanWindowConcurrency < 1 {
+		return fmt.Errorf("ethereum.scan_window_concurrency must be >= 1, got %d", cfg.Ethereum.ScanWindowConcurrency)
+	}
 
 	// Address-indexing throttle: negative durations would silently disable the
 	// throttle (it engages only on positive values), and a cap below the base
@@ -908,6 +934,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// Credit guards default off (0/false = unguarded, pre-guard behavior);
 	// production enables them via deploy config.
 	v.SetDefault("ethereum.getlogs_span_cap", 0)
+	v.SetDefault("ethereum.scan_window_concurrency", 2)
 	v.SetDefault("ethereum.getlogs_call_budget", 0)
 	v.SetDefault("ethereum.full_provenance_disabled", false)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
@@ -1081,6 +1108,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.block_flush_timeout",
 		"ethereum.getlogs_span_cap",
 		"ethereum.getlogs_call_budget",
+		"ethereum.scan_window_concurrency",
 		"ethereum.full_provenance_disabled",
 		// Tezos
 		"tezos.api_url",

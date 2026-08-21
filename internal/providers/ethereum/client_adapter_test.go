@@ -327,21 +327,15 @@ func TestClient_GetTokenCIDsByOwnerAndBlockRange_ConfiguredLegacyContract(t *tes
 	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 	require.NoError(t, err)
 
-	result, err := client.GetTokenCIDsByOwnerAndBlockRange(
-		context.Background(),
-		owner.Hex(),
-		0,
-		1000,
-		100,
-		domain.BlockScanOrderAsc,
-		nil,
-	)
+	logs, err := client.FetchOwnerLogsWindow(context.Background(), owner.Hex(), 0, 1000)
 	require.NoError(t, err)
-	require.Len(t, result.Tokens, 1)
+	tokens, err := client.DiscoverOwnedTokensFromLogs(context.Background(), owner.Hex(), logs, nil)
+	require.NoError(t, err)
+	require.Len(t, tokens, 1)
 
 	expectedCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, cryptoPunksAddress, "42")
-	require.Equal(t, expectedCID, result.Tokens[0].TokenCID)
-	require.Equal(t, uint64(500), result.Tokens[0].BlockNumber)
+	require.Equal(t, expectedCID, tokens[0].TokenCID)
+	require.Equal(t, uint64(500), tokens[0].BlockNumber)
 }
 
 func TestClient_GetTokenCIDsByOwnerAndBlockRange_TimestampLookupFailure(t *testing.T) {
@@ -384,15 +378,9 @@ func TestClient_GetTokenCIDsByOwnerAndBlockRange_TimestampLookupFailure(t *testi
 	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 	require.NoError(t, err)
 
-	_, err = client.GetTokenCIDsByOwnerAndBlockRange(
-		context.Background(),
-		owner.Hex(),
-		0,
-		1000,
-		100,
-		domain.BlockScanOrderAsc,
-		nil,
-	)
+	logs, err := client.FetchOwnerLogsWindow(context.Background(), owner.Hex(), 0, 1000)
+	require.NoError(t, err)
+	_, err = client.DiscoverOwnedTokensFromLogs(context.Background(), owner.Hex(), logs, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "owner ownership replay failed")
 	require.Contains(t, err.Error(), "resolve block timestamp")

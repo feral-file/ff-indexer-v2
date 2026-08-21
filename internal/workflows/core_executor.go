@@ -81,18 +81,31 @@ type CoreExecutor interface {
 	// SupportsTokenProvenance reports whether full on-chain provenance indexing is supported for a token.
 	SupportsTokenProvenance(tokenCID domain.TokenCID) bool
 
-	// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves token CIDs with block numbers for an owner within a block range.
-	// This is used to sweep tokens by block ranges for incremental indexing.
-	// limit is always applied; pass a very large value if you want "no cap". order controls scan direction for limit selection.
-	// Returns effectiveFromBlock/effectiveToBlock for the range actually used after limiting.
-	GetEthereumTokenCIDsByOwnerWithinBlockRange(
-		ctx context.Context,
-		address string,
-		requestedFromBlock uint64,
-		requestedToBlock uint64,
-		limit int,
-		order domain.BlockScanOrder,
-	) (domain.TokenWithBlockRangeResult, error)
+	// =============================================================================
+	// Ethereum owner-scan sessions (checkpointed discovery)
+	// See docs/address_scan_sessions.md for lifecycle and invariants.
+	// =============================================================================
+
+	// GetEthereumScanSession returns the active owner-scan session for the address, or nil when none exists
+	GetEthereumScanSession(ctx context.Context, address string, chainID domain.Chain) (*ScanSessionInfo, error)
+	// CreateEthereumScanSession creates a scanning session for the block range,
+	// or returns the existing session when a concurrent worker created one first
+	CreateEthereumScanSession(ctx context.Context, address string, chainID domain.Chain, fromBlock, toBlock uint64) (*ScanSessionInfo, error)
+	// FetchEthereumOwnerWindow fetches one window of merged owner logs as staged rows
+	// without touching the checkpoint; safe to call concurrently for distinct windows
+	FetchEthereumOwnerWindow(ctx context.Context, address string, fromBlock, toBlock uint64) ([]schema.AddressScanLog, error)
+	// PersistEthereumScanWindow commits one fetched window's rows with the cursor
+	// advance in one transaction; MUST be called in ascending window order
+	PersistEthereumScanWindow(ctx context.Context, sessionID int64, rows []schema.AddressScanLog, fromBlock, toBlock uint64) error
+	// ReplayEthereumScanSession derives the owned-token list from the staged logs and
+	// persists it (deleting the logs); returns the number of discovered tokens
+	ReplayEthereumScanSession(ctx context.Context, address string, sessionID int64) (int, error)
+	// GetPendingScanTokens returns the session's un-indexed tokens, newest blocks first
+	GetPendingScanTokens(ctx context.Context, sessionID int64) ([]domain.TokenWithBlock, error)
+	// MarkScanTokensIndexed stamps tokens indexed after a chunk lands
+	MarkScanTokensIndexed(ctx context.Context, sessionID int64, tokenCIDs []domain.TokenCID) error
+	// DeleteEthereumScanSession removes a completed session
+	DeleteEthereumScanSession(ctx context.Context, sessionID int64) error
 
 	// GetTezosTokenCIDsByAccountWithinBlockRange retrieves token CIDs with block numbers for an account within a block range
 	GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error)
@@ -1376,33 +1389,6 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 // GetTokenCIDsByOwner retrieves all token CIDs owned by an address
 func (e *coreExecutor) GetTokenCIDsByOwner(ctx context.Context, address string) ([]domain.TokenCID, error) {
 	return e.store.GetTokenCIDsByOwner(ctx, address)
-}
-
-// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs for an owner within a block range
-// This is used to sweep tokens by block ranges for incremental indexing
-// Filters out blacklisted tokens before returning
-func (e *coreExecutor) GetEthereumTokenCIDsByOwnerWithinBlockRange(
-	ctx context.Context,
-	address string,
-	requestedFromBlock uint64,
-	requestedToBlock uint64,
-	limit int,
-	order domain.BlockScanOrder,
-) (domain.TokenWithBlockRangeResult, error) {
-	blockchain := types.AddressToBlockchain(address)
-	if blockchain != domain.BlockchainEthereum {
-		return domain.TokenWithBlockRangeResult{}, fmt.Errorf("unsupported blockchain for address: %s", address)
-	}
-
-	return e.ethClient.GetTokenCIDsByOwnerAndBlockRange(
-		ctx,
-		address,
-		requestedFromBlock,
-		requestedToBlock,
-		limit,
-		order,
-		e.blacklist,
-	)
 }
 
 // IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID

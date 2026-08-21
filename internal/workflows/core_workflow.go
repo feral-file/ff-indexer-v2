@@ -96,6 +96,16 @@ type CoreWorkflowsConfig struct {
 	EthereumTokenSweepStartBlock uint64
 	// TezosTokenSweepStartBlock is the start block for the Tezos token sweep
 	TezosTokenSweepStartBlock uint64
+	// EthereumScanWindowBlocks is the block-window size of the checkpointed owner
+	// scan (docs/address_scan_sessions.md). Set it to the provider's getLogs span
+	// cap + 1 so every window is exactly one accepted call per merged query;
+	// 0 falls back to a 1M-block window for uncapped providers, where the
+	// pagination helper's adaptive halving handles dense windows internally.
+	EthereumScanWindowBlocks uint64
+	// EthereumScanWindowConcurrency bounds how many scan windows are fetched
+	// concurrently (ethereum.scan_window_concurrency). Fetch is parallel; the
+	// checkpoint commit stays strictly in cursor order. <= 0 falls back to 1.
+	EthereumScanWindowConcurrency int
 	// EthereumOwnerFirstBatchTarget is the first-run batch target (token count) for Ethereum owner indexing.
 	EthereumOwnerFirstBatchTarget int
 	// EthereumOwnerSubsequentBatchTarget is the subsequent-run batch target (token count) for Ethereum owner indexing.

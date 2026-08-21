@@ -182,8 +182,9 @@ func TestValidateRequiredConfigValues(t *testing.T) {
 			MediaQueue: "media_index",
 		},
 		Ethereum: EthereumConfig{
-			RPCURL:       "https://rpc.example.com",
-			WebSocketURL: "wss://ws.example.com",
+			RPCURL:                "https://rpc.example.com",
+			WebSocketURL:          "wss://ws.example.com",
+			ScanWindowConcurrency: 4,
 		},
 		Tezos: TezosConfig{
 			APIURL:       "https://api.tzkt.io",
@@ -207,8 +208,9 @@ func TestValidateRequiredConfigValues_MediaDisabled_EmptyMediaQueue(t *testing.T
 			MediaQueue: "",
 		},
 		Ethereum: EthereumConfig{
-			RPCURL:       "https://rpc.example.com",
-			WebSocketURL: "wss://ws.example.com",
+			RPCURL:                "https://rpc.example.com",
+			WebSocketURL:          "wss://ws.example.com",
+			ScanWindowConcurrency: 4,
 		},
 		Tezos: TezosConfig{
 			APIURL:       "https://api.tzkt.io",
@@ -232,8 +234,9 @@ func TestValidateRequiredConfigValues_MediaEnabled_MissingMediaQueue(t *testing.
 			MediaQueue: "",
 		},
 		Ethereum: EthereumConfig{
-			RPCURL:       "https://rpc.example.com",
-			WebSocketURL: "wss://ws.example.com",
+			RPCURL:                "https://rpc.example.com",
+			WebSocketURL:          "wss://ws.example.com",
+			ScanWindowConcurrency: 4,
 		},
 		Tezos: TezosConfig{
 			APIURL:       "https://api.tzkt.io",
@@ -800,6 +803,59 @@ func TestLoadAppConfig_GuardEnvVarsReachConfig(t *testing.T) {
 	require.Equal(t, uint64(10000), cfg.Ethereum.GetLogsSpanCap)
 	require.Equal(t, 3000, cfg.Ethereum.GetLogsCallBudget)
 	require.True(t, cfg.Ethereum.FullProvenanceDisabled)
+}
+
+// TestLoadAppConfig_ScanWindowConcurrency pins the owner-scan parallelism knob:
+// a deliberately conservative default when unset (sizing is a per-vendor
+// operations decision made in deploy config, so the binary must not ship an
+// aggressive number), an env override (which requires the key to be bound in
+// commonKeys — an unbound key is silently ignored, not an error), and rejection
+// of 0, which would stall every owner scan forever with no window ever fetched.
+func TestLoadAppConfig_ScanWindowConcurrency(t *testing.T) {
+	// Mirrors TestLoadAppConfig_GuardEnvVarsReachConfig: these are the keys
+	// LoadAppConfig requires before any ethereum.* validation runs.
+	setMinimalRequiredEnv := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("FF_INDEXER_DATABASE_HOST", "localhost")
+		t.Setenv("FF_INDEXER_DATABASE_DBNAME", "ff")
+		t.Setenv("FF_INDEXER_JOBS_TOKEN_QUEUE", "token_index")
+		t.Setenv("FF_INDEXER_ETHEREUM_RPC_URL", "http://rpc.invalid")
+		t.Setenv("FF_INDEXER_ETHEREUM_WEBSOCKET_URL", "ws://rpc.invalid")
+		t.Setenv("FF_INDEXER_TEZOS_API_URL", "http://tzkt.invalid")
+		t.Setenv("FF_INDEXER_TEZOS_WEBSOCKET_URL", "ws://tzkt.invalid")
+	}
+
+	t.Run("default is conservative", func(t *testing.T) {
+		setMinimalRequiredEnv(t)
+		cfg, err := LoadAppConfig("", "")
+		require.NoError(t, err)
+		require.Equal(t, 2, cfg.Ethereum.ScanWindowConcurrency)
+		// The binary encodes no vendor's rate limit; it only guarantees the
+		// out-of-the-box fan-out stays small. Peak concurrent eth_getLogs is
+		// token_worker.concurrency × this × 3 merged queries, so pin that the
+		// default keeps it in the tens, not the hundreds — a future default bump
+		// that looks harmless here multiplies through the worker pool.
+		const mergedQueriesPerWindow = 3
+		peakAtDefaults := cfg.Jobs.TokenWorker.Concurrency * cfg.Ethereum.ScanWindowConcurrency * mergedQueriesPerWindow
+		require.LessOrEqual(t, peakAtDefaults, 30,
+			"binary-default fan-out (workers × windows × 3) must stay conservative; real sizing belongs in deploy config")
+	})
+
+	t.Run("env override is honored", func(t *testing.T) {
+		setMinimalRequiredEnv(t)
+		t.Setenv("FF_INDEXER_ETHEREUM_SCAN_WINDOW_CONCURRENCY", "8")
+		cfg, err := LoadAppConfig("", "")
+		require.NoError(t, err)
+		require.Equal(t, 8, cfg.Ethereum.ScanWindowConcurrency)
+	})
+
+	t.Run("zero rejected at startup", func(t *testing.T) {
+		setMinimalRequiredEnv(t)
+		t.Setenv("FF_INDEXER_ETHEREUM_SCAN_WINDOW_CONCURRENCY", "0")
+		_, err := LoadAppConfig("", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "scan_window_concurrency must be >= 1")
+	})
 }
 
 // TestLoadAppConfig_NegativeCallBudgetRejected pins that a malformed negative

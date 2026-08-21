@@ -640,6 +640,30 @@ type Store interface {
 	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error
 
 	// =============================================================================
+	// Address Scan Sessions (checkpointed owner discovery)
+	// See docs/address_scan_sessions.md for lifecycle and invariants.
+	// =============================================================================
+
+	// GetAddressScanSession returns the active scan session for (chain, address), or nil when none exists
+	GetAddressScanSession(ctx context.Context, chain domain.Chain, address string) (*schema.AddressScanSession, error)
+	// CreateAddressScanSession creates a scanning session with the cursor at the range start;
+	// returns the existing session when one already exists for (chain, address)
+	CreateAddressScanSession(ctx context.Context, chain domain.Chain, address string, fromBlock, toBlock uint64) (*schema.AddressScanSession, error)
+	// AppendScanLogsAdvanceCursor persists one window's logs and advances the session cursor in one transaction
+	AppendScanLogsAdvanceCursor(ctx context.Context, sessionID int64, logs []schema.AddressScanLog, newCursor uint64) error
+	// GetAddressScanLogs returns all staged logs for a session in chain order for the ownership replay
+	GetAddressScanLogs(ctx context.Context, sessionID int64) ([]schema.AddressScanLog, error)
+	// FinishAddressScanReplay persists the replayed token list, deletes the staged logs,
+	// and marks the session replayed in one transaction
+	FinishAddressScanReplay(ctx context.Context, sessionID int64, tokens []schema.AddressScanToken) error
+	// GetPendingAddressScanTokens returns the session's un-indexed tokens, newest blocks first
+	GetPendingAddressScanTokens(ctx context.Context, sessionID int64) ([]schema.AddressScanToken, error)
+	// MarkAddressScanTokensIndexed stamps indexed_at on the given tokens after a chunk lands
+	MarkAddressScanTokensIndexed(ctx context.Context, sessionID int64, tokenCIDs []domain.TokenCID) error
+	// DeleteAddressScanSession removes a completed session; token rows cascade
+	DeleteAddressScanSession(ctx context.Context, sessionID int64) error
+
+	// =============================================================================
 	// Budgeted Indexing Mode Quota Operations
 	// =============================================================================
 

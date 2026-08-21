@@ -55,6 +55,23 @@ func stubSuccessfulIndexToken(exec *mocks.MockCoreExecutor) {
 	exec.EXPECT().IndexTokenWithFullProvenancesByTokenCID(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 }
 
+// stubEthScanDiscovery wires the session prelude of the checkpointed Ethereum
+// owner scan for an empty-watermark address: no active session, one derived
+// [sweepStart(1000), latest] range, one window (default window size covers the
+// whole test range), replay, and a pending-token list of the given tokens.
+func stubEthScanDiscovery(exec *mocks.MockCoreExecutor, addr string, chainID domain.Chain, latest uint64, sessionID int64, pending []domain.TokenWithBlock) {
+	exec.EXPECT().GetEthereumScanSession(gomock.Any(), addr, chainID).Return(nil, nil)
+	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).
+		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil).AnyTimes()
+	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
+	exec.EXPECT().CreateEthereumScanSession(gomock.Any(), addr, chainID, uint64(1000), latest).
+		Return(&workflows.ScanSessionInfo{ID: sessionID, FromBlock: 1000, ToBlock: latest, CursorBlock: 1000}, nil)
+	exec.EXPECT().FetchEthereumOwnerWindow(gomock.Any(), addr, uint64(1000), latest).Return(nil, nil)
+	exec.EXPECT().PersistEthereumScanWindow(gomock.Any(), sessionID, gomock.Nil(), uint64(1000), latest).Return(nil)
+	exec.EXPECT().ReplayEthereumScanSession(gomock.Any(), addr, sessionID).Return(len(pending), nil)
+	exec.EXPECT().GetPendingScanTokens(gomock.Any(), sessionID).Return(pending, nil)
+}
+
 // --- IndexTokenOwner ---
 
 func TestIndexTokenOwner_UnknownAddress(t *testing.T) {
@@ -77,19 +94,26 @@ func TestIndexTokenOwner_Ethereum_EmptyFirstRun(t *testing.T) {
 	addr := "0x1234567890123456789012345678901234567890"
 	chainID := domain.ChainEthereumMainnet
 	latest := uint64(5000)
+	const sessionID int64 = 11
 	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
-	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	// First loop pass: no session yet -> derive [sweepStart, latest] and scan it.
+	exec.EXPECT().GetEthereumScanSession(gomock.Any(), addr, chainID).Return(nil, nil)
+	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil).Times(2)
 	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
-	exec.EXPECT().GetEthereumTokenCIDsByOwnerWithinBlockRange(
-		gomock.Any(), addr, uint64(1000), latest, gomock.Any(), domain.BlockScanOrderDesc,
-	).Return(domain.TokenWithBlockRangeResult{
-		Tokens:             nil,
-		EffectiveFromBlock: 1000,
-		EffectiveToBlock:   latest,
-	}, nil)
+	exec.EXPECT().CreateEthereumScanSession(gomock.Any(), addr, chainID, uint64(1000), latest).
+		Return(&workflows.ScanSessionInfo{ID: sessionID, FromBlock: 1000, ToBlock: latest, CursorBlock: 1000}, nil)
+	exec.EXPECT().FetchEthereumOwnerWindow(gomock.Any(), addr, uint64(1000), latest).Return(nil, nil)
+	exec.EXPECT().PersistEthereumScanWindow(gomock.Any(), sessionID, gomock.Nil(), uint64(1000), latest).Return(nil)
+	exec.EXPECT().ReplayEthereumScanSession(gomock.Any(), addr, sessionID).Return(0, nil)
+	exec.EXPECT().GetPendingScanTokens(gomock.Any(), sessionID).Return(nil, nil)
 	exec.EXPECT().UpdateIndexingBlockRangeForAddress(gomock.Any(), addr, chainID, uint64(1000), latest).Return(nil)
+	exec.EXPECT().DeleteEthereumScanSession(gomock.Any(), sessionID).Return(nil)
+	// Second loop pass: watermark now covers [sweepStart, latest] -> done.
+	exec.EXPECT().GetEthereumScanSession(gomock.Any(), addr, chainID).Return(nil, nil)
+	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 1000, MaxBlock: latest}, nil)
+	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusCompleted, gomock.Any()).Return(nil)
 
 	require.NoError(t, wf.IndexTokenOwner(ctx, addr))
@@ -154,15 +178,11 @@ func TestIndexTokenOwner_IndexingError_MarksJobFailed(t *testing.T) {
 	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
-	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
-	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
 	tok := domain.TokenWithBlock{
 		TokenCID:    domain.NewTokenCID(chainID, domain.StandardERC721, "0xContract00000000000000000000000000000000", "1"),
 		BlockNumber: 2000,
 	}
-	exec.EXPECT().GetEthereumTokenCIDsByOwnerWithinBlockRange(
-		gomock.Any(), addr, uint64(1000), latest, gomock.Any(), domain.BlockScanOrderDesc,
-	).Return(domain.TokenWithBlockRangeResult{Tokens: []domain.TokenWithBlock{tok}, EffectiveFromBlock: 1000, EffectiveToBlock: latest}, nil)
+	stubEthScanDiscovery(exec, addr, chainID, latest, 21, []domain.TokenWithBlock{tok})
 	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), gomock.Any(), gomock.Any()).Return(innerErr)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusFailed, gomock.Any()).Return(nil)
 
@@ -237,6 +257,7 @@ func TestIndexEthereumTokenOwner_FirstRun_NoNewBlocks(t *testing.T) {
 	chainID := domain.ChainEthereumMainnet
 	latest := uint64(5000)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
+	exec.EXPECT().GetEthereumScanSession(gomock.Any(), addr, chainID).Return(nil, nil)
 	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(
 		&workflows.BlockRangeResult{MinBlock: 1000, MaxBlock: uint64(5000)}, nil)
 	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
@@ -256,11 +277,7 @@ func TestIndexEthereumTokenOwner_FirstRun_IndexTokenChunkError(t *testing.T) {
 		BlockNumber: 2000,
 	}}
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
-	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
-	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
-	exec.EXPECT().GetEthereumTokenCIDsByOwnerWithinBlockRange(
-		gomock.Any(), addr, uint64(1000), latest, gomock.Any(), domain.BlockScanOrderDesc,
-	).Return(domain.TokenWithBlockRangeResult{Tokens: tok, EffectiveFromBlock: 1000, EffectiveToBlock: latest}, nil)
+	stubEthScanDiscovery(exec, addr, chainID, latest, 22, tok)
 	chunkErr := errors.New("indexing failed")
 	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), gomock.Any(), gomock.Any()).Return(chunkErr)
 	err := wf.IndexEthereumTokenOwner(ctx, addr, nil)
@@ -280,12 +297,9 @@ func TestIndexEthereumTokenOwner_UpdateBlockRangeError(t *testing.T) {
 		BlockNumber: 2000,
 	}}
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
-	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
-	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
-	exec.EXPECT().GetEthereumTokenCIDsByOwnerWithinBlockRange(
-		gomock.Any(), addr, uint64(1000), latest, gomock.Any(), domain.BlockScanOrderDesc,
-	).Return(domain.TokenWithBlockRangeResult{Tokens: tok, EffectiveFromBlock: 1000, EffectiveToBlock: latest}, nil)
+	stubEthScanDiscovery(exec, addr, chainID, latest, 23, tok)
 	stubSuccessfulIndexToken(exec)
+	exec.EXPECT().MarkScanTokensIndexed(gomock.Any(), int64(23), gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingBlockRangeForAddress(gomock.Any(), addr, chainID, gomock.Any(), gomock.Any()).
 		Return(errors.New("database error"))
 	err := wf.IndexEthereumTokenOwner(ctx, addr, nil)
@@ -312,15 +326,7 @@ func TestIndexEthereumTokenOwner_BudgetedMode_QuotaReschedules(t *testing.T) {
 	}
 	reset := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
-	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
-	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
-	exec.EXPECT().GetEthereumTokenCIDsByOwnerWithinBlockRange(
-		gomock.Any(), addr, uint64(1000), latest, gomock.Any(), domain.BlockScanOrderDesc,
-	).Return(domain.TokenWithBlockRangeResult{
-		Tokens:             tokens,
-		EffectiveFromBlock: 1000,
-		EffectiveToBlock:   latest,
-	}, nil)
+	stubEthScanDiscovery(exec, addr, chainID, latest, 24, tokens)
 	gomock.InOrder(
 		exec.EXPECT().GetQuotaInfo(gomock.Any(), addr, chainID).Return(&store.QuotaInfo{
 			RemainingQuota: 50, TotalQuota: 50, QuotaExhausted: false, QuotaResetAt: reset,
@@ -331,7 +337,9 @@ func TestIndexEthereumTokenOwner_BudgetedMode_QuotaReschedules(t *testing.T) {
 	)
 	stubSuccessfulIndexToken(exec)
 	exec.EXPECT().IncrementTokensIndexed(gomock.Any(), addr, chainID, 50).Return(nil)
-	exec.EXPECT().UpdateIndexingBlockRangeForAddress(gomock.Any(), addr, chainID, gomock.Any(), gomock.Any()).Return(nil)
+	// Only the successfully indexed first chunk is stamped; the quota-blocked
+	// remainder stays pending for the post-reset resume.
+	exec.EXPECT().MarkScanTokensIndexed(gomock.Any(), int64(24), gomock.Len(50)).Return(nil)
 
 	err := wf.IndexEthereumTokenOwner(ctx, addr, nil)
 	require.Error(t, err)
@@ -419,15 +427,11 @@ func TestIndexTokenOwner_CanceledError_UpdatesJobCanceled(t *testing.T) {
 	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
-	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
-	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
 	tok := []domain.TokenWithBlock{{
 		TokenCID:    domain.NewTokenCID(chainID, domain.StandardERC721, "0xC00000000000000000000000000000000000001", "1"),
 		BlockNumber: 2000,
 	}}
-	exec.EXPECT().GetEthereumTokenCIDsByOwnerWithinBlockRange(
-		gomock.Any(), addr, uint64(1000), latest, gomock.Any(), domain.BlockScanOrderDesc,
-	).Return(domain.TokenWithBlockRangeResult{Tokens: tok, EffectiveFromBlock: 1000, EffectiveToBlock: latest}, nil)
+	stubEthScanDiscovery(exec, addr, chainID, latest, 25, tok)
 	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), gomock.Any(), gomock.Any()).Return(canceledLike)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusCanceled, gomock.Any()).Return(nil)
 	err := wf.IndexTokenOwner(ctx, addr)
@@ -450,15 +454,11 @@ func TestIndexTokenOwner_IndexingError_StatusFailedUpdateFails_StillReturnsIndex
 	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
-	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
-	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
 	tb := []domain.TokenWithBlock{{
 		TokenCID:    domain.NewTokenCID(chainID, domain.StandardERC721, "0xC00000000000000000000000000000000000001", "1"),
 		BlockNumber: 2000,
 	}}
-	exec.EXPECT().GetEthereumTokenCIDsByOwnerWithinBlockRange(
-		gomock.Any(), addr, uint64(1000), latest, gomock.Any(), domain.BlockScanOrderDesc,
-	).Return(domain.TokenWithBlockRangeResult{Tokens: tb, EffectiveFromBlock: 1000, EffectiveToBlock: latest}, nil)
+	stubEthScanDiscovery(exec, addr, chainID, latest, 26, tb)
 	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), gomock.Any(), gomock.Any()).Return(inner)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusFailed, gomock.Any()).
 		Return(errors.New("db cannot write status"))

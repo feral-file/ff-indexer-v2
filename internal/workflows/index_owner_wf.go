@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -306,7 +305,7 @@ func findLastCompleteBlockIndexByTarget(tokens []domain.TokenWithBlock, targetCo
 		return len(tokens)
 	}
 
-	boundaryBlock := tokens[targetCount-1].BlockNumber
+	boundaryBlock := tokens[targetCount-1].BlockNumber //nolint:gosec // G602 false positive: targetCount <= len(tokens) is guaranteed by the guards above
 
 	end := targetCount
 	for end < len(tokens) && tokens[end].BlockNumber == boundaryBlock {
@@ -419,11 +418,14 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string
 			)
 
 			// Process chunk with quota checking
-			shouldContinue, actualMinBlock, actualMaxBlock, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
+			chunkResult, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
 				fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)), jobID)
 			if err != nil {
 				return err
 			}
+			shouldContinue := chunkResult.Continue
+			actualMinBlock, actualMaxBlock := chunkResult.MinBlock(), chunkResult.MaxBlock()
+			quotaResetAt := chunkResult.QuotaResetAt
 
 			// Update block range after each successful chunk for resumability
 			// Use ACTUAL block range of indexed tokens, not the scanned range
@@ -531,11 +533,14 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string
 				)
 
 				// Process chunk with quota checking
-				shouldContinue, actualMinBlock, _, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
+				chunkResult, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
 					fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)), jobID)
 				if err != nil {
 					return err
 				}
+				shouldContinue := chunkResult.Continue
+				actualMinBlock := chunkResult.MinBlock()
+				quotaResetAt := chunkResult.QuotaResetAt
 
 				// Update min_block after each successful chunk for resumability
 				// Use actual min block of indexed tokens
@@ -628,11 +633,14 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string
 				)
 
 				// Process chunk with quota checking
-				shouldContinue, _, actualMaxBlock, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
+				chunkResult, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
 					fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)), jobID)
 				if err != nil {
 					return err
 				}
+				shouldContinue := chunkResult.Continue
+				actualMaxBlock := chunkResult.MaxBlock()
+				quotaResetAt := chunkResult.QuotaResetAt
 
 				// Update max_block after each successful chunk for resumability
 				// Use actual max block of indexed tokens
@@ -692,393 +700,6 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string
 	return nil
 }
 
-// IndexEthereumTokenOwner indexes all tokens held by an Ethereum address
-// Uses bi-directional block range sweeping: backward first (historical), then forward (latest updates)
-func (w *coreWorkflows) IndexEthereumTokenOwner(ctx context.Context, address string, jobID *int64) error {
-	logger.InfoCtx(ctx, "Starting Ethereum token owner indexing",
-		zap.String("address", address),
-		zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
-	)
-
-	chainID := w.config.EthereumChainID
-
-	// Step 1: Ensure watched address record exists
-	err := w.executor.EnsureWatchedAddressExists(ctx, address, chainID, w.config.BudgetedIndexingDefaultDailyQuota)
-	if err != nil {
-		logger.ErrorCtx(ctx,
-			fmt.Errorf("failed to ensure watched address exists"),
-			zap.Error(err),
-			zap.String("address", address),
-			zap.String("chainID", string(chainID)),
-		)
-		return err
-	}
-
-	// Step 2: Get current indexing block range for this address and chain
-	var rangeResult *BlockRangeResult
-	rangeResult, err = w.executor.GetIndexingBlockRangeForAddress(ctx, address, chainID)
-	if err != nil {
-		logger.ErrorCtx(ctx,
-			fmt.Errorf("failed to get indexing block range"),
-			zap.Error(err),
-			zap.String("address", address),
-			zap.String("chainID", string(chainID)),
-		)
-		return err
-	}
-
-	storedMinBlock := rangeResult.MinBlock
-	storedMaxBlock := rangeResult.MaxBlock
-
-	logger.InfoCtx(ctx, "Retrieved stored block range",
-		zap.String("address", address),
-		zap.Uint64("storedMinBlock", storedMinBlock),
-		zap.Uint64("storedMaxBlock", storedMaxBlock),
-	)
-
-	// Step 3: Get the current latest block from blockchain
-	var latestBlock uint64
-	latestBlock, err = w.executor.GetLatestEthereumBlock(ctx)
-	if err != nil {
-		logger.ErrorCtx(ctx,
-			fmt.Errorf("failed to get latest block"),
-			zap.Error(err),
-			zap.String("address", address),
-		)
-		return err
-	}
-
-	logger.InfoCtx(ctx, "Retrieved latest block from blockchain",
-		zap.String("address", address),
-		zap.Uint64("latestBlock", latestBlock),
-	)
-
-	limit := w.config.BudgetedIndexingDefaultDailyQuota + 1 // always get one more token to check if there are more tokens to index if quota is exhausted
-	if !w.config.BudgetedIndexingModeEnabled {
-		limit = math.MaxInt
-	}
-
-	// Step 4: Determine sweeping strategy
-	if storedMinBlock == 0 && storedMaxBlock == 0 {
-		// First run: No previous indexing exists
-		// Fetch entire range from start to latest, process in chunks
-		logger.InfoCtx(ctx, "First run detected, fetching all tokens from start to latest",
-			zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
-			zap.Uint64("latestBlock", latestBlock),
-		)
-
-		var allTokens []domain.TokenWithBlock
-		var allTokensResult domain.TokenWithBlockRangeResult
-		allTokensResult, err = w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, w.config.EthereumTokenSweepStartBlock, latestBlock, limit, domain.BlockScanOrderDesc)
-		if err != nil {
-			logger.ErrorCtx(ctx,
-				fmt.Errorf("failed to fetch tokens"),
-				zap.Error(err),
-				zap.String("address", address),
-			)
-			return err
-		}
-		allTokens = allTokensResult.Tokens
-
-		logger.InfoCtx(ctx, "Retrieved all tokens for first run",
-			zap.String("address", address),
-			zap.Int("tokenCount", len(allTokens)),
-		)
-
-		// Sort by block number (descending - newest first) and process in chunks
-		sortTokensByBlock(allTokens, true)
-		chunks := chunkTokensByTargetBlockAligned(allTokens, w.config.EthereumOwnerFirstBatchTarget, w.config.EthereumOwnerSubsequentBatchTarget)
-
-		// Store the actual scanned block range (not token block range)
-		scannedMinBlock := allTokensResult.EffectiveFromBlock
-		scannedMaxBlock := allTokensResult.EffectiveToBlock
-
-		for i, chunk := range chunks {
-			logger.InfoCtx(ctx, "Processing token chunk",
-				zap.Int("chunkIndex", i+1),
-				zap.Int("totalChunks", len(chunks)),
-				zap.Int("tokenCount", len(chunk)),
-			)
-
-			// Process chunk with quota checking
-			shouldContinue, actualMinBlock, actualMaxBlock, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
-				fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)), jobID)
-			if err != nil {
-				return err
-			}
-
-			// Update block range after each successful chunk for resumability
-			// Use ACTUAL block range of indexed tokens, not the scanned range
-			if actualMinBlock != nil {
-				if i == 0 {
-					// First chunk - establish the max_block (scanned range end)
-					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, *actualMinBlock, scannedMaxBlock)
-					storedMaxBlock = scannedMaxBlock
-				} else {
-					// Subsequent chunks - progressively update min_block toward start
-					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, *actualMinBlock, storedMaxBlock)
-				}
-				if err != nil {
-					logger.ErrorCtx(ctx,
-						fmt.Errorf("failed to update block range"),
-						zap.Error(err),
-						zap.String("address", address),
-					)
-					return err
-				}
-
-				logger.InfoCtx(ctx, "Updated block range after chunk",
-					zap.Uint64("actualMinBlock", *actualMinBlock),
-					zap.Uint64("actualMaxBlock", *actualMaxBlock),
-				)
-			}
-
-			// Check if we should continue after updating block range
-			if !shouldContinue {
-				// Quota exhausted after this chunk - block range already updated above with actual indexed range
-				logger.InfoCtx(ctx, "Quota exhausted after processing chunk, will continue-as-new",
-					zap.Int("chunksCompleted", i+1),
-					zap.Int("totalChunks", len(chunks)),
-				)
-				return w.returnQuotaReschedule(ctx, jobID, quotaResetAt)
-			}
-
-			// Add a brief delay to prevent exceeding third-party service rate limits
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(2 * time.Second):
-			}
-		}
-
-		// Final update to ensure we mark the complete scanned range
-		err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, scannedMinBlock, scannedMaxBlock)
-		if err != nil {
-			logger.ErrorCtx(ctx,
-				fmt.Errorf("failed to update final block range"),
-				zap.Error(err),
-				zap.String("address", address),
-			)
-			return err
-		}
-
-		logger.InfoCtx(ctx, "Completed first run sweep",
-			zap.Uint64("scannedMinBlock", scannedMinBlock),
-			zap.Uint64("scannedMaxBlock", scannedMaxBlock),
-		)
-	} else {
-		// Subsequent run: Sweep backward first (historical), then forward (latest updates)
-		logger.InfoCtx(ctx, "Subsequent run detected, sweeping backward then forward",
-			zap.Uint64("storedMinBlock", storedMinBlock),
-			zap.Uint64("storedMaxBlock", storedMaxBlock),
-			zap.Uint64("latestBlock", latestBlock),
-		)
-
-		// Part A: Sweep backward (historical data) - FIRST
-		if storedMinBlock > w.config.EthereumTokenSweepStartBlock {
-			logger.InfoCtx(ctx, "Sweeping backward for historical data",
-				zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
-				zap.Uint64("storedMinBlock", storedMinBlock),
-			)
-
-			var backwardTokens []domain.TokenWithBlock
-			var backwardTokensResult domain.TokenWithBlockRangeResult
-			backwardTokensResult, err = w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, w.config.EthereumTokenSweepStartBlock, storedMinBlock-1, limit, domain.BlockScanOrderDesc)
-			if err != nil {
-				logger.ErrorCtx(ctx,
-					fmt.Errorf("failed to fetch backward tokens"),
-					zap.Error(err),
-					zap.String("address", address),
-				)
-				return err
-			}
-			backwardTokens = backwardTokensResult.Tokens
-
-			logger.InfoCtx(ctx, "Retrieved backward sweep tokens",
-				zap.String("address", address),
-				zap.Int("tokenCount", len(backwardTokens)),
-			)
-
-			// Sort by block (descending - newest first) and process in chunks
-			sortTokensByBlock(backwardTokens, true)
-			chunks := chunkTokensByTargetBlockAligned(backwardTokens, w.config.EthereumOwnerSubsequentBatchTarget, w.config.EthereumOwnerSubsequentBatchTarget)
-
-			// Store the actual scanned block range (not token block range)
-			scannedMinBlock := backwardTokensResult.EffectiveFromBlock
-			scannedMaxBlock := backwardTokensResult.EffectiveToBlock
-
-			for i, chunk := range chunks {
-				logger.InfoCtx(ctx, "Processing backward chunk",
-					zap.Int("chunkIndex", i+1),
-					zap.Int("totalChunks", len(chunks)),
-					zap.Int("tokenCount", len(chunk)),
-				)
-
-				// Process chunk with quota checking
-				shouldContinue, actualMinBlock, _, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
-					fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)), jobID)
-				if err != nil {
-					return err
-				}
-
-				// Update min_block after each successful chunk for resumability
-				// Use actual min block of indexed tokens
-				if actualMinBlock != nil {
-					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, *actualMinBlock, storedMaxBlock)
-					if err != nil {
-						logger.ErrorCtx(ctx,
-							fmt.Errorf("failed to update min block"),
-							zap.Error(err),
-							zap.String("address", address),
-						)
-						return err
-					}
-
-					logger.InfoCtx(ctx, "Updated min block after chunk",
-						zap.Uint64("actualMinBlock", *actualMinBlock))
-				}
-
-				// Check if we should continue after updating block range
-				if !shouldContinue {
-					// Quota exhausted after this chunk - block range already updated above
-					logger.InfoCtx(ctx, "Quota exhausted during backward sweep, will continue-as-new",
-						zap.Int("chunksCompleted", i+1),
-						zap.Int("totalChunks", len(chunks)),
-					)
-					return w.returnQuotaReschedule(ctx, jobID, quotaResetAt)
-				}
-
-				// Add a brief delay to prevent exceeding third-party service rate limits
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(2 * time.Second):
-				}
-			}
-
-			// Final update to ensure we mark the complete scanned range
-			err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, scannedMinBlock, storedMaxBlock)
-			if err != nil {
-				logger.ErrorCtx(ctx,
-					fmt.Errorf("failed to update final min block"),
-					zap.Error(err),
-					zap.String("address", address),
-				)
-				return err
-			}
-
-			storedMinBlock = scannedMinBlock
-			logger.InfoCtx(ctx, "Completed backward sweep",
-				zap.Uint64("scannedMinBlock", scannedMinBlock),
-				zap.Uint64("scannedMaxBlock", scannedMaxBlock),
-			)
-		}
-
-		// Part B: Sweep forward (latest updates) - SECOND
-		if latestBlock > storedMaxBlock {
-			logger.InfoCtx(ctx, "Sweeping forward for latest updates",
-				zap.Uint64("storedMaxBlock", storedMaxBlock),
-				zap.Uint64("latestBlock", latestBlock),
-			)
-
-			var forwardTokens []domain.TokenWithBlock
-			var forwardTokensResult domain.TokenWithBlockRangeResult
-			forwardTokensResult, err = w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, storedMaxBlock+1, latestBlock, limit, domain.BlockScanOrderAsc)
-			if err != nil {
-				logger.ErrorCtx(ctx,
-					fmt.Errorf("failed to fetch forward tokens"),
-					zap.Error(err),
-					zap.String("address", address),
-				)
-				return err
-			}
-			forwardTokens = forwardTokensResult.Tokens
-
-			logger.InfoCtx(ctx, "Retrieved forward sweep tokens",
-				zap.String("address", address),
-				zap.Int("tokenCount", len(forwardTokens)),
-			)
-
-			// Sort by block (ascending - oldest first) and process in chunks
-			sortTokensByBlock(forwardTokens, false)
-			chunks := chunkTokensByTargetBlockAligned(forwardTokens, w.config.EthereumOwnerSubsequentBatchTarget, w.config.EthereumOwnerSubsequentBatchTarget)
-
-			// Store the actual scanned block range (not token block range)
-			scannedMinBlock := forwardTokensResult.EffectiveFromBlock
-			scannedMaxBlock := forwardTokensResult.EffectiveToBlock
-
-			for i, chunk := range chunks {
-				logger.InfoCtx(ctx, "Processing forward chunk",
-					zap.Int("chunkIndex", i+1),
-					zap.Int("totalChunks", len(chunks)),
-					zap.Int("tokenCount", len(chunk)),
-				)
-
-				// Process chunk with quota checking
-				shouldContinue, _, actualMaxBlock, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
-					fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)), jobID)
-				if err != nil {
-					return err
-				}
-
-				// Update max_block after each successful chunk for resumability
-				// Use actual max block of indexed tokens
-				if actualMaxBlock != nil {
-					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, storedMinBlock, *actualMaxBlock)
-					if err != nil {
-						logger.ErrorCtx(ctx,
-							fmt.Errorf("failed to update max block"),
-							zap.Error(err),
-							zap.String("address", address),
-						)
-						return err
-					}
-
-					logger.InfoCtx(ctx, "Updated max block after chunk",
-						zap.Uint64("actualMaxBlock", *actualMaxBlock))
-				}
-
-				// Check if we should continue after updating block range
-				if !shouldContinue {
-					// Quota exhausted after this chunk - block range already updated above
-					logger.InfoCtx(ctx, "Quota exhausted during forward sweep, will continue-as-new",
-						zap.Int("chunksCompleted", i+1),
-						zap.Int("totalChunks", len(chunks)),
-					)
-					return w.returnQuotaReschedule(ctx, jobID, quotaResetAt)
-				}
-
-				// Add a brief delay to prevent exceeding third-party service rate limits
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(2 * time.Second):
-				}
-			}
-
-			// Final update to ensure we mark the complete scanned range
-			err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, storedMinBlock, scannedMaxBlock)
-			if err != nil {
-				logger.ErrorCtx(ctx,
-					fmt.Errorf("failed to update final max block"),
-					zap.Error(err),
-					zap.String("address", address),
-				)
-				return err
-			}
-
-			logger.InfoCtx(ctx, "Completed forward sweep",
-				zap.Uint64("scannedMinBlock", scannedMinBlock),
-				zap.Uint64("scannedMaxBlock", scannedMaxBlock),
-			)
-		}
-	}
-
-	logger.InfoCtx(ctx, "Ethereum token owner indexing completed", zap.String("address", address))
-
-	return nil
-}
-
 // indexTokenChunk indexes a chunk of tokens using the IndexTokens workflow
 // For owner-specific indexing, pass the address to enable efficient ERC1155 indexing
 func (w *coreWorkflows) indexTokenChunk(ctx context.Context, tokenCIDs []domain.TokenCID, address *string) error {
@@ -1098,11 +719,52 @@ func (w *coreWorkflows) indexTokenChunk(ctx context.Context, tokenCIDs []domain.
 	return nil
 }
 
-// processChunkWithQuota handles quota checking, chunk processing, and usage increment
-// Returns (shouldContinue bool, actualMinBlock uint64, actualMaxBlock uint64, quotaResetAt time.Time, error)
-// - shouldContinue=false means quota exhausted, need to sleep+continue-as-new
-// - actualMinBlock/actualMaxBlock indicate the actual block range of tokens that were indexed, nil means nothing was indexed
-// - quotaResetAt is the time when quota will reset (only valid when shouldContinue=false)
+// chunkQuotaResult reports one chunk's outcome under budgeted-mode quota.
+type chunkQuotaResult struct {
+	// Continue is false when the quota is exhausted — either before the chunk
+	// (IndexedTokens empty) or after a quota-truncated partial chunk.
+	Continue bool
+	// IndexedTokens are the tokens actually indexed from the chunk, which may be
+	// a quota-truncated block-aligned prefix of the requested tokens.
+	IndexedTokens []domain.TokenWithBlock
+	// QuotaResetAt is when the quota window resets; only valid when Continue is false.
+	QuotaResetAt time.Time
+}
+
+// MinBlock returns the lowest indexed block, or nil when nothing was indexed.
+func (r chunkQuotaResult) MinBlock() *uint64 {
+	if len(r.IndexedTokens) == 0 {
+		return nil
+	}
+	minBlock := r.IndexedTokens[0].BlockNumber
+	for _, token := range r.IndexedTokens[1:] {
+		if token.BlockNumber < minBlock {
+			minBlock = token.BlockNumber
+		}
+	}
+	return &minBlock
+}
+
+// MaxBlock returns the highest indexed block, or nil when nothing was indexed.
+func (r chunkQuotaResult) MaxBlock() *uint64 {
+	if len(r.IndexedTokens) == 0 {
+		return nil
+	}
+	maxBlock := r.IndexedTokens[0].BlockNumber
+	for _, token := range r.IndexedTokens[1:] {
+		if token.BlockNumber > maxBlock {
+			maxBlock = token.BlockNumber
+		}
+	}
+	return &maxBlock
+}
+
+// processChunkWithQuota handles quota checking, chunk processing, and usage increment.
+//
+// Reason: returns the actually-indexed tokens (not just their block range) because the
+// Ethereum scan-session path must stamp exactly those rows indexed in the session's
+// persisted token list — a quota-truncated chunk indexes a block-aligned prefix, and
+// stamping the whole requested chunk would silently skip the remainder on resume.
 func (w *coreWorkflows) processChunkWithQuota(
 	ctx context.Context,
 	address string,
@@ -1110,7 +772,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 	tokens []domain.TokenWithBlock,
 	chunkInfo string, // e.g., "forward chunk 1/5" for logging
 	jobID *int64, // optional jobs.id for progress tracking
-) (bool, *uint64, *uint64, time.Time, error) {
+) (chunkQuotaResult, error) {
 
 	requestedCount := len(tokens)
 	allowedCount := requestedCount
@@ -1119,7 +781,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 		// Check quota
 		quotaStatus, err := w.executor.GetQuotaInfo(ctx, address, chainID)
 		if err != nil {
-			return false, nil, nil, time.Time{}, fmt.Errorf("failed to check quota: %w", err)
+			return chunkQuotaResult{}, fmt.Errorf("failed to check quota: %w", err)
 		}
 
 		quotaResetAt = quotaStatus.QuotaResetAt
@@ -1130,7 +792,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 				zap.Time("quotaResetAt", quotaStatus.QuotaResetAt),
 				zap.String("chunkInfo", chunkInfo),
 			)
-			return false, nil, nil, quotaResetAt, nil // Signal to caller: quota exhausted, need to sleep+continue-as-new
+			return chunkQuotaResult{QuotaResetAt: quotaResetAt}, nil // Signal to caller: quota exhausted, need to sleep+continue-as-new
 		}
 
 		// Return the minimum of requested and remaining
@@ -1180,7 +842,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 
 	// Index tokens
 	if err := w.indexTokenChunk(ctx, actualInfo.tokenCIDs, &address); err != nil {
-		return false, nil, nil, time.Time{}, err
+		return chunkQuotaResult{}, err
 	}
 
 	if w.config.BudgetedIndexingModeEnabled {
@@ -1193,7 +855,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 				zap.String("address", address),
 				zap.Int("count", count),
 			)
-			return false, nil, nil, time.Time{}, err
+			return chunkQuotaResult{}, err
 		}
 
 		logger.InfoCtx(ctx, "Incremented token usage for budgeted indexing mode",
@@ -1232,10 +894,10 @@ func (w *coreWorkflows) processChunkWithQuota(
 			zap.Uint64("actualMinBlock", actualInfo.minBlock),
 			zap.Uint64("actualMaxBlock", actualInfo.maxBlock),
 		)
-		return false, &actualInfo.minBlock, &actualInfo.maxBlock, quotaResetAt, nil // Quota exhausted, return actual range
+		return chunkQuotaResult{IndexedTokens: actualTokens, QuotaResetAt: quotaResetAt}, nil // Quota exhausted, return actual range
 	}
 
-	return true, &actualInfo.minBlock, &actualInfo.maxBlock, time.Time{}, nil // shouldContinue=true, success
+	return chunkQuotaResult{Continue: true, IndexedTokens: actualTokens}, nil
 }
 
 // returnQuotaReschedule records paused status when a job id is available and returns ErrReschedule
