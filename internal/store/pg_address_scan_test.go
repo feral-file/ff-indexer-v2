@@ -4,10 +4,15 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	pgdriver "gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+	"gorm.io/plugin/dbresolver"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -196,4 +201,134 @@ func TestFinishAddressScanReplay_EmptyTokenListStillFlipsStatus(t *testing.T) {
 	pending, err := st.GetPendingAddressScanTokens(ctx, session.ID)
 	require.NoError(t, err)
 	assert.Empty(t, pending)
+}
+
+// divergentReplicaDSN derives a DSN identical to the test database but with
+// search_path pointed at an EMPTY shadow schema. The resolver-enabled store's
+// "replica" then genuinely diverges from the primary: any replica-routed read of
+// a scan-session table returns nothing, while a primary-routed read returns the
+// row. This is what lets the routing test fail deterministically without the
+// dbresolver.Write pins — a same-schema "replica" (no lag) would let an
+// unpinned read pass by accident, proving nothing.
+func divergentReplicaDSN() string {
+	if strings.Contains(testDSN, "://") { // URL form (testcontainers)
+		sep := "?"
+		if strings.Contains(testDSN, "?") {
+			sep = "&"
+		}
+		return testDSN + sep + "options=-c%20search_path%3D" + scanReplicaShadowSchema
+	}
+	// Keyword form (external DB via TEST_DB_* env).
+	return testDSN + " options='-c search_path=" + scanReplicaShadowSchema + "'"
+}
+
+const scanReplicaShadowSchema = "scan_replica_shadow"
+
+// createScanReplicaShadow (re)creates the shadow schema with empty structural
+// copies of every table the session lifecycle reads touch.
+func createScanReplicaShadow(t *testing.T) {
+	t.Helper()
+	stmts := []string{
+		`DROP SCHEMA IF EXISTS ` + scanReplicaShadowSchema + ` CASCADE`,
+		`CREATE SCHEMA ` + scanReplicaShadowSchema,
+		`CREATE TABLE ` + scanReplicaShadowSchema + `.address_scan_sessions (LIKE public.address_scan_sessions INCLUDING ALL)`,
+		`CREATE TABLE ` + scanReplicaShadowSchema + `.address_scan_logs (LIKE public.address_scan_logs INCLUDING ALL)`,
+		`CREATE TABLE ` + scanReplicaShadowSchema + `.address_scan_tokens (LIKE public.address_scan_tokens INCLUDING ALL)`,
+		`CREATE TABLE ` + scanReplicaShadowSchema + `.watched_addresses (LIKE public.watched_addresses INCLUDING ALL)`,
+	}
+	for _, stmt := range stmts {
+		require.NoError(t, testDB.Exec(stmt).Error, stmt)
+	}
+	t.Cleanup(func() {
+		_ = testDB.Exec(`DROP SCHEMA IF EXISTS ` + scanReplicaShadowSchema + ` CASCADE`).Error
+	})
+}
+
+// TestAddressScanLifecycleReads_RoutedToPrimary is the replica-routing
+// regression guard for the session lifecycle reads (review finding on the
+// scan-session PR). Each read gates a destructive or cost-bearing decision made
+// moments after a primary write: a replica-routed GetPendingAddressScanTokens
+// returning empty makes the workflow delete the session and cascade away
+// unindexed tokens; a replica-routed GetAddressScanLogs feeds a partial event
+// history to the replay, which then deletes the complete primary-side set.
+//
+// The "replica" is the same server with search_path on an EMPTY shadow schema
+// (divergentReplicaDSN), so routing is observable: a replica-routed read returns
+// nothing, a primary-routed read returns the row. Verified to fail without the
+// dbresolver.Write pins. The negative control proves an unpinned read on this
+// store really does land on the shadow, so the pins are what make the difference.
+func TestAddressScanLifecycleReads_RoutedToPrimary(t *testing.T) {
+	if testDB == nil {
+		t.Fatal("Test database not initialized")
+	}
+	createScanReplicaShadow(t)
+
+	db, err := gorm.Open(pgdriver.Open(testDSN), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Use(dbresolver.Register(dbresolver.Config{
+		Replicas: []gorm.Dialector{pgdriver.Open(divergentReplicaDSN())},
+	})))
+	require.True(t, hasDBResolver(db), "harness must actually register a resolver")
+
+	ctx := context.Background()
+	chain := domain.ChainEthereumMainnet
+	addr := "0xScanReplicaRouting000000000000000000001"
+
+	// Negative control: an unpinned SELECT on this store is replica-routed and
+	// therefore lands on the empty shadow schema. If this ever stops holding,
+	// the positive assertions below prove nothing.
+	var shadowPath string
+	require.NoError(t, db.WithContext(ctx).Raw(`select current_setting('search_path')`).Scan(&shadowPath).Error)
+	require.Equal(t, scanReplicaShadowSchema, shadowPath, "unpinned reads must land on the divergent shadow replica")
+
+	st := NewPGStore(db)
+	t.Cleanup(func() {
+		_ = testDB.Exec(`DELETE FROM address_scan_sessions WHERE address = ?`, addr).Error
+		_ = testDB.Exec(`DELETE FROM watched_addresses WHERE address = ?`, addr).Error
+	})
+
+	// Create on the primary; a replica-routed session read would report "none".
+	created, err := st.CreateAddressScanSession(ctx, chain, addr, 100, 299)
+	require.NoError(t, err)
+	got, err := st.GetAddressScanSession(ctx, chain, addr)
+	require.NoError(t, err)
+	require.NotNil(t, got, "GetAddressScanSession must read the primary: a replica miss means 'no session'")
+	assert.Equal(t, created.ID, got.ID)
+
+	// Stage logs + cursor on the primary; a replica-routed logs read would
+	// return an empty/partial set and corrupt the ownership replay.
+	require.NoError(t, st.AppendScanLogsAdvanceCursor(ctx, created.ID, []schema.AddressScanLog{
+		buildScanLog(150, "0xrr-tx1", 0),
+		buildScanLog(250, "0xrr-tx2", 1),
+	}, 300))
+	logs, err := st.GetAddressScanLogs(ctx, created.ID)
+	require.NoError(t, err)
+	require.Len(t, logs, 2, "GetAddressScanLogs must read the primary: a partial set corrupts the replay")
+	got, err = st.GetAddressScanSession(ctx, chain, addr)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(300), got.CursorBlock, "cursor read must observe the just-committed advance")
+
+	// Replay on the primary; a replica-routed pending read returning empty is
+	// the data-loss path (watermark advance + session delete + token cascade).
+	tok := domain.NewTokenCID(chain, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "9")
+	require.NoError(t, st.FinishAddressScanReplay(ctx, created.ID, []schema.AddressScanToken{
+		{TokenCID: tok, BlockNumber: 250},
+	}))
+	pending, err := st.GetPendingAddressScanTokens(ctx, created.ID)
+	require.NoError(t, err)
+	require.Len(t, pending, 1, "GetPendingAddressScanTokens must read the primary: empty here cascades away unindexed tokens")
+	got, err = st.GetAddressScanSession(ctx, chain, addr)
+	require.NoError(t, err)
+	assert.Equal(t, schema.AddressScanStatusReplayed, got.Status, "status read must observe replay")
+
+	// Watermark: the workflow derives the NEXT scan range from this read right
+	// after writing it; a replica-routed read would open a duplicate session.
+	require.NoError(t, st.EnsureWatchedAddressExists(ctx, addr, chain, 10))
+	require.NoError(t, st.UpdateIndexingBlockRangeForAddress(ctx, addr, chain, 100, 299))
+	minB, maxB, err := st.GetIndexingBlockRangeForAddress(ctx, addr, chain)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(100), minB)
+	assert.Equal(t, uint64(299), maxB, "watermark read must observe the just-committed range")
 }

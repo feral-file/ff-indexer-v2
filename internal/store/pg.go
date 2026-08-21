@@ -2096,7 +2096,16 @@ func (s *pgStore) GetTokenCIDsByOwner(ctx context.Context, ownerAddress string) 
 // Returns min_block=0, max_block=0 if no range exists for the chain
 func (s *pgStore) GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (minBlock uint64, maxBlock uint64, err error) {
 	var watchedAddr schema.WatchedAddresses
-	err = s.db.WithContext(ctx).
+	// Pinned to the primary: the owner workflow reads the watermark right after
+	// writing it to derive the NEXT scan range (docs/address_scan_sessions.md).
+	// A replica still showing the pre-completion range would open a duplicate
+	// session over an already-indexed span — thousands of redundant eth_getLogs
+	// calls — so this read must observe the write it follows.
+	db := s.db.WithContext(ctx)
+	if hasDBResolver(s.db) {
+		db = db.Clauses(dbresolver.Write)
+	}
+	err = db.
 		Where("address = ?", address).
 		First(&watchedAddr).Error
 

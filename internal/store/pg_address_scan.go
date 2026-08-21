@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/plugin/dbresolver"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -17,11 +18,37 @@ import (
 // window logs; a window of a dense address can carry thousands of logs.
 const scanLogInsertBatchSize = 500
 
+// primaryDB returns a handle pinned to the primary when a read replica is
+// configured, for the session lifecycle reads below.
+//
+// Reason: these reads are not informational — each one gates a destructive or
+// cost-bearing decision made moments after a write on the primary. A lagging
+// replica is not "slightly stale" here, it is actively wrong:
+//   - GetPendingAddressScanTokens returning empty (replay just committed on the
+//     primary) makes the workflow conclude "all indexed", advance the watermark,
+//     and delete the session — cascading away tokens that were never indexed.
+//   - GetAddressScanLogs returning a replicated prefix of the staged logs feeds
+//     an incomplete event history to the ownership replay (wrong ERC-1155 net
+//     balances, wrong ERC-721 last-transfer-wins), and the replay transaction
+//     then deletes the complete primary-side set.
+//   - GetAddressScanSession returning a stale status/cursor re-runs or skips
+//     work. Cursor rewind is harmless (window re-append is idempotent), but a
+//     stale 'scanning' status after replay would re-replay from now-deleted logs.
+//
+// The same guard pattern as the throttle-state reads: no permissive fallback.
+func (s *pgStore) primaryDB(ctx context.Context) *gorm.DB {
+	db := s.db.WithContext(ctx)
+	if hasDBResolver(s.db) {
+		db = db.Clauses(dbresolver.Write)
+	}
+	return db
+}
+
 // GetAddressScanSession returns the active scan session for (chain, address),
 // or nil when none exists. At most one session exists per pair (unique constraint).
 func (s *pgStore) GetAddressScanSession(ctx context.Context, chain domain.Chain, address string) (*schema.AddressScanSession, error) {
 	var session schema.AddressScanSession
-	err := s.db.WithContext(ctx).
+	err := s.primaryDB(ctx).
 		Where("chain = ? AND address = ?", chain, address).
 		First(&session).Error
 	if err != nil {
@@ -107,7 +134,7 @@ func (s *pgStore) AppendScanLogsAdvanceCursor(ctx context.Context, sessionID int
 // (block, tx index, log index) for the ownership replay.
 func (s *pgStore) GetAddressScanLogs(ctx context.Context, sessionID int64) ([]schema.AddressScanLog, error) {
 	var logs []schema.AddressScanLog
-	err := s.db.WithContext(ctx).
+	err := s.primaryDB(ctx).
 		Where("session_id = ?", sessionID).
 		Order("block_number ASC, tx_index ASC, log_index ASC").
 		Find(&logs).Error
@@ -160,7 +187,7 @@ func (s *pgStore) FinishAddressScanReplay(ctx context.Context, sessionID int64, 
 // blocks first (matching the indexing order the owner workflow uses).
 func (s *pgStore) GetPendingAddressScanTokens(ctx context.Context, sessionID int64) ([]schema.AddressScanToken, error) {
 	var tokens []schema.AddressScanToken
-	err := s.db.WithContext(ctx).
+	err := s.primaryDB(ctx).
 		Where("session_id = ? AND indexed_at IS NULL", sessionID).
 		Order("block_number DESC, token_cid ASC").
 		Find(&tokens).Error
