@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -335,4 +336,81 @@ func TestScanWindows(t *testing.T) {
 		ws := workflows.ScanWindowsForTest(top-5, top, 1000)
 		require.Equal(t, [][2]uint64{{top - 5, top}}, ws)
 	})
+}
+
+// TestIndexEthereumTokenOwner_StalledFirstWindowBoundsFetchAhead is the
+// regression guard for the fetch-ahead bound (review finding on the parallel
+// pipeline). Fetch slots are released on COMMIT, not on fetch: while the
+// earliest window is stalled, nothing can commit, so at most `concurrency`
+// windows may ever be fetched — the fetchers must NOT race ahead into the rest
+// of the range and pile it into the reorder buffer, because if the stalled
+// window then fails, everything buffered is discarded and the advertised
+// one-window recovery bound would be false.
+//
+// Scenario: concurrency 3, eight windows. Window 0 stalls; windows 1 and 2
+// complete instantly and sit in the buffer behind it. Window 3 needs a slot
+// that only a commit can free, and nothing can commit — so it must never be
+// fetched. Verified to FAIL on the pre-fix pipeline (window 3 was fetched
+// ahead). Then window 0 fails: nothing may be persisted, and the original
+// error must surface.
+func TestIndexEthereumTokenOwner_StalledFirstWindowBoundsFetchAhead(t *testing.T) {
+	t.Parallel()
+	cfg := ownerCfg()
+	cfg.EthereumScanWindowBlocks = 1000
+	cfg.EthereumScanWindowConcurrency = 3
+	d := newOwnerWf(t, cfg)
+	defer d.Ctrl.Finish()
+	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	addr := "0xStalledFirst0000000000000000000000000"
+	chainID := domain.ChainEthereumMainnet
+	const sessionID int64 = 53
+	rpcErr := errors.New("earliest window failed after stalling")
+
+	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
+	exec.EXPECT().GetEthereumScanSession(gomock.Any(), addr, chainID).Return(&workflows.ScanSessionInfo{
+		ID: sessionID, FromBlock: 1000, ToBlock: 8999, CursorBlock: 1000, // 8 windows
+	}, nil)
+
+	// Windows 1 and 2 signal completion; once both are buffered behind the
+	// stalled window 0, the test gives the fetchers a moment to (wrongly) race
+	// ahead, then fails window 0.
+	var fastDone sync.WaitGroup
+	fastDone.Add(2)
+	releaseWindow0 := make(chan struct{})
+
+	exec.EXPECT().FetchEthereumOwnerWindow(gomock.Any(), addr, uint64(1000), uint64(1999)).
+		DoAndReturn(func(fctx context.Context, _ string, _, _ uint64) ([]schema.AddressScanLog, error) {
+			select {
+			case <-releaseWindow0:
+				return nil, rpcErr
+			case <-fctx.Done():
+				return nil, fctx.Err()
+			}
+		})
+	for _, from := range []uint64{2000, 3000} {
+		exec.EXPECT().FetchEthereumOwnerWindow(gomock.Any(), addr, from, from+999).
+			DoAndReturn(func(_ context.Context, _ string, f, _ uint64) ([]schema.AddressScanLog, error) {
+				fastDone.Done()
+				return []schema.AddressScanLog{{BlockNumber: f}}, nil
+			})
+	}
+	// THE ASSERTION: no fetch beyond the concurrency bound may happen while
+	// window 0 is stalled. The strict mock has NO expectation for windows 3..7,
+	// so any such call fails the test — on the pre-fix pipeline, window 3 (and
+	// beyond) was fetched here.
+	//
+	// Nothing may be persisted either: window 0 never commits, so no later
+	// window can. No PersistEthereumScanWindow expectation is registered.
+
+	go func() {
+		fastDone.Wait()
+		// Windows 1 and 2 are buffered behind window 0. If the bound were
+		// broken, the fetchers would take window 3 right now — give them every
+		// chance to, so a regression is caught rather than raced past.
+		time.Sleep(150 * time.Millisecond)
+		close(releaseWindow0)
+	}()
+
+	err := wf.IndexEthereumTokenOwner(ctx, addr, nil)
+	require.ErrorIs(t, err, rpcErr, "the stalled window's failure must surface as the original error")
 }

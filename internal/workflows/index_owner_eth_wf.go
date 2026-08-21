@@ -214,10 +214,27 @@ func (w *coreWorkflows) scanEthereumSessionWindows(ctx context.Context, address 
 	pending := make(chan scanWindow)
 	fetched := make(chan fetchedWindow, concurrency)
 
-	// Producer: hands out windows in order; stops as soon as anything fails.
+	// slots bounds UNCOMMITTED fetch-ahead, not merely in-flight fetches. The
+	// producer takes a slot before handing out a window and the committer
+	// returns it only once that window has committed. Without this, a slow
+	// earliest window lets the fetchers race through the entire remaining range
+	// into the committer's reorder buffer — and if that earliest window then
+	// fails, every buffered window is dropped, which would make the advertised
+	// "one window lost" recovery bound false. With it, at most `concurrency`
+	// windows can ever be fetched-but-uncommitted.
+	slots := make(chan struct{}, concurrency)
+
+	// Producer: hands out windows in order, gated on a free slot; stops as
+	// soon as anything fails (the committer may exit without returning slots,
+	// so this MUST also wake on cancellation or it would deadlock the group).
 	g.Go(func() error {
 		defer close(pending)
 		for _, win := range windows {
+			select {
+			case slots <- struct{}{}:
+			case <-gctx.Done():
+				return gctx.Err()
+			}
 			select {
 			case pending <- win:
 			case <-gctx.Done():
@@ -255,22 +272,30 @@ func (w *coreWorkflows) scanEthereumSessionWindows(ctx context.Context, address 
 		close(fetched)
 	}()
 
-	// Committer: the single, strictly ordered half of the pipeline.
+	// Committer: the single, strictly ordered half of the pipeline; returns a
+	// slot per committed window.
 	g.Go(func() error {
-		return w.commitScanWindowsInOrder(gctx, address, session, fetched, len(windows))
+		return w.commitScanWindowsInOrder(gctx, address, session, fetched, slots, len(windows))
 	})
 
 	return g.Wait()
 }
 
 // commitScanWindowsInOrder drains fetched windows and persists them in index
-// order, buffering any that arrive ahead of their turn. Returns once all
-// expected windows are committed or the context is canceled.
+// order, buffering any that arrive ahead of their turn, and returns one fetch
+// slot per committed window so uncommitted fetch-ahead stays bounded. Returns
+// once all expected windows are committed or the context is canceled.
+//
+// Constraints: the reorder buffer can never hold more than `concurrency`
+// windows, because a window only reaches it by first taking a slot that is not
+// returned until it commits — the buffer's size is bounded by the same
+// semaphore, not by trust in the fetched channel's capacity.
 func (w *coreWorkflows) commitScanWindowsInOrder(
 	ctx context.Context,
 	address string,
 	session *ScanSessionInfo,
 	fetched <-chan fetchedWindow,
+	slots <-chan struct{},
 	expected int,
 ) error {
 	buffer := make(map[int]fetchedWindow)
@@ -297,6 +322,7 @@ func (w *coreWorkflows) commitScanWindowsInOrder(
 				return err
 			}
 			next++
+			<-slots // committed: free one fetch-ahead slot
 
 			if next%scanProgressLogEvery == 0 {
 				logger.InfoCtx(ctx, "Owner scan window progress",
