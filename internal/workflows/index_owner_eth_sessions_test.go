@@ -414,3 +414,121 @@ func TestIndexEthereumTokenOwner_StalledFirstWindowBoundsFetchAhead(t *testing.T
 	err := wf.IndexEthereumTokenOwner(ctx, addr, nil)
 	require.ErrorIs(t, err, rpcErr, "the stalled window's failure must surface as the original error")
 }
+
+// TestIndexEthereumTokenOwner_ScanHeadLagsChainHead pins the reorg-safety
+// margin: a session's to_block is latest − EthereumScanHeadLagBlocks, never
+// latest itself. The checkpoint design makes this load-bearing — a block that
+// reorged after being checkpointed would replay phantom ownership events AND
+// mark its canonical replacement as already scanned. The strict mock only
+// accepts a session ending at latest−lag, so a regression to latest (or any
+// off-by-one) fails on CreateEthereumScanSession.
+func TestIndexEthereumTokenOwner_ScanHeadLagsChainHead(t *testing.T) {
+	t.Parallel()
+	cfg := ownerCfg()
+	cfg.EthereumScanHeadLagBlocks = 64
+	d := newOwnerWf(t, cfg)
+	defer d.Ctrl.Finish()
+	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	addr := "0xHeadLag00000000000000000000000000000000"
+	chainID := domain.ChainEthereumMainnet
+	const latest, lag = uint64(5000), uint64(64)
+	const scanHead = latest - lag // 4936
+	const sessionID int64 = 61
+
+	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
+	exec.EXPECT().GetEthereumScanSession(gomock.Any(), addr, chainID).Return(nil, nil)
+	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).
+		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil).Times(2)
+	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
+	// First run: [sweepStart, latest−lag] — NOT [sweepStart, latest].
+	exec.EXPECT().CreateEthereumScanSession(gomock.Any(), addr, chainID, uint64(1000), scanHead).
+		Return(&workflows.ScanSessionInfo{ID: sessionID, FromBlock: 1000, ToBlock: scanHead, CursorBlock: 1000}, nil)
+	exec.EXPECT().FetchEthereumOwnerWindow(gomock.Any(), addr, uint64(1000), scanHead).Return(nil, nil)
+	exec.EXPECT().PersistEthereumScanWindow(gomock.Any(), sessionID, gomock.Nil(), uint64(1000), scanHead).Return(nil)
+	exec.EXPECT().ReplayEthereumScanSession(gomock.Any(), addr, sessionID).Return(0, nil)
+	exec.EXPECT().GetPendingScanTokens(gomock.Any(), sessionID).Return(nil, nil)
+	exec.EXPECT().UpdateIndexingBlockRangeForAddress(gomock.Any(), addr, chainID, uint64(1000), scanHead).Return(nil)
+	exec.EXPECT().DeleteEthereumScanSession(gomock.Any(), sessionID).Return(nil)
+	// Second pass: watermark reaches the scan head, so the 64 blocks inside the
+	// lag window are deliberately NOT scanned now — no new session.
+	exec.EXPECT().GetEthereumScanSession(gomock.Any(), addr, chainID).Return(nil, nil)
+	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).
+		Return(&workflows.BlockRangeResult{MinBlock: 1000, MaxBlock: scanHead}, nil)
+	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
+
+	require.NoError(t, wf.IndexEthereumTokenOwner(ctx, addr, nil))
+}
+
+// TestIndexEthereumTokenOwner_ForwardSweepStopsAtScanHead pins the incremental
+// case: with a watermark already up to a previous scan head, the next forward
+// session covers [max+1, newLatest−lag] only. Blocks inside the lag window are
+// left for a later sweep rather than scanned and checkpointed while reorgable.
+func TestIndexEthereumTokenOwner_ForwardSweepStopsAtScanHead(t *testing.T) {
+	t.Parallel()
+	cfg := ownerCfg()
+	cfg.EthereumScanHeadLagBlocks = 64
+	d := newOwnerWf(t, cfg)
+	defer d.Ctrl.Finish()
+	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	addr := "0xHeadLagFwd000000000000000000000000000000"
+	chainID := domain.ChainEthereumMainnet
+	const latest = uint64(6000)
+	const scanHead = latest - 64 // 5936
+	const sessionID int64 = 62
+
+	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
+	exec.EXPECT().GetEthereumScanSession(gomock.Any(), addr, chainID).Return(nil, nil).Times(2)
+	gomock.InOrder(
+		exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).
+			Return(&workflows.BlockRangeResult{MinBlock: 1000, MaxBlock: 4936}, nil),
+		exec.EXPECT().CreateEthereumScanSession(gomock.Any(), addr, chainID, uint64(4937), scanHead).
+			Return(&workflows.ScanSessionInfo{ID: sessionID, FromBlock: 4937, ToBlock: scanHead, CursorBlock: 4937}, nil),
+		exec.EXPECT().FetchEthereumOwnerWindow(gomock.Any(), addr, uint64(4937), scanHead).Return(nil, nil),
+		exec.EXPECT().PersistEthereumScanWindow(gomock.Any(), sessionID, gomock.Nil(), uint64(4937), scanHead).Return(nil),
+		exec.EXPECT().ReplayEthereumScanSession(gomock.Any(), addr, sessionID).Return(0, nil),
+		exec.EXPECT().GetPendingScanTokens(gomock.Any(), sessionID).Return(nil, nil),
+		exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).
+			Return(&workflows.BlockRangeResult{MinBlock: 1000, MaxBlock: 4936}, nil),
+		exec.EXPECT().UpdateIndexingBlockRangeForAddress(gomock.Any(), addr, chainID, uint64(1000), scanHead).Return(nil),
+		exec.EXPECT().DeleteEthereumScanSession(gomock.Any(), sessionID).Return(nil),
+		exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).
+			Return(&workflows.BlockRangeResult{MinBlock: 1000, MaxBlock: scanHead}, nil),
+	)
+	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil).Times(2)
+
+	require.NoError(t, wf.IndexEthereumTokenOwner(ctx, addr, nil))
+}
+
+// TestIndexEthereumTokenOwner_YoungChainBelowSweepStartScansNothing pins the
+// saturating edge: when latest−lag is below the sweep start (a very young chain
+// or a misconfigured sweep start), no session is created rather than one with an
+// inverted or wrapped-around range. The strict mock has no
+// CreateEthereumScanSession expectation.
+func TestIndexEthereumTokenOwner_YoungChainBelowSweepStartScansNothing(t *testing.T) {
+	t.Parallel()
+	cfg := ownerCfg()
+	cfg.EthereumScanHeadLagBlocks = 64
+	d := newOwnerWf(t, cfg)
+	defer d.Ctrl.Finish()
+	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	addr := "0xYoungChain00000000000000000000000000000"
+	chainID := domain.ChainEthereumMainnet
+
+	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
+	exec.EXPECT().GetEthereumScanSession(gomock.Any(), addr, chainID).Return(nil, nil)
+	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).
+		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	// latest 1040 − lag 64 = 976 < sweepStart 1000 → nothing confirmed to scan.
+	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(uint64(1040), nil)
+
+	require.NoError(t, wf.IndexEthereumTokenOwner(ctx, addr, nil))
+}
+
+// TestScanHeadBlock pins the saturating subtraction used for the scan head.
+func TestScanHeadBlock(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, uint64(4936), workflows.ScanHeadBlockForTest(5000, 64))
+	require.Equal(t, uint64(5000), workflows.ScanHeadBlockForTest(5000, 0), "zero lag disables the margin")
+	require.Equal(t, uint64(0), workflows.ScanHeadBlockForTest(10, 64), "must saturate at 0, never wrap uint64")
+	require.Equal(t, uint64(0), workflows.ScanHeadBlockForTest(64, 64))
+}

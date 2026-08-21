@@ -106,6 +106,9 @@ type CoreWorkflowsConfig struct {
 	// concurrently (ethereum.scan_window_concurrency). Fetch is parallel; the
 	// checkpoint commit stays strictly in cursor order. <= 0 falls back to 1.
 	EthereumScanWindowConcurrency int
+	// EthereumScanHeadLagBlocks is how many blocks behind head an owner scan stops
+	// (ethereum.scan_head_lag_blocks), so no checkpointed block can reorg. 0 = none.
+	EthereumScanHeadLagBlocks uint64
 	// EthereumOwnerFirstBatchTarget is the first-run batch target (token count) for Ethereum owner indexing.
 	EthereumOwnerFirstBatchTarget int
 	// EthereumOwnerSubsequentBatchTarget is the subsequent-run batch target (token count) for Ethereum owner indexing.

@@ -97,6 +97,25 @@ type EthereumConfig struct {
 	// 429s burn the per-call retry budget, so size from the vendor's actual
 	// limit rather than upward from symptoms.
 	ScanWindowConcurrency int `mapstructure:"scan_window_concurrency"`
+	// ScanHeadLagBlocks: how many blocks behind the chain head an owner scan stops.
+	// The scan's to_block is latest - this, never latest itself.
+	//
+	// Reason: a scan session checkpoints staged logs to Postgres and later replays
+	// them, advancing the address watermark over the scanned range. If the range
+	// reached into blocks still subject to reorg, a reorged block's logs would be
+	// replayed as real ownership events AND the watermark would mark the canonical
+	// replacement range as already scanned — permanently skipping it. Stopping
+	// short of head so that no checkpointed block can reorg makes that impossible,
+	// which is cheaper and more robust than validating persisted block hashes on
+	// resume. Vendor-neutral by design: it uses only block numbers, not
+	// provider-specific "safe"/"finalized" tags.
+	//
+	// Default 64 = two PoS epochs, the Ethereum finality horizon (~13 min at 12s
+	// blocks). Tokens acquired inside the lag window surface on the next forward
+	// sweep. 12 (one epoch, "safe") is a defensible lower setting if freshness
+	// matters more than reorg safety; 0 disables the margin (pre-existing behavior,
+	// not recommended for checkpointed scans).
+	ScanHeadLagBlocks uint64 `mapstructure:"scan_head_lag_blocks"`
 	// FullProvenanceDisabled: skip per-token history walks (full provenance and the
 	// ERC-1155 owner event replay); tokens keep minimal provenance until backfilled.
 	FullProvenanceDisabled bool `mapstructure:"full_provenance_disabled"`
@@ -935,6 +954,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// production enables them via deploy config.
 	v.SetDefault("ethereum.getlogs_span_cap", 0)
 	v.SetDefault("ethereum.scan_window_concurrency", 2)
+	v.SetDefault("ethereum.scan_head_lag_blocks", 64)
 	v.SetDefault("ethereum.getlogs_call_budget", 0)
 	v.SetDefault("ethereum.full_provenance_disabled", false)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
@@ -1109,6 +1129,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.getlogs_span_cap",
 		"ethereum.getlogs_call_budget",
 		"ethereum.scan_window_concurrency",
+		"ethereum.scan_head_lag_blocks",
 		"ethereum.full_provenance_disabled",
 		// Tezos
 		"tezos.api_url",

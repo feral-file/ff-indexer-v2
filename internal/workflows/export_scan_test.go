@@ -10,3 +10,6 @@ func ScanWindowsForTest(cursor, toBlock, windowBlocks uint64) [][2]uint64 {
 	}
 	return out
 }
+
+// ScanHeadBlockForTest exposes the scan-head computation to external tests.
+func ScanHeadBlockForTest(latest, lag uint64) uint64 { return scanHeadBlock(latest, lag) }

@@ -98,12 +98,33 @@ leave a gap that resume silently skips. Fetching has no side effects, so on any
 failure the group context cancels in-flight fetches and fetched-but-uncommitted
 windows are simply dropped and re-fetched on resume.
 
+### Reorg safety: the scan head lags the chain head
+
+A session's `to_block` is `latest − ethereum.scan_head_lag_blocks` (default 64,
+two PoS epochs ≈ the Ethereum finality horizon, ~13 min), never `latest` itself.
+
+The checkpoint design makes this necessary rather than optional. Staged logs are
+replayed later and the watermark then marks the whole scanned range as done. If
+that range reached into blocks still subject to reorg, a reorged block would do two
+bad things at once: its logs would replay as real ownership events, and the
+watermark would record its canonical replacement as already scanned — permanently
+skipping it. Stopping short of head so that **no checkpointed block can reorg**
+removes the failure mode outright, which is cheaper and more robust than validating
+persisted block hashes on resume and rewinding the affected suffix.
+
+The margin is vendor-neutral by design: it uses only block numbers, not
+provider-specific `safe`/`finalized` tags, so it behaves identically against any
+RPC vendor or a self-hosted node. `0` disables it (pre-checkpoint behavior; not
+recommended). `12` (one epoch, "safe") is a defensible lower setting when freshness
+matters more than reorg safety.
+
 ### Consistency semantics
 
-The persisted token list is a snapshot as of `to_block`. Tokens acquired after the
-session's range are picked up by the next forward sweep — the same semantics the
-watermark always had. Blacklist filtering happens at replay time; a token
-blacklisted after replay is still skipped by the per-token indexing path.
+The persisted token list is a snapshot as of `to_block`, which is the scan head
+above — so a token acquired inside the lag window surfaces on the **next** forward
+sweep, a delay of at most the lag (~13 min at the default). Otherwise these are the
+semantics the watermark always had. Blacklist filtering happens at replay time; a
+token blacklisted after replay is still skipped by the per-token indexing path.
 
 ## 3. Schema
 

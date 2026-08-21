@@ -82,8 +82,15 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx context.Context, address str
 // nextEthereumScanSession derives the next un-scanned range from the stored
 // watermark and creates a session for it: the backward gap (history below the
 // watermark) first, then the forward gap (new blocks above it). Returns nil
-// when the whole [sweep start, latest] range is covered. First run is the
-// backward case with an empty watermark: [sweep start, latest].
+// when the whole [sweep start, scan head] range is covered. First run is the
+// backward case with an empty watermark: [sweep start, scan head].
+//
+// The scan head is latest - EthereumScanHeadLagBlocks, never latest itself.
+// Sessions checkpoint staged logs and later advance the watermark over the
+// scanned range; a block that reorged after being checkpointed would both
+// replay phantom ownership events and mark its canonical replacement as
+// already scanned. Stopping short of head so no checkpointed block can reorg
+// removes that failure mode outright, without hash validation on resume.
 func (w *coreWorkflows) nextEthereumScanSession(ctx context.Context, address string, chainID domain.Chain) (*ScanSessionInfo, error) {
 	rangeResult, err := w.executor.GetIndexingBlockRangeForAddress(ctx, address, chainID)
 	if err != nil {
@@ -94,15 +101,21 @@ func (w *coreWorkflows) nextEthereumScanSession(ctx context.Context, address str
 		return nil, fmt.Errorf("failed to get latest block: %w", err)
 	}
 	sweepStart := w.config.EthereumTokenSweepStartBlock
+	scanHead := scanHeadBlock(latestBlock, w.config.EthereumScanHeadLagBlocks)
 
 	var fromBlock, toBlock uint64
 	switch {
+	case scanHead < sweepStart:
+		// The chain has not yet produced a confirmed block at or past the sweep
+		// start; nothing is scannable yet (only reachable on very young chains
+		// or a misconfigured sweep start).
+		return nil, nil
 	case rangeResult.MinBlock == 0 && rangeResult.MaxBlock == 0:
-		fromBlock, toBlock = sweepStart, latestBlock
+		fromBlock, toBlock = sweepStart, scanHead
 	case rangeResult.MinBlock > sweepStart:
 		fromBlock, toBlock = sweepStart, rangeResult.MinBlock-1
-	case latestBlock > rangeResult.MaxBlock:
-		fromBlock, toBlock = rangeResult.MaxBlock+1, latestBlock
+	case scanHead > rangeResult.MaxBlock:
+		fromBlock, toBlock = rangeResult.MaxBlock+1, scanHead
 	default:
 		return nil, nil
 	}
@@ -146,6 +159,16 @@ func (w *coreWorkflows) runEthereumScanSession(
 	}
 
 	return w.completeEthereumScanSession(ctx, address, chainID, session)
+}
+
+// scanHeadBlock returns the highest block an owner scan may include: latest
+// minus the confirmation lag, saturating at 0 so a young chain (latest < lag)
+// yields 0 rather than wrapping around uint64.
+func scanHeadBlock(latest, lag uint64) uint64 {
+	if latest < lag {
+		return 0
+	}
+	return latest - lag
 }
 
 // scanWindow is one fetch unit of the owner scan: a contiguous block range and

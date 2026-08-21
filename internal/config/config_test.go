@@ -805,6 +805,47 @@ func TestLoadAppConfig_GuardEnvVarsReachConfig(t *testing.T) {
 	require.True(t, cfg.Ethereum.FullProvenanceDisabled)
 }
 
+// TestLoadAppConfig_ScanHeadLagBlocks pins the reorg-safety margin knob: the
+// default is the PoS finality horizon (64 blocks = two epochs), an env override
+// is honored (which requires the key in commonKeys — an unbound key is silently
+// ignored), and 0 is accepted as an explicit opt-out.
+func TestLoadAppConfig_ScanHeadLagBlocks(t *testing.T) {
+	setMinimalRequiredEnv := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("FF_INDEXER_DATABASE_HOST", "localhost")
+		t.Setenv("FF_INDEXER_DATABASE_DBNAME", "ff")
+		t.Setenv("FF_INDEXER_JOBS_TOKEN_QUEUE", "token_index")
+		t.Setenv("FF_INDEXER_ETHEREUM_RPC_URL", "http://rpc.invalid")
+		t.Setenv("FF_INDEXER_ETHEREUM_WEBSOCKET_URL", "ws://rpc.invalid")
+		t.Setenv("FF_INDEXER_TEZOS_API_URL", "http://tzkt.invalid")
+		t.Setenv("FF_INDEXER_TEZOS_WEBSOCKET_URL", "ws://tzkt.invalid")
+	}
+
+	t.Run("defaults to the PoS finality horizon", func(t *testing.T) {
+		setMinimalRequiredEnv(t)
+		cfg, err := LoadAppConfig("", "")
+		require.NoError(t, err)
+		require.Equal(t, uint64(64), cfg.Ethereum.ScanHeadLagBlocks,
+			"two PoS epochs: grounded in the protocol's finality, not any vendor")
+	})
+
+	t.Run("env override is honored", func(t *testing.T) {
+		setMinimalRequiredEnv(t)
+		t.Setenv("FF_INDEXER_ETHEREUM_SCAN_HEAD_LAG_BLOCKS", "12")
+		cfg, err := LoadAppConfig("", "")
+		require.NoError(t, err)
+		require.Equal(t, uint64(12), cfg.Ethereum.ScanHeadLagBlocks)
+	})
+
+	t.Run("zero is an explicit opt-out", func(t *testing.T) {
+		setMinimalRequiredEnv(t)
+		t.Setenv("FF_INDEXER_ETHEREUM_SCAN_HEAD_LAG_BLOCKS", "0")
+		cfg, err := LoadAppConfig("", "")
+		require.NoError(t, err)
+		require.Equal(t, uint64(0), cfg.Ethereum.ScanHeadLagBlocks)
+	})
+}
+
 // TestLoadAppConfig_ScanWindowConcurrency pins the owner-scan parallelism knob:
 // a deliberately conservative default when unset (sizing is a per-vendor
 // operations decision made in deploy config, so the binary must not ship an
