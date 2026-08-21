@@ -811,22 +811,33 @@ func TestLoadAppConfig_GuardEnvVarsReachConfig(t *testing.T) {
 // commonKeys — an unbound key is silently ignored, not an error), and rejection
 // of 0, which would stall every owner scan forever with no window ever fetched.
 func TestLoadAppConfig_ScanWindowConcurrency(t *testing.T) {
+	// Mirrors TestLoadAppConfig_GuardEnvVarsReachConfig: these are the keys
+	// LoadAppConfig requires before any ethereum.* validation runs.
 	setMinimalRequiredEnv := func(t *testing.T) {
 		t.Helper()
-		t.Setenv("FF_INDEXER_DATABASE_USER", "u")
-		t.Setenv("FF_INDEXER_DATABASE_PASSWORD", "p")
-		t.Setenv("FF_INDEXER_DATABASE_DBNAME", "d")
+		t.Setenv("FF_INDEXER_DATABASE_HOST", "localhost")
+		t.Setenv("FF_INDEXER_DATABASE_DBNAME", "ff")
+		t.Setenv("FF_INDEXER_JOBS_TOKEN_QUEUE", "token_index")
 		t.Setenv("FF_INDEXER_ETHEREUM_RPC_URL", "http://rpc.invalid")
 		t.Setenv("FF_INDEXER_ETHEREUM_WEBSOCKET_URL", "ws://rpc.invalid")
 		t.Setenv("FF_INDEXER_TEZOS_API_URL", "http://tzkt.invalid")
 		t.Setenv("FF_INDEXER_TEZOS_WEBSOCKET_URL", "ws://tzkt.invalid")
 	}
 
-	t.Run("defaults to 4", func(t *testing.T) {
+	t.Run("default stays under the free-tier rate limit", func(t *testing.T) {
 		setMinimalRequiredEnv(t)
 		cfg, err := LoadAppConfig("", "")
 		require.NoError(t, err)
-		require.Equal(t, 4, cfg.Ethereum.ScanWindowConcurrency)
+		require.Equal(t, 2, cfg.Ethereum.ScanWindowConcurrency)
+		// Each window fans out into the three merged owner-topic queries at once,
+		// so simultaneous requests are 3× the window concurrency. Pin the
+		// invariant, not just the number: a future default that looks harmless
+		// (e.g. 4 → 12 simultaneous) would exceed Infura's free-tier ~10 req/s
+		// and turn every default-config scan into a 429 retry storm.
+		const mergedQueriesPerWindow = 3
+		const infuraFreeTierReqPerSec = 10
+		require.LessOrEqual(t, cfg.Ethereum.ScanWindowConcurrency*mergedQueriesPerWindow, infuraFreeTierReqPerSec,
+			"default window concurrency × 3 queries/window must not exceed the free-tier rate limit")
 	})
 
 	t.Run("env override is honored", func(t *testing.T) {

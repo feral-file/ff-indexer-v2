@@ -81,9 +81,14 @@ type EthereumConfig struct {
 	// ~0.9s round-trip per window, windows independent of each other), so
 	// wall-clock divides by roughly this factor at identical total credit cost —
 	// only the request RATE rises. Windows still commit to the checkpoint cursor
-	// strictly in order, so resumability is unaffected. Size to the provider's
-	// per-second rate limit; throttling (429) is retried with backoff.
-	// Default: 4 (safe for Infura's free-tier ~10 req/s with 3 queries/window).
+	// strictly in order, so resumability is unaffected.
+	//
+	// Sizing: every window issues the THREE merged owner-topic eth_getLogs
+	// queries concurrently, so simultaneous requests = 3 × this value (per
+	// token worker). Default 2 → 6 simultaneous, under Infura's free-tier
+	// ~10 req/s with headroom for the worker's other RPC traffic. Paid tiers
+	// (hundreds of req/s) can raise it accordingly; throttling (429) is retried
+	// with backoff, but sustained 429s burn the retry budget and fail the walk.
 	ScanWindowConcurrency int `mapstructure:"scan_window_concurrency"`
 	// FullProvenanceDisabled: skip per-token history walks (full provenance and the
 	// ERC-1155 owner event replay); tokens keep minimal provenance until backfilled.
@@ -922,7 +927,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// Credit guards default off (0/false = unguarded, pre-guard behavior);
 	// production enables them via deploy config.
 	v.SetDefault("ethereum.getlogs_span_cap", 0)
-	v.SetDefault("ethereum.scan_window_concurrency", 4)
+	v.SetDefault("ethereum.scan_window_concurrency", 2)
 	v.SetDefault("ethereum.getlogs_call_budget", 0)
 	v.SetDefault("ethereum.full_provenance_disabled", false)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")

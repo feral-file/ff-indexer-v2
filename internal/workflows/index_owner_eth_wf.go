@@ -187,7 +187,9 @@ func scanWindows(cursor, toBlock, windowBlocks uint64) []scanWindow {
 // window (~0.9s measured), windows independent of each other — so a sequential
 // loop spends ~2,000 round-trips back to back (~32 min for a mainnet history).
 // Fetching K windows concurrently divides that wall-clock by ~K at identical
-// total credit cost; only the request rate rises, which is what the knob sizes.
+// total credit cost; only the request rate rises, which is what the knob sizes
+// — and each window fans out into the three merged owner-topic queries at
+// once, so the provider sees 3×K simultaneous requests per token worker.
 //
 // Constraints: the cursor is a contiguous-prefix marker, so persistence stays
 // sequential — a reorder buffer holds windows that finish early until every
