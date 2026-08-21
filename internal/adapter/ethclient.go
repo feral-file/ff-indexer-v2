@@ -165,9 +165,17 @@ func isRetryableEthError(err error) bool {
 		"bad gateway",
 		"gateway timeout",
 		"temporarily unavailable",
-		"ECONNRESET",
-		"ETIMEDOUT",
-		"EOF",
+		// Matched against the LOWERCASED error message below, so these must be
+		// lowercase too: as uppercase literals they could never match, which
+		// silently made "unexpected EOF" — a textbook transient failure — a
+		// permanent error that aborted an entire owner scan.
+		"econnreset",
+		"etimedout",
+		"eof",
+		// Provider-side 500s on a well-formed query (Infura returns a bare
+		// "Internal error"). Retrying is bounded by the 5-minute budget above,
+		// while not retrying discards every already-paid call in the walk.
+		"internal error",
 	}
 
 	errMsgLower := strings.ToLower(errMsg)

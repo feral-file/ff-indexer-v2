@@ -333,60 +333,75 @@ func (a *GenericAdapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	return events, nil
 }
 
-// GetOwnerLogs fetches configured provenance event logs where the owner is sender or recipient.
+// OwnerQuerySpecs declares the configured contract's owner-scan shapes: one spec
+// per owner topic position with all provenance event signatures sharing that
+// position OR'd together (CryptoPunks: 3 specs instead of 5 per-event ones).
 //
-// For CryptoPunks, also queries internal Transfer(seller, buyer, 1) events to discover
-// corrupted acceptBidForPunk purchases where PunkBought has zero indexed toAddress but
-// the internal Transfer contains the real buyer. For each internal Transfer, fetches the
-// transaction to find and include the corrupted PunkBought event.
-func (a *GenericAdapter) GetOwnerLogs(
-	ctx context.Context,
-	ownerAddress string,
-	fromBlock uint64,
-	toBlock uint64,
-) ([]types.Log, error) {
-	if len(a.provenanceEvents) == 0 {
+// For CryptoPunks, adds an internal Transfer(seller, buyer, 1) spec with the owner
+// as buyer (topic 2) to discover corrupted acceptBidForPunk purchases where the
+// PunkBought log has a zero indexed toAddress: acceptBidForPunk clears punkBids
+// storage before emitting PunkBought under Solidity 0.4.8, so the same-tx internal
+// Transfer log holds the only usable buyer. PostProcessOwnerLogs turns those
+// internal Transfers into the corrupted PunkBought logs via receipt lookups.
+//
+// Constraints: the internal Transfer spec shares the standard Transfer signature
+// hash, so at the client's cross-adapter merge it dissolves into the ERC-721
+// owner-as-recipient leg for free.
+func (a *GenericAdapter) OwnerQuerySpecs() []OwnerQuerySpec {
+	sigsByOwnerIndex := ownerSigsByTopicIndex(a.provenanceEvents)
+
+	// Topic positions are 1..3; iterate in order for deterministic spec layout.
+	var specs []OwnerQuerySpec
+	for ownerTopicIndex := 1; ownerTopicIndex <= 3; ownerTopicIndex++ {
+		sigs := sigsByOwnerIndex[ownerTopicIndex]
+		if len(sigs) == 0 {
+			continue
+		}
+		specs = append(specs, OwnerQuerySpec{EventSigs: sigs, OwnerTopicIndex: ownerTopicIndex})
+	}
+
+	if a.hasPunkBoughtEvent() {
+		specs = append(specs, OwnerQuerySpec{
+			EventSigs:       []common.Hash{helpers.TransferEventSignature},
+			OwnerTopicIndex: 2,
+		})
+	}
+
+	return specs
+}
+
+// PostProcessOwnerLogs surfaces corrupted CryptoPunks PunkBought logs that the
+// owner queries cannot match directly (their indexed buyer is zero): it follows
+// punks internal Transfer logs in the pool to their transaction receipts and
+// returns the PunkBought logs found there.
+//
+// Constraints: only inspects logs emitted by this adapter's contract AND whose
+// buyer (topic 2) is the scanned owner. The merged pool also carries the owner's
+// seller-side internal Transfers (owner at topic 1), but those need no receipt
+// lookup: only PunkBought's indexed buyer is ever corrupted, so a sale BY the
+// owner is matched directly by the owner-at-topic-2 PunkBought query and its
+// buyer restored by the replay's inline repair. Following seller-side transfers
+// here would pay one receipt RPC per historical sale and let a transient
+// receipt failure abort an otherwise valid scan.
+func (a *GenericAdapter) PostProcessOwnerLogs(ctx context.Context, owner common.Address, logs []types.Log) ([]types.Log, error) {
+	if !a.hasPunkBoughtEvent() {
 		return nil, nil
 	}
-
-	owner := common.HexToAddress(ownerAddress)
-	ownerHash := common.BytesToHash(owner.Bytes())
-	contractAddr := common.HexToAddress(a.contractAddress)
-
-	queries := buildCustomOwnerTransferQueries(a.provenanceEvents, contractAddr, ownerHash, fromBlock, toBlock)
-
-	// For CryptoPunks PunkBought repairs, also query internal Transfer events where owner is recipient.
-	// This discovers corrupted acceptBidForPunk purchases where the PunkBought log has zero buyer
-	// but the same-tx internal Transfer(seller, buyer, 1) reveals the real buyer.
-	var internalTransferQuery *ethereum.FilterQuery
-	if a.hasPunkBoughtEvent() {
-		query := buildInternalTransferBuyerQuery(contractAddr, ownerHash, fromBlock, toBlock)
-		internalTransferQuery = &query
-		queries = append(queries, query)
-	}
-
-	logs, err := filterLogsInParallel(ctx, a.pagination, queries)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query configured contract logs: %w", err)
-	}
-
-	// For CryptoPunks, process internal Transfer logs to find corrupted PunkBought events
-	if internalTransferQuery != nil {
-		additionalLogs, err := a.findCorruptedPunkBoughtFromInternalTransfers(ctx, logs, contractAddr)
-		if err != nil {
-			return nil, err
-		}
-		logs = append(logs, additionalLogs...)
-	}
-
-	return logs, nil
+	return a.findCorruptedPunkBoughtFromInternalTransfers(ctx, owner, logs, common.HexToAddress(a.contractAddress))
 }
 
 // findCorruptedPunkBoughtFromInternalTransfers extracts corrupted PunkBought events by
-// fetching transaction receipts for internal Transfer logs and finding PunkBought events
-// in the same transactions.
+// fetching transaction receipts for the owner's buyer-side internal Transfer logs and
+// finding PunkBought events in the same transactions.
+//
+// Constraints: only internal Transfers whose recipient (topic 2) is the scanned owner
+// are followed — the corruption is always in PunkBought's indexed buyer, so only
+// purchases BY the owner need receipt recovery. Seller-side transfers in the pool are
+// skipped: their PunkBought is matched directly by the owner queries, and following
+// them would pay one receipt RPC per historical sale.
 func (a *GenericAdapter) findCorruptedPunkBoughtFromInternalTransfers(
 	ctx context.Context,
+	owner common.Address,
 	logs []types.Log,
 	contractAddr common.Address,
 ) ([]types.Log, error) {
@@ -394,12 +409,14 @@ func (a *GenericAdapter) findCorruptedPunkBoughtFromInternalTransfers(
 		return nil, nil
 	}
 
-	// Find internal Transfer logs
+	// Find the owner's buyer-side internal Transfer logs
+	ownerHash := common.BytesToHash(owner.Bytes())
 	var internalTransferLogs []types.Log
 	for _, vLog := range logs {
 		if vLog.Address == contractAddr &&
 			len(vLog.Topics) == 3 &&
 			vLog.Topics[0] == helpers.TransferEventSignature &&
+			vLog.Topics[2] == ownerHash &&
 			len(vLog.Data) >= 32 {
 			value := new(big.Int).SetBytes(vLog.Data[:32])
 			if value.Cmp(big.NewInt(1)) == 0 {
@@ -468,11 +485,21 @@ func (a *GenericAdapter) GetTokensByOwner(
 	}
 
 	owner := common.HexToAddress(ownerAddress)
+	contractAddr := common.HexToAddress(a.contractAddress)
 
-	logs, err := a.GetOwnerLogs(ctx, ownerAddress, fromBlock, toBlock)
+	// Standalone adapter scans scope every query to this contract; the client's
+	// production path fetches unscoped merged queries across adapters instead.
+	logs, err := FetchOwnerLogs(ctx, a.pagination, a.OwnerQuerySpecs(),
+		common.BytesToHash(owner.Bytes()), []common.Address{contractAddr}, fromBlock, toBlock)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query configured contract logs: %w", err)
+	}
+
+	repaired, err := a.PostProcessOwnerLogs(ctx, owner, logs)
 	if err != nil {
 		return nil, err
 	}
+	logs = append(logs, repaired...)
 
 	logs = deduplicateLogs(logs)
 	sortLogsAscending(logs)
@@ -506,31 +533,21 @@ func (a *GenericAdapter) GetTokensByOwner(
 	return trackOwnershipFromParsedEvents(a.chainID, a.cidStandard, a.contractAddress, owner, events, blacklist), nil
 }
 
-// buildCustomOwnerTransferQueries constructs filter queries for configured provenance events
-// where the owner address appears in indexed from/to parameters.
+// ownerSigsByTopicIndex groups configured provenance event signatures by the topic
+// position where the owner address appears (from indexed from/to parameters).
 //
-// For CryptoPunks PunkBought, also queries events where owner is the seller (FromAddress),
-// because corrupted acceptBidForPunk events have zero in the indexed ToAddress but correct
-// FromAddress. After fetching, repair logic will restore the buyer from internal Transfer logs.
+// Reason: signatures sharing an owner position are OR'd into ONE query spec instead
+// of one per (event, position) pair — each query walks the full block range on a
+// span-capped provider, so fewer specs directly cuts RPC cost (CryptoPunks: 5 -> 3).
+// Grouping cannot change results: a (signature, position) pair lands in exactly one
+// group, and OR'd topics[0] returns the union the per-signature queries returned.
 //
-// Only processes transfer/mint/burn events. Metadata update events do not affect ownership
-// and are skipped.
+// For CryptoPunks PunkBought, the seller position (FromAddress) is included because
+// corrupted acceptBidForPunk events have zero in the indexed ToAddress but a correct
+// FromAddress; repair logic later restores the buyer from internal Transfer logs.
 //
-// Returns separate queries for each (event, topic position) combination to maximize parallelism.
-// Config validation ensures from/to addresses are indexed, so this always produces owner-scoped queries.
-func buildCustomOwnerTransferQueries(
-	provenanceEvents []EventConfig,
-	contractAddr common.Address,
-	ownerHash common.Hash,
-	fromBlock, toBlock uint64,
-) []ethereum.FilterQuery {
-	// Group event signatures by the topic position where the owner address appears,
-	// then issue one query per position with all signatures OR'd in topics[0]. Each
-	// query walks the full block range regardless of matches on a span-capped
-	// provider, so fewer queries directly cuts RPC cost (CryptoPunks: 5 -> 3).
-	// Grouping cannot change results: a (signature, position) pair lands in exactly
-	// one grouped query, and OR'd topics[0] returns the union the per-signature
-	// queries returned.
+// Only transfer/mint/burn events contribute. Metadata updates do not affect ownership.
+func ownerSigsByTopicIndex(provenanceEvents []EventConfig) map[int][]common.Hash {
 	sigsByOwnerIndex := make(map[int][]common.Hash)
 	for _, eventCfg := range provenanceEvents {
 		if !isOwnershipAffectingEvent(eventCfg.MapToStandardEvent) {
@@ -547,18 +564,7 @@ func buildCustomOwnerTransferQueries(
 			sigsByOwnerIndex[toIndex] = append(sigsByOwnerIndex[toIndex], eventSig)
 		}
 	}
-
-	// Topic positions are 1..3; iterate in order for deterministic query layout.
-	var queries []ethereum.FilterQuery
-	for ownerTopicIndex := 1; ownerTopicIndex <= 3; ownerTopicIndex++ {
-		sigs := sigsByOwnerIndex[ownerTopicIndex]
-		if len(sigs) == 0 {
-			continue
-		}
-		queries = append(queries, buildCustomOwnerQuery(sigs, contractAddr, ownerHash, ownerTopicIndex, fromBlock, toBlock))
-	}
-
-	return queries
+	return sigsByOwnerIndex
 }
 
 // indexedAddressTopicIndices finds the topic positions of FromAddress and ToAddress in the event signature.
@@ -589,64 +595,6 @@ func indexedAddressTopicIndices(eventCfg EventConfig) (fromIndex, toIndex int) {
 	}
 
 	return fromIndex, toIndex
-}
-
-// buildCustomOwnerQuery constructs a filter query for a set of event signatures sharing
-// one owner topic position. The owner hash is placed at the specified topic index to
-// filter for events where the owner is the sender or recipient; the signatures are
-// OR'd in topics[0].
-func buildCustomOwnerQuery(
-	eventSigs []common.Hash,
-	contractAddr common.Address,
-	ownerHash common.Hash,
-	ownerTopicIndex int,
-	fromBlock, toBlock uint64,
-) ethereum.FilterQuery {
-	topics := make([][]common.Hash, ownerTopicIndex+1)
-	topics[0] = eventSigs
-	topics[ownerTopicIndex] = []common.Hash{ownerHash}
-
-	return ethereum.FilterQuery{
-		FromBlock: new(big.Int).SetUint64(fromBlock),
-		ToBlock:   new(big.Int).SetUint64(toBlock),
-		Addresses: []common.Address{contractAddr},
-		Topics:    topics,
-	}
-}
-
-// buildInternalTransferBuyerQuery constructs a query for CryptoPunks internal Transfer(seller, buyer, 1)
-// events where the owner is the buyer (topic[2]). This discovers corrupted acceptBidForPunk purchases
-// where the PunkBought log has zero buyer but the internal Transfer reveals the real buyer.
-//
-// Reason: acceptBidForPunk clears punkBids storage before emitting PunkBought under Solidity 0.4.8,
-// so the emitted toAddress can be zero even though ownership transferred. The same transaction
-// includes an internal Transfer(seller, buyer, 1) log with the correct buyer.
-//
-// Trade-offs: This adds one additional parallel query per owner sweep, but it's bounded by the
-// same block range and is necessary to discover all CryptoPunks purchases for an owner.
-//
-// Constraints: Only applies to contracts with PunkBought provenance events configured.
-func buildInternalTransferBuyerQuery(
-	contractAddr common.Address,
-	buyerHash common.Hash,
-	fromBlock, toBlock uint64,
-) ethereum.FilterQuery {
-	// Internal Transfer uses standard ERC20-style Transfer(address indexed from, address indexed to, uint256 value)
-	// Topic[0] = Transfer signature
-	// Topic[1] = from (seller)
-	// Topic[2] = to (buyer) <-- filter by owner here
-	topics := [][]common.Hash{
-		{helpers.TransferEventSignature}, // topic[0]: Transfer event
-		nil,                              // topic[1]: from (any seller)
-		{buyerHash},                      // topic[2]: to (specific buyer)
-	}
-
-	return ethereum.FilterQuery{
-		FromBlock: new(big.Int).SetUint64(fromBlock),
-		ToBlock:   new(big.Int).SetUint64(toBlock),
-		Addresses: []common.Address{contractAddr},
-		Topics:    topics,
-	}
 }
 
 // ParseEvent parses a configured legacy contract event into a blockchain event.

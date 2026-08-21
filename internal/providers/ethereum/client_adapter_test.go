@@ -296,29 +296,29 @@ func TestClient_GetTokenCIDsByOwnerAndBlockRange_ConfiguredLegacyContract(t *tes
 	punkBoughtSig := crypto.Keccak256Hash([]byte("PunkBought(uint256,uint256,address,address)"))
 	cryptoPunksContract := common.HexToAddress(cryptoPunksAddress)
 
+	// The merged owner scan is unscoped (no Addresses filter); the PunkBought log
+	// with the owner as buyer arrives via the owner-at-topic-3 merged query, whose
+	// topics[0] carries PunkBought OR'd with the ERC-1155 signatures.
 	mockEth.EXPECT().
 		FilterLogs(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, q goethereum.FilterQuery) ([]types.Log, error) {
-			if len(q.Addresses) == 1 && q.Addresses[0] == cryptoPunksContract {
-				ownerHash := common.BytesToHash(owner.Bytes())
-				if len(q.Topics) >= 4 && q.Topics[3] != nil && len(q.Topics[3]) == 1 && q.Topics[3][0] == ownerHash {
-					if len(q.Topics[0]) == 1 && q.Topics[0][0] == punkBoughtSig {
-						return []types.Log{{
-							Address:     cryptoPunksContract,
-							BlockNumber: 500,
-							BlockHash:   common.HexToHash("0xabc"),
-							TxHash:      common.HexToHash("0xdef"),
-							Index:       1,
-							Topics: []common.Hash{
-								punkBoughtSig,
-								common.BigToHash(big.NewInt(42)),
-								common.BytesToHash(seller.Bytes()),
-								ownerHash,
-							},
-							Data: common.LeftPadBytes(big.NewInt(1).Bytes(), 32),
-						}}, nil
-					}
-				}
+			require.Empty(t, q.Addresses, "merged owner-scan queries must not be contract-scoped")
+			ownerHash := common.BytesToHash(owner.Bytes())
+			if len(q.Topics) == 4 && len(q.Topics[3]) == 1 && q.Topics[3][0] == ownerHash && containsHash(q.Topics[0], punkBoughtSig) {
+				return []types.Log{{
+					Address:     cryptoPunksContract,
+					BlockNumber: 500,
+					BlockHash:   common.HexToHash("0xabc"),
+					TxHash:      common.HexToHash("0xdef"),
+					Index:       1,
+					Topics: []common.Hash{
+						punkBoughtSig,
+						common.BigToHash(big.NewInt(42)),
+						common.BytesToHash(seller.Bytes()),
+						ownerHash,
+					},
+					Data: common.LeftPadBytes(big.NewInt(1).Bytes(), 32),
+				}}, nil
 			}
 			return nil, nil
 		}).
@@ -360,24 +360,22 @@ func TestClient_GetTokenCIDsByOwnerAndBlockRange_TimestampLookupFailure(t *testi
 	mockEth.EXPECT().
 		FilterLogs(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, q goethereum.FilterQuery) ([]types.Log, error) {
-			if len(q.Addresses) == 1 && q.Addresses[0] == cryptoPunksContract {
-				ownerHash := common.BytesToHash(owner.Bytes())
-				if len(q.Topics) >= 4 && q.Topics[3] != nil && len(q.Topics[3]) == 1 && q.Topics[3][0] == ownerHash {
-					return []types.Log{{
-						Address:     cryptoPunksContract,
-						BlockNumber: 500,
-						BlockHash:   common.HexToHash("0xabc"),
-						TxHash:      common.HexToHash("0xdef"),
-						Index:       1,
-						Topics: []common.Hash{
-							punkBoughtSig,
-							common.BigToHash(big.NewInt(42)),
-							common.BytesToHash(common.HexToAddress("0x2222222222222222222222222222222222222222").Bytes()),
-							ownerHash,
-						},
-						Data: common.LeftPadBytes(big.NewInt(1).Bytes(), 32),
-					}}, nil
-				}
+			ownerHash := common.BytesToHash(owner.Bytes())
+			if len(q.Topics) == 4 && len(q.Topics[3]) == 1 && q.Topics[3][0] == ownerHash && containsHash(q.Topics[0], punkBoughtSig) {
+				return []types.Log{{
+					Address:     cryptoPunksContract,
+					BlockNumber: 500,
+					BlockHash:   common.HexToHash("0xabc"),
+					TxHash:      common.HexToHash("0xdef"),
+					Index:       1,
+					Topics: []common.Hash{
+						punkBoughtSig,
+						common.BigToHash(big.NewInt(42)),
+						common.BytesToHash(common.HexToAddress("0x2222222222222222222222222222222222222222").Bytes()),
+						ownerHash,
+					},
+					Data: common.LeftPadBytes(big.NewInt(1).Bytes(), 32),
+				}}, nil
 			}
 			return nil, nil
 		}).

@@ -18,13 +18,14 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
 )
 
-// TestERC1155GetOwnerLogs_MergedTransferLegs pins the credit-guard query shape:
-// the owner scan issues exactly two eth_getLogs queries (owner-as-sender and
-// owner-as-recipient), each carrying BOTH TransferSingle and TransferBatch in
-// topics[0]. The pre-guard shape was four queries — one per (event, position)
-// pair — and each query walks the full block range on a span-capped provider,
-// so a regression here silently doubles the RPC cost of every wallet scan.
-func TestERC1155GetOwnerLogs_MergedTransferLegs(t *testing.T) {
+// TestERC1155OwnerScan_MergedTransferLegs pins the credit-guard query shape:
+// a standalone ERC-1155 owner scan issues exactly two eth_getLogs queries
+// (owner-as-sender and owner-as-recipient), each carrying BOTH TransferSingle
+// and TransferBatch in topics[0]. The pre-guard shape was four queries — one
+// per (event, position) pair — and each query walks the full block range on a
+// span-capped provider, so a regression here silently doubles the RPC cost of
+// every wallet scan.
+func TestERC1155OwnerScan_MergedTransferLegs(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
@@ -55,9 +56,9 @@ func TestERC1155GetOwnerLogs_MergedTransferLegs(t *testing.T) {
 	pagination := helpers.NewPaginationHelper(mockClient, mockClock, nil)
 	adp := adapters.NewERC1155Adapter(mockClient, pagination, domain.ChainEthereumMainnet, nil)
 
-	logs, err := adp.GetOwnerLogs(context.Background(), owner.Hex(), fromBlock, toBlock)
+	tokens, err := adp.GetTokensByOwner(context.Background(), owner.Hex(), fromBlock, toBlock, nil)
 	require.NoError(t, err)
-	require.Empty(t, logs)
+	require.Empty(t, tokens)
 	require.Len(t, queries, 2)
 
 	// Queries run concurrently; identify them by the topic position of the owner.

@@ -141,21 +141,37 @@ type ContractAdapter interface {
 	// Returns events in ascending block/log order.
 	GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string) ([]domain.BlockchainEvent, error)
 
-	// GetOwnerLogs fetches raw ownership-affecting logs for an owner within a block range.
+	// OwnerQuerySpecs declares the (event signatures, owner topic position) query
+	// shapes this adapter needs for owner-scoped log discovery.
 	//
-	// The client merges logs from all adapters and runs unified replay with a global held-token
-	// limit. Adapters do not apply limits or compute final ownership snapshots.
-	GetOwnerLogs(
-		ctx context.Context,
-		ownerAddress string,
-		fromBlock uint64,
-		toBlock uint64,
-	) ([]types.Log, error)
+	// Adapters declare shapes instead of fetching logs themselves so the client can
+	// merge specs ACROSS adapters into at most one eth_getLogs query per owner topic
+	// position (three total). Each query walks the full block range on a span-capped
+	// provider, so the merged count is the RPC cost multiplier of every wallet scan.
+	//
+	// Merged queries carry no contract address scope; adapters must tolerate logs
+	// from foreign contracts that share an event signature (replay filters by
+	// contract and topic shape).
+	OwnerQuerySpecs() []OwnerQuerySpec
+
+	// PostProcessOwnerLogs inspects the merged owner-scan log pool and returns
+	// ADDITIONAL logs the queries alone cannot surface. The only current use is the
+	// CryptoPunks corrupted-PunkBought repair, which follows the owner's buyer-side
+	// internal Transfer logs to transaction receipts. Standard adapters return
+	// (nil, nil).
+	//
+	// Constraints: implementations must ignore logs from other contracts and logs
+	// not involving the scanned owner (the pool is shared across adapters, unscoped,
+	// and — because queries merge by topic position — contains logs matched for
+	// other owner roles), and must be idempotent: returned logs are deduplicated
+	// with the pool afterwards.
+	PostProcessOwnerLogs(ctx context.Context, owner common.Address, logs []types.Log) ([]types.Log, error)
 
 	// GetTokensByOwner returns tokens owned by the address at the end of the block range.
 	//
-	// Convenience wrapper for adapter tests: GetOwnerLogs followed by full-range replay without
-	// a global limit. Production owner scans use client-side ReplayOwnerTokensWithLimit instead.
+	// Convenience wrapper for adapter tests: fetches this adapter's own specs (scoped to its
+	// contract for configured adapters) and replays without a global limit. Production owner
+	// scans use the client's merged fetch plus ReplayOwnerTokensWithLimit instead.
 	GetTokensByOwner(
 		ctx context.Context,
 		ownerAddress string,

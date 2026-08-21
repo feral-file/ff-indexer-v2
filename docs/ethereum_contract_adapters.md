@@ -234,9 +234,12 @@ Configured contracts **without** `events` do not contribute custom topics; their
 `GetTokenCIDsByOwnerAndBlockRange` (used by Ethereum owner indexing):
 
 1. Collects **ERC721**, **ERC1155**, and every configured override with **`SupportsProvenance() == true`**
-2. Each adapter returns **owner-scoped raw logs** in the block range (`GetOwnerLogs`)
-3. Client **merges, deduplicates**, then **`ReplayOwnerTokensWithLimit`** with `ParseLog` → `registry.ParseEvent`
-4. Emits token CIDs using configured contract’s derived standard where applicable
+2. Each adapter declares its **query shapes** (`OwnerQuerySpecs`: event signatures + owner topic position); the client merges them into **at most one `eth_getLogs` query per owner topic position — three total** (`MergeOwnerQuerySpecs` + `FetchOwnerLogs`)
+3. Adapters post-process the merged pool for receipt-based repairs (`PostProcessOwnerLogs`, currently CryptoPunks corrupted `PunkBought` only)
+4. Client **deduplicates**, then **`ReplayOwnerTokensWithLimit`** with `ParseLog` → `registry.ParseEvent`
+5. Emits token CIDs using configured contract’s derived standard where applicable
+
+**Why merged queries:** on a span-capped provider (Infura caps `eth_getLogs` at a 10k-block span), every query walks the full block range regardless of matches — a mainnet history scan is ~2,500 calls *per query*. Merging the former 8 per-adapter queries (2 ERC-721 + 2 ERC-1155 + 4 CryptoPunks) into 3 cuts each wallet scan's RPC cost by ~62%. Merging cannot change results: `eth_getLogs` ORs within a topic position, so the union query returns exactly the union of the per-adapter results. Merged queries carry **no contract address scope**; replay filters foreign same-signature logs by contract and topic shape (e.g. ERC-20 `Transfer` shares the ERC-721 signature hash but has 3 topics, not 4). The owner hash is never placed at topic 3 of `Transfer` — that position is the ERC-721 `tokenId`.
 
 **Global lower bound:** `ethereum_token_sweep_start_block` applies to all contracts, including legacy overrides. Tokens whose last ownership event is **before** that block will not appear in sweeps until a later in-range event occurs.
 
