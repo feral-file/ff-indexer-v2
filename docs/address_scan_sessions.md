@@ -69,6 +69,23 @@ exactly one accepted call per query). When no cap is configured (self-hosted nod
 a 1M-block window keeps checkpoints frequent while the pagination helper's adaptive
 halving handles any too-many-results rejections inside the window.
 
+### Window concurrency
+
+The scan is purely RPC-latency-bound: each window is one provider round-trip
+(~0.9s measured against Infura) and windows are independent of each other, so a
+sequential loop spends ~2,000 round-trips back to back (~32 minutes for a mainnet
+history). `ethereum.scan_window_concurrency` (default 4) fetches that many windows
+at once, dividing wall-clock by roughly that factor at **identical total credit
+cost** — only the request rate rises, which is what the knob sizes against the
+provider's per-second limit. Throttling (429) is retried with backoff.
+
+Persistence stays strictly sequential. The cursor is a contiguous-prefix marker, so
+a reorder buffer holds windows that finish early until every earlier window has
+committed: persisting window N+1 before window N would let a crash between the two
+leave a gap that resume silently skips. Fetching has no side effects, so on any
+failure the group context cancels in-flight fetches and fetched-but-uncommitted
+windows are simply dropped and re-fetched on resume.
+
 ### Consistency semantics
 
 The persisted token list is a snapshot as of `to_block`. Tokens acquired after the

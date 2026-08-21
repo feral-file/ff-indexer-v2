@@ -3,12 +3,15 @@ package workflows
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // scanProgressLogEvery is the window-loop heartbeat cadence: a full cap-seeded
@@ -145,45 +148,167 @@ func (w *coreWorkflows) runEthereumScanSession(
 	return w.completeEthereumScanSession(ctx, address, chainID, session)
 }
 
+// scanWindow is one fetch unit of the owner scan: a contiguous block range and
+// its position in the session's window sequence.
+type scanWindow struct {
+	index     int
+	fromBlock uint64
+	toBlock   uint64
+}
+
+// fetchedWindow pairs a window with its fetched rows for the ordered committer.
+type fetchedWindow struct {
+	window scanWindow
+	rows   []schema.AddressScanLog
+}
+
+// scanWindows splits [cursor, toBlock] into consecutive windows of windowBlocks.
+func scanWindows(cursor, toBlock, windowBlocks uint64) []scanWindow {
+	var windows []scanWindow
+	for from := cursor; from <= toBlock; {
+		end := from + windowBlocks - 1
+		if end > toBlock || end < from { // < from: uint64 overflow near max
+			end = toBlock
+		}
+		windows = append(windows, scanWindow{index: len(windows), fromBlock: from, toBlock: end})
+		if end == toBlock {
+			break
+		}
+		from = end + 1
+	}
+	return windows
+}
+
 // scanEthereumSessionWindows runs the window loop from the session's cursor to
-// its target block. Each window is one executor call that fetches the merged
-// owner queries and commits logs + cursor atomically, so an interruption at any
-// point loses at most one window (~3 eth_getLogs calls).
+// its target block, fetching up to EthereumScanWindowConcurrency windows at a
+// time while committing them to the checkpoint strictly in order.
+//
+// Reason: the scan is purely RPC-latency-bound — one provider round-trip per
+// window (~0.9s measured), windows independent of each other — so a sequential
+// loop spends ~2,000 round-trips back to back (~32 min for a mainnet history).
+// Fetching K windows concurrently divides that wall-clock by ~K at identical
+// total credit cost; only the request rate rises, which is what the knob sizes.
+//
+// Constraints: the cursor is a contiguous-prefix marker, so persistence stays
+// sequential — a reorder buffer holds windows that finish early until every
+// earlier window has committed. Committing N+1 before N would let a crash in
+// between leave a gap that resume silently skips. The first failure cancels
+// every in-flight fetch via the group context; fetched-but-uncommitted windows
+// are simply dropped (fetch has no side effects) and re-fetched on resume.
 func (w *coreWorkflows) scanEthereumSessionWindows(ctx context.Context, address string, session *ScanSessionInfo) error {
 	windowBlocks := w.config.EthereumScanWindowBlocks
 	if windowBlocks == 0 {
 		windowBlocks = defaultScanWindowBlocks
 	}
+	concurrency := w.config.EthereumScanWindowConcurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
 
-	windowsDone := 0
+	windows := scanWindows(session.CursorBlock, session.ToBlock, windowBlocks)
+	if len(windows) == 0 {
+		return nil
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	pending := make(chan scanWindow)
+	fetched := make(chan fetchedWindow, concurrency)
+
+	// Producer: hands out windows in order; stops as soon as anything fails.
+	g.Go(func() error {
+		defer close(pending)
+		for _, win := range windows {
+			select {
+			case pending <- win:
+			case <-gctx.Done():
+				return gctx.Err()
+			}
+		}
+		return nil
+	})
+
+	// Fetchers: the parallel, side-effect-free half of the pipeline.
+	var fetchers sync.WaitGroup
+	for range concurrency {
+		fetchers.Add(1)
+		g.Go(func() error {
+			defer fetchers.Done()
+			for win := range pending {
+				rows, err := w.executor.FetchEthereumOwnerWindow(gctx, address, win.fromBlock, win.toBlock)
+				if err != nil {
+					return err
+				}
+				select {
+				case fetched <- fetchedWindow{window: win, rows: rows}:
+				case <-gctx.Done():
+					return gctx.Err()
+				}
+			}
+			return nil
+		})
+	}
+	// Close the results channel only once every fetcher has exited, so the
+	// committer's range loop terminates on success and the channel is never
+	// written after close on failure.
+	go func() {
+		fetchers.Wait()
+		close(fetched)
+	}()
+
+	// Committer: the single, strictly ordered half of the pipeline.
+	g.Go(func() error {
+		return w.commitScanWindowsInOrder(gctx, address, session, fetched, len(windows))
+	})
+
+	return g.Wait()
+}
+
+// commitScanWindowsInOrder drains fetched windows and persists them in index
+// order, buffering any that arrive ahead of their turn. Returns once all
+// expected windows are committed or the context is canceled.
+func (w *coreWorkflows) commitScanWindowsInOrder(
+	ctx context.Context,
+	address string,
+	session *ScanSessionInfo,
+	fetched <-chan fetchedWindow,
+	expected int,
+) error {
+	buffer := make(map[int]fetchedWindow)
+	next := 0
 	scanStart := time.Now()
-	for cursor := session.CursorBlock; cursor <= session.ToBlock; {
-		select {
-		case <-ctx.Done():
+
+	for next < expected {
+		fw, ok := <-fetched
+		if !ok {
+			// Fetchers exited before delivering everything: only reachable on
+			// failure, whose error the group surfaces ahead of this one.
 			return ctx.Err()
-		default:
 		}
+		buffer[fw.window.index] = fw
 
-		windowEnd := cursor + windowBlocks - 1
-		if windowEnd > session.ToBlock || windowEnd < cursor { // < cursor: uint64 overflow near max
-			windowEnd = session.ToBlock
-		}
+		for {
+			ready, exists := buffer[next]
+			if !exists {
+				break
+			}
+			delete(buffer, next)
 
-		if err := w.executor.ScanEthereumOwnerWindow(ctx, address, session.ID, cursor, windowEnd); err != nil {
-			return err
-		}
-		cursor = windowEnd + 1
+			if err := w.executor.PersistEthereumScanWindow(ctx, session.ID, ready.rows, ready.window.fromBlock, ready.window.toBlock); err != nil {
+				return err
+			}
+			next++
 
-		windowsDone++
-		if windowsDone%scanProgressLogEvery == 0 {
-			logger.InfoCtx(ctx, "Owner scan window progress",
-				zap.String("address", address),
-				zap.Int64("sessionID", session.ID),
-				zap.Uint64("atBlock", cursor),
-				zap.Uint64("targetBlock", session.ToBlock),
-				zap.Int("windowsDone", windowsDone),
-				zap.Duration("elapsed", time.Since(scanStart)),
-			)
+			if next%scanProgressLogEvery == 0 {
+				logger.InfoCtx(ctx, "Owner scan window progress",
+					zap.String("address", address),
+					zap.Int64("sessionID", session.ID),
+					zap.Uint64("atBlock", ready.window.toBlock+1),
+					zap.Uint64("targetBlock", session.ToBlock),
+					zap.Int("windowsDone", next),
+					zap.Int("windowsTotal", expected),
+					zap.Duration("elapsed", time.Since(scanStart)),
+				)
+			}
 		}
 	}
 	return nil

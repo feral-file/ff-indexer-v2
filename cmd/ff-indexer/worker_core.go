@@ -167,6 +167,7 @@ func registerWorkerCore(
 			EthereumChainID:                    cfg.Ethereum.ChainID,
 			TezosChainID:                       cfg.Tezos.ChainID,
 			EthereumScanWindowBlocks:           scanWindowBlocksFromSpanCap(cfg.Ethereum.GetLogsSpanCap),
+			EthereumScanWindowConcurrency:      cfg.Ethereum.ScanWindowConcurrency,
 			EthereumOwnerFirstBatchTarget:      cfg.EthereumOwnerFirstBatchTarget,
 			EthereumOwnerSubsequentBatchTarget: cfg.EthereumOwnerSubsequentBatchTarget,
 			TezosOwnerFirstBatchTarget:         cfg.TezosOwnerFirstBatchTarget,

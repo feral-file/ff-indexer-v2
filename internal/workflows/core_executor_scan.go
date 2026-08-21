@@ -58,19 +58,35 @@ func (e *coreExecutor) CreateEthereumScanSession(ctx context.Context, address st
 	return scanSessionInfoFromSchema(session), nil
 }
 
-// ScanEthereumOwnerWindow fetches one window of merged owner logs from the chain
-// and persists them together with the cursor advance in one transaction — the
-// checkpoint that bounds the loss of any failure to this window's RPC calls.
-func (e *coreExecutor) ScanEthereumOwnerWindow(ctx context.Context, address string, sessionID int64, fromBlock, toBlock uint64) error {
+// FetchEthereumOwnerWindow fetches one window of merged owner logs from the
+// chain and returns them as staged rows WITHOUT touching the checkpoint.
+//
+// Reason: split from persistence so the workflow can fetch several windows
+// concurrently — the scan is RPC-latency-bound and windows are independent —
+// while still committing them to the cursor strictly in order. Fetching has no
+// side effects, so a window fetched ahead of its turn and then discarded
+// (sibling failure, cancellation) costs only its RPC calls.
+func (e *coreExecutor) FetchEthereumOwnerWindow(ctx context.Context, address string, fromBlock, toBlock uint64) ([]schema.AddressScanLog, error) {
 	logs, err := e.ethClient.FetchOwnerLogsWindow(ctx, address, fromBlock, toBlock)
 	if err != nil {
-		return fmt.Errorf("fetch owner logs window [%d, %d]: %w", fromBlock, toBlock, err)
+		return nil, fmt.Errorf("fetch owner logs window [%d, %d]: %w", fromBlock, toBlock, err)
 	}
 
 	rows := make([]schema.AddressScanLog, len(logs))
 	for i, vLog := range logs {
 		rows[i] = scanLogRowFromEthLog(vLog)
 	}
+	return rows, nil
+}
+
+// PersistEthereumScanWindow commits one fetched window's rows together with the
+// cursor advance in a single transaction — the checkpoint that bounds the loss
+// of any failure to the windows not yet committed.
+//
+// Constraints: callers MUST invoke this in ascending window order. The cursor
+// is a contiguous-prefix marker: committing window N+1 before window N would
+// let a crash between the two leave a gap that resume silently skips.
+func (e *coreExecutor) PersistEthereumScanWindow(ctx context.Context, sessionID int64, rows []schema.AddressScanLog, fromBlock, toBlock uint64) error {
 	if err := e.store.AppendScanLogsAdvanceCursor(ctx, sessionID, rows, toBlock+1); err != nil {
 		return fmt.Errorf("persist scan window [%d, %d]: %w", fromBlock, toBlock, err)
 	}

@@ -66,7 +66,8 @@ func stubEthScanDiscovery(exec *mocks.MockCoreExecutor, addr string, chainID dom
 	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
 	exec.EXPECT().CreateEthereumScanSession(gomock.Any(), addr, chainID, uint64(1000), latest).
 		Return(&workflows.ScanSessionInfo{ID: sessionID, FromBlock: 1000, ToBlock: latest, CursorBlock: 1000}, nil)
-	exec.EXPECT().ScanEthereumOwnerWindow(gomock.Any(), addr, sessionID, uint64(1000), latest).Return(nil)
+	exec.EXPECT().FetchEthereumOwnerWindow(gomock.Any(), addr, uint64(1000), latest).Return(nil, nil)
+	exec.EXPECT().PersistEthereumScanWindow(gomock.Any(), sessionID, gomock.Nil(), uint64(1000), latest).Return(nil)
 	exec.EXPECT().ReplayEthereumScanSession(gomock.Any(), addr, sessionID).Return(len(pending), nil)
 	exec.EXPECT().GetPendingScanTokens(gomock.Any(), sessionID).Return(pending, nil)
 }
@@ -103,7 +104,8 @@ func TestIndexTokenOwner_Ethereum_EmptyFirstRun(t *testing.T) {
 	exec.EXPECT().GetLatestEthereumBlock(gomock.Any()).Return(latest, nil)
 	exec.EXPECT().CreateEthereumScanSession(gomock.Any(), addr, chainID, uint64(1000), latest).
 		Return(&workflows.ScanSessionInfo{ID: sessionID, FromBlock: 1000, ToBlock: latest, CursorBlock: 1000}, nil)
-	exec.EXPECT().ScanEthereumOwnerWindow(gomock.Any(), addr, sessionID, uint64(1000), latest).Return(nil)
+	exec.EXPECT().FetchEthereumOwnerWindow(gomock.Any(), addr, uint64(1000), latest).Return(nil, nil)
+	exec.EXPECT().PersistEthereumScanWindow(gomock.Any(), sessionID, gomock.Nil(), uint64(1000), latest).Return(nil)
 	exec.EXPECT().ReplayEthereumScanSession(gomock.Any(), addr, sessionID).Return(0, nil)
 	exec.EXPECT().GetPendingScanTokens(gomock.Any(), sessionID).Return(nil, nil)
 	exec.EXPECT().UpdateIndexingBlockRangeForAddress(gomock.Any(), addr, chainID, uint64(1000), latest).Return(nil)

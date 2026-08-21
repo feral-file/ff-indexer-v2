@@ -102,6 +102,10 @@ type CoreWorkflowsConfig struct {
 	// 0 falls back to a 1M-block window for uncapped providers, where the
 	// pagination helper's adaptive halving handles dense windows internally.
 	EthereumScanWindowBlocks uint64
+	// EthereumScanWindowConcurrency bounds how many scan windows are fetched
+	// concurrently (ethereum.scan_window_concurrency). Fetch is parallel; the
+	// checkpoint commit stays strictly in cursor order. <= 0 falls back to 1.
+	EthereumScanWindowConcurrency int
 	// EthereumOwnerFirstBatchTarget is the first-run batch target (token count) for Ethereum owner indexing.
 	EthereumOwnerFirstBatchTarget int
 	// EthereumOwnerSubsequentBatchTarget is the subsequent-run batch target (token count) for Ethereum owner indexing.

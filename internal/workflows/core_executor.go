@@ -91,9 +91,12 @@ type CoreExecutor interface {
 	// CreateEthereumScanSession creates a scanning session for the block range,
 	// or returns the existing session when a concurrent worker created one first
 	CreateEthereumScanSession(ctx context.Context, address string, chainID domain.Chain, fromBlock, toBlock uint64) (*ScanSessionInfo, error)
-	// ScanEthereumOwnerWindow fetches one window of merged owner logs and persists
-	// them together with the cursor advance in one transaction
-	ScanEthereumOwnerWindow(ctx context.Context, address string, sessionID int64, fromBlock, toBlock uint64) error
+	// FetchEthereumOwnerWindow fetches one window of merged owner logs as staged rows
+	// without touching the checkpoint; safe to call concurrently for distinct windows
+	FetchEthereumOwnerWindow(ctx context.Context, address string, fromBlock, toBlock uint64) ([]schema.AddressScanLog, error)
+	// PersistEthereumScanWindow commits one fetched window's rows with the cursor
+	// advance in one transaction; MUST be called in ascending window order
+	PersistEthereumScanWindow(ctx context.Context, sessionID int64, rows []schema.AddressScanLog, fromBlock, toBlock uint64) error
 	// ReplayEthereumScanSession derives the owned-token list from the staged logs and
 	// persists it (deleting the logs); returns the number of discovered tokens
 	ReplayEthereumScanSession(ctx context.Context, address string, sessionID int64) (int, error)

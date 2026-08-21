@@ -207,6 +207,21 @@ func (mr *MockCoreExecutorMockRecorder) EnsureWatchedAddressExists(ctx, address,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockCoreExecutor)(nil).EnsureWatchedAddressExists), ctx, address, chain, dailyQuota)
 }
 
+// FetchEthereumOwnerWindow mocks base method.
+func (m *MockCoreExecutor) FetchEthereumOwnerWindow(ctx context.Context, address string, fromBlock, toBlock uint64) ([]schema.AddressScanLog, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchEthereumOwnerWindow", ctx, address, fromBlock, toBlock)
+	ret0, _ := ret[0].([]schema.AddressScanLog)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchEthereumOwnerWindow indicates an expected call of FetchEthereumOwnerWindow.
+func (mr *MockCoreExecutorMockRecorder) FetchEthereumOwnerWindow(ctx, address, fromBlock, toBlock any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchEthereumOwnerWindow", reflect.TypeOf((*MockCoreExecutor)(nil).FetchEthereumOwnerWindow), ctx, address, fromBlock, toBlock)
+}
+
 // GetActiveWebhookClientsByEventType mocks base method.
 func (m *MockCoreExecutor) GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error) {
 	m.ctrl.T.Helper()
@@ -426,6 +441,20 @@ func (mr *MockCoreExecutorMockRecorder) MarkTokenProvenanceDeferred(ctx, tokenCI
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkTokenProvenanceDeferred", reflect.TypeOf((*MockCoreExecutor)(nil).MarkTokenProvenanceDeferred), ctx, tokenCID)
 }
 
+// PersistEthereumScanWindow mocks base method.
+func (m *MockCoreExecutor) PersistEthereumScanWindow(ctx context.Context, sessionID int64, rows []schema.AddressScanLog, fromBlock, toBlock uint64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PersistEthereumScanWindow", ctx, sessionID, rows, fromBlock, toBlock)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PersistEthereumScanWindow indicates an expected call of PersistEthereumScanWindow.
+func (mr *MockCoreExecutorMockRecorder) PersistEthereumScanWindow(ctx, sessionID, rows, fromBlock, toBlock any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PersistEthereumScanWindow", reflect.TypeOf((*MockCoreExecutor)(nil).PersistEthereumScanWindow), ctx, sessionID, rows, fromBlock, toBlock)
+}
+
 // ReplayEthereumScanSession mocks base method.
 func (m *MockCoreExecutor) ReplayEthereumScanSession(ctx context.Context, address string, sessionID int64) (int, error) {
 	m.ctrl.T.Helper()
@@ -454,20 +483,6 @@ func (m *MockCoreExecutor) ResolveTokenMetadata(ctx context.Context, tokenCID do
 func (mr *MockCoreExecutorMockRecorder) ResolveTokenMetadata(ctx, tokenCID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveTokenMetadata", reflect.TypeOf((*MockCoreExecutor)(nil).ResolveTokenMetadata), ctx, tokenCID)
-}
-
-// ScanEthereumOwnerWindow mocks base method.
-func (m *MockCoreExecutor) ScanEthereumOwnerWindow(ctx context.Context, address string, sessionID int64, fromBlock, toBlock uint64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ScanEthereumOwnerWindow", ctx, address, sessionID, fromBlock, toBlock)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// ScanEthereumOwnerWindow indicates an expected call of ScanEthereumOwnerWindow.
-func (mr *MockCoreExecutorMockRecorder) ScanEthereumOwnerWindow(ctx, address, sessionID, fromBlock, toBlock any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScanEthereumOwnerWindow", reflect.TypeOf((*MockCoreExecutor)(nil).ScanEthereumOwnerWindow), ctx, address, sessionID, fromBlock, toBlock)
 }
 
 // SupportsTokenProvenance mocks base method.

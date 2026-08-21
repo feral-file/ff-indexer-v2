@@ -2,6 +2,7 @@ package workflows_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -40,9 +41,16 @@ type coreWfDeps struct {
 	Wf     workflows.CoreWorkflows
 }
 
+// initTestLoggerOnce guards the global zap logger against concurrent
+// re-initialization: every t.Parallel() test that builds a harness used to call
+// logger.Initialize, and two of them racing writes the package-level logger
+// variable — a genuine data race the -race detector flags in every parallel
+// workflow test, masking real races in the code under test.
+var initTestLoggerOnce sync.Once
+
 func newCoreWfDeps(t *testing.T, cfg workflows.CoreWorkflowsConfig, bl registry.BlacklistRegistry) *coreWfDeps {
 	t.Helper()
-	_ = logger.Initialize(logger.Config{Debug: true})
+	initTestLoggerOnce.Do(func() { _ = logger.Initialize(logger.Config{Debug: true}) })
 	ctrl := gomock.NewController(t)
 	exec := mocks.NewMockCoreExecutor(ctrl)
 	var blMock *mocks.MockBlacklistRegistry

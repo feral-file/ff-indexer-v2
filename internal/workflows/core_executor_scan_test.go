@@ -20,12 +20,12 @@ import (
 // Ethereum owner-scan session executor tests
 // ====================================================================================
 
-// TestScanEthereumOwnerWindow_PersistsLogsAndCursor pins the checkpoint
-// contract: one window call fetches merged owner logs and hands the store BOTH
-// the converted rows and the advanced cursor (windowEnd+1), preserving every
-// field the replay and the CryptoPunks receipt repair read — emitting contract,
-// topics, data, block/tx/log position.
-func TestScanEthereumOwnerWindow_PersistsLogsAndCursor(t *testing.T) {
+// TestFetchAndPersistEthereumScanWindow_RowsAndCursor pins the checkpoint
+// contract across the fetch/persist split: fetch converts merged owner logs to
+// rows preserving every field the replay and the CryptoPunks receipt repair
+// read (emitting contract, topics, data, block/tx/log position), and persist
+// hands the store those rows together with the advanced cursor (windowEnd+1).
+func TestFetchAndPersistEthereumScanWindow_RowsAndCursor(t *testing.T) {
 	tm := setupTestExecutor(t)
 	defer tearDownTestExecutor(tm)
 
@@ -64,14 +64,17 @@ func TestScanEthereumOwnerWindow_PersistsLogsAndCursor(t *testing.T) {
 			return nil
 		})
 
-	err := tm.executor.ScanEthereumOwnerWindow(ctx, address, sessionID, 100, 199)
-	assert.NoError(t, err)
+	rows, err := tm.executor.FetchEthereumOwnerWindow(ctx, address, 100, 199)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.NoError(t, tm.executor.PersistEthereumScanWindow(ctx, sessionID, rows, 100, 199))
 }
 
-// TestScanEthereumOwnerWindow_FetchErrorSkipsPersist verifies a failed fetch
-// leaves the checkpoint untouched: the strict store mock has no
-// AppendScanLogsAdvanceCursor expectation, so any persist attempt fails the test.
-func TestScanEthereumOwnerWindow_FetchErrorSkipsPersist(t *testing.T) {
+// TestFetchEthereumOwnerWindow_ErrorHasNoSideEffects verifies a failed fetch
+// touches nothing: the strict store mock has no expectations at all, so any
+// store call fails the test. This is what makes fetch safe to run ahead of
+// its turn in the parallel pipeline and simply drop on a sibling failure.
+func TestFetchEthereumOwnerWindow_ErrorHasNoSideEffects(t *testing.T) {
 	tm := setupTestExecutor(t)
 	defer tearDownTestExecutor(tm)
 
@@ -80,8 +83,9 @@ func TestScanEthereumOwnerWindow_FetchErrorSkipsPersist(t *testing.T) {
 		FetchOwnerLogsWindow(ctx, "0xowner", uint64(100), uint64(199)).
 		Return(nil, errors.New("rpc down"))
 
-	err := tm.executor.ScanEthereumOwnerWindow(ctx, "0xowner", 1, 100, 199)
+	rows, err := tm.executor.FetchEthereumOwnerWindow(ctx, "0xowner", 100, 199)
 	assert.ErrorContains(t, err, "rpc down")
+	assert.Nil(t, rows)
 }
 
 // TestReplayEthereumScanSession_RoundTripsLogsAndPersistsTokens pins the replay
