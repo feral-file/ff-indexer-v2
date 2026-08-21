@@ -83,12 +83,19 @@ type EthereumConfig struct {
 	// only the request RATE rises. Windows still commit to the checkpoint cursor
 	// strictly in order, so resumability is unaffected.
 	//
-	// Sizing: every window issues the THREE merged owner-topic eth_getLogs
-	// queries concurrently, so simultaneous requests = 3 × this value (per
-	// token worker). Default 2 → 6 simultaneous, under Infura's free-tier
-	// ~10 req/s with headroom for the worker's other RPC traffic. Paid tiers
-	// (hundreds of req/s) can raise it accordingly; throttling (429) is retried
-	// with backoff, but sustained 429s burn the retry budget and fail the walk.
+	// Sizing is an operations decision per RPC vendor — credit-metered, flat-rate,
+	// and self-hosted providers all want different values, so the binary ships a
+	// conservative default (2) and deploy config sets the real number. Reason
+	// from the full fan-out: every window issues the THREE merged owner-topic
+	// eth_getLogs queries at once, and every token worker may run a scan, so
+	//
+	//   peak concurrent eth_getLogs = jobs.token_worker.concurrency × this × 3
+	//
+	// (5 × 2 × 3 = 30 at binary defaults; a 30-worker deployment at 4 is 360).
+	// Throttling (429) is retried with backoff and the checkpoint resumes the
+	// walk, so over-sizing degrades to "slower", not "broken" — but sustained
+	// 429s burn the per-call retry budget, so size from the vendor's actual
+	// limit rather than upward from symptoms.
 	ScanWindowConcurrency int `mapstructure:"scan_window_concurrency"`
 	// FullProvenanceDisabled: skip per-token history walks (full provenance and the
 	// ERC-1155 owner event replay); tokens keep minimal provenance until backfilled.

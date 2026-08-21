@@ -806,8 +806,9 @@ func TestLoadAppConfig_GuardEnvVarsReachConfig(t *testing.T) {
 }
 
 // TestLoadAppConfig_ScanWindowConcurrency pins the owner-scan parallelism knob:
-// a default of 4 when unset (safe for Infura's free-tier rate limit with three
-// queries per window), an env override (which requires the key to be bound in
+// a deliberately conservative default when unset (sizing is a per-vendor
+// operations decision made in deploy config, so the binary must not ship an
+// aggressive number), an env override (which requires the key to be bound in
 // commonKeys — an unbound key is silently ignored, not an error), and rejection
 // of 0, which would stall every owner scan forever with no window ever fetched.
 func TestLoadAppConfig_ScanWindowConcurrency(t *testing.T) {
@@ -824,20 +825,20 @@ func TestLoadAppConfig_ScanWindowConcurrency(t *testing.T) {
 		t.Setenv("FF_INDEXER_TEZOS_WEBSOCKET_URL", "ws://tzkt.invalid")
 	}
 
-	t.Run("default stays under the free-tier rate limit", func(t *testing.T) {
+	t.Run("default is conservative", func(t *testing.T) {
 		setMinimalRequiredEnv(t)
 		cfg, err := LoadAppConfig("", "")
 		require.NoError(t, err)
 		require.Equal(t, 2, cfg.Ethereum.ScanWindowConcurrency)
-		// Each window fans out into the three merged owner-topic queries at once,
-		// so simultaneous requests are 3× the window concurrency. Pin the
-		// invariant, not just the number: a future default that looks harmless
-		// (e.g. 4 → 12 simultaneous) would exceed Infura's free-tier ~10 req/s
-		// and turn every default-config scan into a 429 retry storm.
+		// The binary encodes no vendor's rate limit; it only guarantees the
+		// out-of-the-box fan-out stays small. Peak concurrent eth_getLogs is
+		// token_worker.concurrency × this × 3 merged queries, so pin that the
+		// default keeps it in the tens, not the hundreds — a future default bump
+		// that looks harmless here multiplies through the worker pool.
 		const mergedQueriesPerWindow = 3
-		const infuraFreeTierReqPerSec = 10
-		require.LessOrEqual(t, cfg.Ethereum.ScanWindowConcurrency*mergedQueriesPerWindow, infuraFreeTierReqPerSec,
-			"default window concurrency × 3 queries/window must not exceed the free-tier rate limit")
+		peakAtDefaults := cfg.Jobs.TokenWorker.Concurrency * cfg.Ethereum.ScanWindowConcurrency * mergedQueriesPerWindow
+		require.LessOrEqual(t, peakAtDefaults, 30,
+			"binary-default fan-out (workers × windows × 3) must stay conservative; real sizing belongs in deploy config")
 	})
 
 	t.Run("env override is honored", func(t *testing.T) {

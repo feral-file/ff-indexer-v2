@@ -76,13 +76,18 @@ The scan is purely RPC-latency-bound: each window is one provider round-trip
 sequential loop spends ~2,000 round-trips back to back (~32 minutes for a mainnet
 history). `ethereum.scan_window_concurrency` (default 2) fetches that many windows
 at once, dividing wall-clock by roughly that factor at **identical total credit
-cost** — only the request rate rises. Size it against the provider's per-second
-limit remembering that every window issues the **three** merged owner-topic
-queries concurrently, so simultaneous requests are `3 × concurrency` per token
-worker: the default's 6 sits under Infura's free-tier ~10 req/s with headroom;
-paid tiers can go much higher. Throttling (429) is retried with backoff, but
-sustained 429s exhaust the retry budget and fail the walk, so over-provisioning
-is not free.
+cost** — only the request rate rises.
+
+Sizing it is deliberately an **operations decision per RPC vendor**, not a binary
+default: credit-metered, flat-rate, and self-hosted providers all want different
+values, and the indexer does not encode any vendor's limits. Reason from the full
+fan-out — every window issues the **three** merged owner-topic queries at once and
+every token worker may run a scan, so
+`peak concurrent eth_getLogs = token_worker.concurrency × scan_window_concurrency × 3`
+(30 at binary defaults; a 30-worker deployment at 4 is 360). Throttling (429) is
+retried with backoff and the checkpoint resumes the walk, so over-sizing degrades
+to slower rather than broken — but sustained 429s exhaust the per-call retry
+budget, so size from the vendor's real limit rather than upward from symptoms.
 
 Persistence stays strictly sequential. The cursor is a contiguous-prefix marker, so
 a reorder buffer holds windows that finish early until every earlier window has
