@@ -156,10 +156,6 @@ type ClientGuards struct {
 	// GetLogsCallBudget caps FilterLogs calls per pagination walk.
 	// See helpers.PaginationGuards.CallBudget.
 	GetLogsCallBudget int
-	// GetLogsMaxConcurrent bounds in-flight FilterLogs calls across every walk on
-	// this client — the process-wide eth_getLogs concurrency for the worker pool
-	// that shares it. See helpers.PaginationGuards.MaxConcurrentCalls.
-	GetLogsMaxConcurrent int
 	// FullProvenanceDisabled short-circuits the per-token owner history replay:
 	// OwnerBalanceAndEvents returns the current balanceOf with no events instead of
 	// walking TransferSingle/TransferBatch history from genesis (4 full-range log
@@ -199,9 +195,8 @@ func NewGuardedClient(chainID domain.Chain, client adapter.EthClient, clock adap
 		guards:        guards,
 	}
 	ec.pagination = helpers.NewGuardedPaginationHelper(client, clock, blockProvider, helpers.PaginationGuards{
-		SpanCap:            guards.GetLogsSpanCap,
-		CallBudget:         guards.GetLogsCallBudget,
-		MaxConcurrentCalls: guards.GetLogsMaxConcurrent,
+		SpanCap:    guards.GetLogsSpanCap,
+		CallBudget: guards.GetLogsCallBudget,
 	})
 
 	registry, err := contractregistry.NewAdapterRegistry(

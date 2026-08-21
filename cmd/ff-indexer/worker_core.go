@@ -74,7 +74,6 @@ func registerWorkerCore(
 		ethereum.ClientGuards{
 			GetLogsSpanCap:         cfg.Ethereum.GetLogsSpanCap,
 			GetLogsCallBudget:      cfg.Ethereum.GetLogsCallBudget,
-			GetLogsMaxConcurrent:   cfg.Ethereum.GetLogsMaxConcurrent,
 			FullProvenanceDisabled: cfg.Ethereum.FullProvenanceDisabled,
 		})
 	if err != nil {
