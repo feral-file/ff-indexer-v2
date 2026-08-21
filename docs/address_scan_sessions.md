@@ -25,8 +25,10 @@ in-memory operation, which failed two ways:
 Invert the loop from query-major (each query walks the whole range; atomicity = the
 whole scan) to **window-major**: one cursor walks the range in provider-cap-sized
 windows, each window fetches the three merged owner queries, and progress commits
-to Postgres per window. The unit of loss on any failure is one window (~3 calls),
-not the scan.
+to Postgres per window. The unit of loss on any failure is bounded by the
+fetch-ahead window — at most `scan_window_concurrency` fetched-but-uncommitted
+windows (× 3 calls each; one window at concurrency 1) — not the scan. What matters
+is that the bound is small and operator-configurable, not that it is exactly one.
 
 ### Session lifecycle
 
