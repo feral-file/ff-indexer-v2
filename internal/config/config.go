@@ -76,6 +76,16 @@ type EthereumConfig struct {
 	// aborts the walk. Size above ceil(chain head / span cap) — mainnet at a 10k cap
 	// needs ~2,600 calls per full-history walk.
 	GetLogsCallBudget int `mapstructure:"getlogs_call_budget"`
+	// GetLogsMaxConcurrent: process-wide cap on in-flight eth_getLogs calls across
+	// ALL owner scans. This is the knob that actually enforces the provider rate
+	// limit: scan_window_concurrency bounds one scan, but
+	// jobs.token_worker.concurrency scans run at once, each fanning out into
+	// windows × 3 merged queries (5 × 2 × 3 = 30 at defaults). The bound lives at
+	// the single choke point every eth_getLogs passes through, so it holds
+	// regardless of how the per-scan factors are tuned. Size to the provider's
+	// per-second limit; requests beyond it queue rather than 429. Default 8 keeps
+	// a default deployment under Infura's free-tier ~10 req/s. 0 = unbounded.
+	GetLogsMaxConcurrent int `mapstructure:"getlogs_max_concurrent"`
 	// ScanWindowConcurrency: how many owner-scan windows are fetched from the
 	// provider concurrently. The scan is purely RPC-latency-bound (measured: one
 	// ~0.9s round-trip per window, windows independent of each other), so
@@ -613,6 +623,9 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 	if cfg.Ethereum.GetLogsCallBudget < 0 {
 		return fmt.Errorf("ethereum.getlogs_call_budget must be >= 0, got %d", cfg.Ethereum.GetLogsCallBudget)
 	}
+	if cfg.Ethereum.GetLogsMaxConcurrent < 0 {
+		return fmt.Errorf("ethereum.getlogs_max_concurrent must be >= 0, got %d", cfg.Ethereum.GetLogsMaxConcurrent)
+	}
 	// Zero concurrency would stall the owner scan forever (no window ever
 	// fetched), and the unbounded case is what rate-limit discipline is for.
 	if cfg.Ethereum.ScanWindowConcurrency < 1 {
@@ -928,6 +941,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// production enables them via deploy config.
 	v.SetDefault("ethereum.getlogs_span_cap", 0)
 	v.SetDefault("ethereum.scan_window_concurrency", 2)
+	v.SetDefault("ethereum.getlogs_max_concurrent", 8)
 	v.SetDefault("ethereum.getlogs_call_budget", 0)
 	v.SetDefault("ethereum.full_provenance_disabled", false)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
@@ -1102,6 +1116,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.getlogs_span_cap",
 		"ethereum.getlogs_call_budget",
 		"ethereum.scan_window_concurrency",
+		"ethereum.getlogs_max_concurrent",
 		"ethereum.full_provenance_disabled",
 		// Tezos
 		"tezos.api_url",

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -561,4 +562,140 @@ func TestFilterLogsWithPagination_CallBudgetAborts(t *testing.T) {
 	require.ErrorIs(t, err, helpers.ErrCallBudgetExhausted)
 	require.Nil(t, logs)
 	require.Equal(t, callBudget, totalCalls, "the walk must stop issuing calls once the budget is spent")
+}
+
+// TestFilterLogsWithPagination_MaxConcurrentCallsBoundsAllWalks pins the
+// process-wide eth_getLogs bound. One helper is shared by every walk in the
+// token worker pool, so the bound must hold ACROSS walks, not per walk: twelve
+// concurrent walks (think 4 workers × 3 merged owner queries) against a helper
+// capped at 3 must never have more than 3 FilterLogs calls in flight. Each
+// mocked call blocks briefly so the walks genuinely overlap; a bound that only
+// held per walk would be caught by the in-flight counter exceeding the cap.
+func TestFilterLogsWithPagination_MaxConcurrentCallsBoundsAllWalks(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockClock := mocks.NewMockClock(ctrl)
+
+	const (
+		maxConcurrent = 3
+		walks         = 12
+		windowsPer    = 4
+		spanCap       = uint64(100)
+	)
+	var (
+		mu       sync.Mutex
+		inFlight int
+		maxSeen  int
+		total    int
+	)
+	mockClient.EXPECT().
+		FilterLogs(gomock.Any(), gomock.Any()).
+		AnyTimes().
+		DoAndReturn(func(_ context.Context, _ ethereum.FilterQuery) ([]types.Log, error) {
+			mu.Lock()
+			inFlight++
+			if inFlight > maxSeen {
+				maxSeen = inFlight
+			}
+			total++
+			mu.Unlock()
+			time.Sleep(5 * time.Millisecond) // force real overlap between walks
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+			return nil, nil
+		})
+
+	pagination := helpers.NewGuardedPaginationHelper(mockClient, mockClock, nil, helpers.PaginationGuards{
+		SpanCap:            spanCap,
+		MaxConcurrentCalls: maxConcurrent,
+	})
+
+	var wg sync.WaitGroup
+	errs := make(chan error, walks)
+	for i := range uint64(walks) {
+		wg.Add(1)
+		go func(i uint64) {
+			defer wg.Done()
+			from := i * 10_000
+			_, err := pagination.FilterLogsWithPagination(context.Background(), ethereum.FilterQuery{
+				FromBlock: new(big.Int).SetUint64(from),
+				ToBlock:   new(big.Int).SetUint64(from + windowsPer*(spanCap+1) - 1),
+			})
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, walks*windowsPer, total, "every window of every walk must still be fetched")
+	require.LessOrEqual(t, maxSeen, maxConcurrent,
+		"in-flight FilterLogs calls across ALL walks must never exceed MaxConcurrentCalls")
+	require.Equal(t, maxConcurrent, maxSeen,
+		"the bound must be reached, proving walks genuinely overlapped (otherwise the test proves nothing)")
+}
+
+// TestFilterLogsWithPagination_MaxConcurrentCallsCancellationDoesNotDeadlock
+// pins that slot acquisition is context-aware: a walk whose context is already
+// canceled while every slot is held by other walks must return promptly with
+// the context error instead of blocking forever on the semaphore — otherwise a
+// canceled scan could wedge a worker goroutine until the slot holders finish.
+func TestFilterLogsWithPagination_MaxConcurrentCallsCancellationDoesNotDeadlock(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockClock := mocks.NewMockClock(ctrl)
+
+	holdersStarted := make(chan struct{}, 1)
+	release := make(chan struct{})
+	mockClient.EXPECT().
+		FilterLogs(gomock.Any(), gomock.Any()).
+		AnyTimes().
+		DoAndReturn(func(_ context.Context, _ ethereum.FilterQuery) ([]types.Log, error) {
+			select {
+			case holdersStarted <- struct{}{}:
+			default:
+			}
+			<-release // hold the only slot until the test lets go
+			return nil, nil
+		})
+
+	pagination := helpers.NewGuardedPaginationHelper(mockClient, mockClock, nil, helpers.PaginationGuards{
+		SpanCap:            100,
+		MaxConcurrentCalls: 1,
+	})
+	oneWindow := ethereum.FilterQuery{FromBlock: big.NewInt(0), ToBlock: big.NewInt(100)}
+
+	// Walk A takes the single slot and parks inside FilterLogs.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _ = pagination.FilterLogsWithPagination(context.Background(), oneWindow)
+	}()
+	<-holdersStarted
+
+	// Walk B arrives with an already-canceled context: it must NOT hang.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := pagination.FilterLogsWithPagination(ctx, oneWindow)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("canceled walk deadlocked waiting for a FilterLogs slot")
+	}
+
+	close(release)
+	wg.Wait()
 }

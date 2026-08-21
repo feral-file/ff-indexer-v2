@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
 	"go.uber.org/zap"
+	"golang.org/x/sync/semaphore"
 
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/block"
@@ -40,6 +41,20 @@ type PaginationGuards struct {
 	// backstop, not a pace-setter: size it above ceil(chain head / SpanCap) so every
 	// legitimate full-history walk fits (mainnet at a 10k cap needs ~2,600 calls).
 	CallBudget int
+	// MaxConcurrentCalls bounds how many FilterLogs RPC calls may be in flight at
+	// once through this helper, across EVERY walk that shares it. One helper is
+	// built per EthereumClient and the token worker pool shares one client, so
+	// this is the process-wide eth_getLogs concurrency for owner scans.
+	//
+	// Reason: per-scan knobs cannot enforce a provider rate limit. An owner scan
+	// fans out into scan_window_concurrency windows × 3 merged queries, and
+	// jobs.token_worker.concurrency scans can run at once, so the aggregate
+	// (5 workers × 2 windows × 3 queries = 30 at defaults) blows through
+	// Infura's free-tier ~10 req/s no matter how each factor is tuned. Sustained
+	// 429s exhaust the per-call retry budget and fail the walk, so the bound has
+	// to live at the one choke point every eth_getLogs passes through. 0 = no
+	// bound (pre-guard behavior).
+	MaxConcurrentCalls int
 }
 
 // paceState is the walk-scoped progress heartbeat: long walks against a
@@ -80,6 +95,9 @@ type PaginationHelper struct {
 	clock         ethadapter.Clock
 	blockProvider block.BlockProvider
 	guards        PaginationGuards
+	// callSlots gates in-flight FilterLogs calls when guards.MaxConcurrentCalls > 0;
+	// nil means unbounded.
+	callSlots *semaphore.Weighted
 }
 
 // NewPaginationHelper creates a helper for paginated log queries with no cost guards.
@@ -98,12 +116,29 @@ func NewGuardedPaginationHelper(
 	blockProvider block.BlockProvider,
 	guards PaginationGuards,
 ) *PaginationHelper {
-	return &PaginationHelper{
+	h := &PaginationHelper{
 		ethClient:     ethClient,
 		clock:         clock,
 		blockProvider: blockProvider,
 		guards:        guards,
 	}
+	if guards.MaxConcurrentCalls > 0 {
+		h.callSlots = semaphore.NewWeighted(int64(guards.MaxConcurrentCalls))
+	}
+	return h
+}
+
+// filterLogs issues one FilterLogs RPC call under the process-wide concurrency
+// bound. Acquisition is context-aware, so a canceled walk never deadlocks
+// waiting for a slot held by another walk.
+func (h *PaginationHelper) filterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+	if h.callSlots != nil {
+		if err := h.callSlots.Acquire(ctx, 1); err != nil {
+			return nil, err
+		}
+		defer h.callSlots.Release(1)
+	}
+	return h.ethClient.FilterLogs(ctx, query)
 }
 
 // noDeadlineTimeout bounds a pagination walk whose caller set no deadline.
@@ -130,7 +165,7 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 	}
 
 	if query.BlockHash != nil {
-		return h.ethClient.FilterLogs(timeoutCtx, query)
+		return h.filterLogs(timeoutCtx, query)
 	}
 
 	var fromBlock, toBlock *big.Int
@@ -339,7 +374,7 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 				ErrCallBudgetExhausted, *callsUsed, currentFrom.Uint64(), currentTo.Uint64())
 		}
 		*callsUsed++
-		logs, err := h.ethClient.FilterLogs(ctx, queryCopy)
+		logs, err := h.filterLogs(ctx, queryCopy)
 		if err == nil {
 			allLogs = append(allLogs, logs...)
 			currentFrom.SetUint64(currentTo.Uint64() + 1)
