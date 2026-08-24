@@ -49,6 +49,12 @@ type RenderProbeExecutorConfig struct {
 	// BrokenRecheckInterval schedules the next probe after gating; the probe is the only
 	// healer of render-gated rows (L0 skips them), so this also bounds heal latency.
 	BrokenRecheckInterval time.Duration
+	// NoEvidenceRecheckInterval schedules the next probe after a no-evidence outcome (a
+	// non-2xx served error page or an SSRF policy refusal). These outcomes never gate, so
+	// this bounds nothing but wasted work: a public gateway's persistent HTTP 410 does not
+	// lift on the gated cadence, and rechecking the blocked population daily starved
+	// coverage of never-probed URLs. Longer than BrokenRecheckInterval on purpose.
+	NoEvidenceRecheckInterval time.Duration
 	// Enforce turns render verdicts into viewability gates. False is shadow mode: the
 	// probe renders, classifies, debounces, and records everything exactly as
 	// enforcement would — verdicts, counters, pHashes — but never writes a gate, so
@@ -399,15 +405,16 @@ const browserUnavailableRetryDelay = 5 * time.Minute
 // would never heal the health row. First-ever attempts record a stalled verdict (the
 // closest existing category; a new enum value is not worth a migration) with the counter
 // still at zero, so no-evidence outcomes can never accumulate toward the gate threshold.
-// Constraints: next_check_at moves a full BrokenRecheckInterval out — for persistent
-// conditions (ipfs.io's bot-block of headless browsers) hourly retries would only burn
-// render capacity, and for gated rows this matches their existing recheck cadence.
+// Constraints: next_check_at moves a full NoEvidenceRecheckInterval out — persistent
+// conditions (ipfs.io's bot-block of headless browsers) do not lift on any faster cadence,
+// so a shorter interval would only burn render capacity re-confirming the same block and
+// starve coverage of never-probed URLs.
 func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, now time.Time) error {
 	row := schema.MediaRenderProbe{
 		MediaURL:    url,
 		Verdict:     schema.RenderProbeVerdictStalled,
 		LastError:   &errMsg,
-		NextCheckAt: now.Add(e.cfg.BrokenRecheckInterval),
+		NextCheckAt: now.Add(e.cfg.NoEvidenceRecheckInterval),
 	}
 	if prev != nil {
 		row.Verdict = prev.Verdict

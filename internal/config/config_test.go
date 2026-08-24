@@ -536,12 +536,13 @@ func TestMediaHealthSweeperConfig_EffectiveURI(t *testing.T) {
 // SSRF path.
 func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 	base := RenderProbeConfig{
-		Enabled:               true,
-		BatchSize:             20,
-		FailureGateThreshold:  2,
-		RecheckInterval:       168 * time.Hour,
-		RetryInterval:         time.Hour,
-		BrokenRecheckInterval: 24 * time.Hour,
+		Enabled:                   true,
+		BatchSize:                 20,
+		FailureGateThreshold:      2,
+		RecheckInterval:           168 * time.Hour,
+		RetryInterval:             time.Hour,
+		BrokenRecheckInterval:     24 * time.Hour,
+		NoEvidenceRecheckInterval: 168 * time.Hour,
 	}
 
 	t.Run("enabled without egress restriction is rejected", func(t *testing.T) {

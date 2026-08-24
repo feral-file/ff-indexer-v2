@@ -27,12 +27,13 @@ import (
 // consecutive failures, distinct intervals so next_check_at assertions can tell which
 // path scheduled the row.
 var renderProbeTestConfig = workflows.RenderProbeExecutorConfig{
-	BlankVarianceThreshold: 0.001,
-	FailureGateThreshold:   2,
-	RecheckInterval:        168 * time.Hour,
-	RetryInterval:          time.Hour,
-	BrokenRecheckInterval:  24 * time.Hour,
-	Enforce:                true, // most tests assert enforcement; shadow has its own suite
+	BlankVarianceThreshold:    0.001,
+	FailureGateThreshold:      2,
+	RecheckInterval:           168 * time.Hour,
+	RetryInterval:             time.Hour,
+	BrokenRecheckInterval:     24 * time.Hour,
+	NoEvidenceRecheckInterval: 72 * time.Hour, // distinct from the others so no-evidence rows are identifiable
+	Enforce:                   true,           // most tests assert enforcement; shadow has its own suite
 }
 
 type renderProbeMocks struct {
@@ -812,7 +813,7 @@ func TestExecuteRenderProbe_non2xxMainStatusRecordsWithoutCounting(t *testing.T)
 			assert.Nil(t, row.BaselinePhash, "an error page must never seed the baseline")
 			require.NotNil(t, row.LastError)
 			assert.Contains(t, *row.LastError, "HTTP 410")
-			assert.Equal(t, m.now.Add(renderProbeTestConfig.BrokenRecheckInterval), row.NextCheckAt)
+			assert.Equal(t, m.now.Add(renderProbeTestConfig.NoEvidenceRecheckInterval), row.NextCheckAt)
 			return nil
 		})
 

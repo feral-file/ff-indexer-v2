@@ -204,7 +204,10 @@ still counted as `stalled`/`blank`:
   hops excluded, iframe documents ignored) and the executor refuses to classify the
   frame when it is not 2xx: the attempt is recorded with the status in `last_error`,
   the previous verdict/counter/gate/capture state is preserved (same contract as an
-  SSRF policy refusal), and `next_check_at` moves a `broken_recheck_interval` out.
+  SSRF policy refusal), and `next_check_at` moves a `no_evidence_recheck_interval` out
+  (longer than `broken_recheck_interval`: a fingerprint-keyed gateway block does not lift
+  on any faster cadence, so a shorter interval only burns render budget re-confirming it
+  and starves coverage of never-probed URLs).
   Measured production shape: ipfs.io's HTTP 410 bot-block page — one line of text on
   white, variance ~0.00096 — classified 1,692 distinct healthy artworks as `blank`,
   all sharing pHash `0xb636363636363634`.
@@ -305,7 +308,7 @@ pacing, UA changes, or retries cannot lift it, and it is persistent rather than
 burst-triggered. **Decision (2026-08-18): the gap is accepted.** Consequences:
 
 - URLs on these gateways record no-evidence attempts (`last_error` = "main document
-  returned HTTP 410; frame not classified") on the `broken_recheck_interval` cadence.
+  returned HTTP 410; frame not classified") on the `no_evidence_recheck_interval` cadence.
   L1 neither gates nor heals them; L0's byte-level probe (Go HTTP client, not
   fingerprinted as a browser) remains their only health judgment.
 - The shadow-mode watch and the delta measurement's "actually renders" number exclude
