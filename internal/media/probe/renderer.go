@@ -28,6 +28,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/media/browserproc"
 )
 
 const (
@@ -269,6 +270,11 @@ func AllocatorOptionsNoSandbox() []chromedp.ExecAllocatorOption {
 
 func allocatorOptions(noSandbox bool) []chromedp.ExecAllocatorOption {
 	opts := []chromedp.ExecAllocatorOption{
+		// Kill the whole chromium process tree on teardown. chromedp's default cancel
+		// SIGKILLs only the browser process; a renderer wedged in untrusted artwork JS
+		// survives the probe timeout, leaks, and keeps the user-data dir undeletable
+		// (issue #136: 433 leaked processes / 780 leaked dirs in 36 h on prod).
+		browserproc.AllocatorOption(),
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
 		chromedp.DisableGPU,

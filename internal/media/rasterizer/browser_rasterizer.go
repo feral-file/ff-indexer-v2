@@ -13,6 +13,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/media/browserproc"
 )
 
 const (
@@ -67,6 +68,11 @@ type chromedpBrowserRasterizer struct {
 // their failure modes diverge in production containers.
 func DefaultAllocatorOptions() []chromedp.ExecAllocatorOption {
 	return []chromedp.ExecAllocatorOption{
+		// Kill the whole chromium process tree on teardown (issue #136). Less exposed
+		// than the render probe (--single-process below keeps the tree to one process,
+		// and the content is our own validated SVG), but the same teardown gap applies
+		// to whatever helpers chromium still forks.
+		browserproc.AllocatorOption(),
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
 		chromedp.DisableGPU,

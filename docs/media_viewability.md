@@ -280,6 +280,20 @@ renderable class, so a URL that has since failed L0 stops consuming render capac
 Job cancellation and worker shutdown are bridged into the browser context and leave all
 probe state untouched: a cancelled probe is not evidence about the artwork.
 
+**Browser teardown kills the whole chromium process tree** (`internal/media/browserproc`,
+issue #136). chromedp's stock cancellation SIGKILLs only the browser process; a
+renderer/gpu/utility child that cannot observe the dead IPC channel (wedged in artwork
+JS mid-abort, blocked in the kernel) survives it, reparents to container PID 1 — the
+indexer binary, which does not reap — and keeps the `chromedp-runner` user-data dir
+undeletable. On prod this leaked 433 chromium processes and 780 user-data dirs in 36 h.
+Each browser is therefore launched as its own process-group leader and teardown SIGKILLs
+the group. Regression-tested against real chromium (`TestChromiumTeardown*` in the
+chromium-tagged suite; the SIGSTOP variant models the undetectable-death child and fails
+under stock chromedp teardown). Residual gap: children of a browser that crashed on its
+own die as zombies against PID 1 — the deployment's `init: true` reaper is the backstop
+for those, and core-dump disk growth from crashing children is capped deploy-side with
+`ulimits.core: 0` (ff-deploy#23).
+
 **Accepted L1 coverage gap: public IPFS gateways block headless browsers.** ipfs.io and
 dweb.link (same operator, Interplanetary Shipyard) serve every request from the probe's
 chromium an HTTP 410 page ("Gone, see
