@@ -558,6 +558,39 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 		assert.NoError(t, validateRenderProbeConfig(&cfg, true, "media_index"))
 	})
 
+	// A non-positive interval makes its scheduling path immediately due forever — for
+	// no_evidence_recheck_interval that is exactly the budget-burn loop the knob exists
+	// to close (persistently blocked gateways re-probed back-to-back), so misconfiguring
+	// it must fail at startup, not ship as a silent regression to the old behavior.
+	t.Run("non-positive intervals are rejected", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			mutate  func(*RenderProbeConfig)
+			wantErr string
+		}{
+			{"zero recheck", func(c *RenderProbeConfig) { c.RecheckInterval = 0 },
+				"render_probe.recheck_interval must be positive"},
+			{"zero retry", func(c *RenderProbeConfig) { c.RetryInterval = 0 },
+				"render_probe.retry_interval must be positive"},
+			{"zero broken recheck", func(c *RenderProbeConfig) { c.BrokenRecheckInterval = 0 },
+				"render_probe.broken_recheck_interval must be positive"},
+			{"zero no-evidence recheck", func(c *RenderProbeConfig) { c.NoEvidenceRecheckInterval = 0 },
+				"render_probe.no_evidence_recheck_interval must be positive"},
+			{"negative no-evidence recheck", func(c *RenderProbeConfig) { c.NoEvidenceRecheckInterval = -time.Hour },
+				"render_probe.no_evidence_recheck_interval must be positive"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := base
+				cfg.EgressRestricted = true
+				tc.mutate(&cfg)
+				err := validateRenderProbeConfig(&cfg, true, "media_index")
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+			})
+		}
+	})
+
 	// enabled defaults to true, so it is not an operator statement of intent —
 	// media_enabled is. A lightweight deployment must start with the default-enabled
 	// probe inert, not fail; even a bad egress/threshold config is unreachable there.
