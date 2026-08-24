@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/feral-file/ff-indexer-v2/internal/media/phash"
+	"github.com/feral-file/ff-indexer-v2/internal/media/probe"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
@@ -111,6 +112,13 @@ tezos:
 	// hide a token until an operator deliberately flips enforce.
 	assert.True(t, cfg.RenderProbe.Enabled, "probe observes by default")
 	assert.False(t, cfg.RenderProbe.Enforce, "shadow mode by default — enforcement is an explicit decision")
+	// timeout_ms: 0 is a supported "use the renderer default" path (validated on
+	// effective values), so the viper default and probe.DefaultTimeoutMs must be the
+	// same number — if they drift, an explicit zero silently buys a different render
+	// budget than an unset knob (bot finding F1 on #138: the 90s widening left the
+	// renderer fallback at 45s). Nothing but this assertion couples the two literals.
+	assert.Equal(t, probe.DefaultTimeoutMs, cfg.RenderProbe.TimeoutMs,
+		"render_probe.timeout_ms default must match probe.DefaultTimeoutMs")
 }
 
 // TestModerationSweeperDefaultMatchesStoreConstant anchors the config default to
@@ -290,6 +298,7 @@ FF_INDEXER_ETHEREUM_RPC_URL=https://rpc.example.com
 FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://ws.example.com
 FF_INDEXER_TEZOS_API_URL=https://api.tzkt.io
 FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
+FF_INDEXER_RENDER_PROBE_NO_EVIDENCE_RECHECK_INTERVAL=42h
 `
 	require.NoError(t, os.WriteFile(envFile, []byte(envContent), 0600))
 
@@ -319,6 +328,12 @@ database:
 	assert.Equal(t, "require", cfg.Database.SSLMode)
 	assert.Equal(t, "https://api.tzkt.io", cfg.Tezos.APIURL)
 	assert.Equal(t, "wss://ws.tzkt.io", cfg.Tezos.WebSocketURL)
+	// Every render_probe knob must be reachable from environment-only deployments:
+	// bindAllEnvVars is an explicit allowlist, so a key left off it silently ignores
+	// its env var (bot finding on #138 — no_evidence_recheck_interval was unbound,
+	// making the production cadence untunable without a config-file change).
+	assert.Equal(t, 42*time.Hour, cfg.RenderProbe.NoEvidenceRecheckInterval,
+		"render_probe.no_evidence_recheck_interval must be bound in bindAllEnvVars")
 }
 
 func TestLoadAppConfig_FxhashRateLimiterFromEnv(t *testing.T) {
@@ -536,12 +551,13 @@ func TestMediaHealthSweeperConfig_EffectiveURI(t *testing.T) {
 // SSRF path.
 func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 	base := RenderProbeConfig{
-		Enabled:               true,
-		BatchSize:             20,
-		FailureGateThreshold:  2,
-		RecheckInterval:       168 * time.Hour,
-		RetryInterval:         time.Hour,
-		BrokenRecheckInterval: 24 * time.Hour,
+		Enabled:                   true,
+		BatchSize:                 20,
+		FailureGateThreshold:      2,
+		RecheckInterval:           168 * time.Hour,
+		RetryInterval:             time.Hour,
+		BrokenRecheckInterval:     24 * time.Hour,
+		NoEvidenceRecheckInterval: 168 * time.Hour,
 	}
 
 	t.Run("enabled without egress restriction is rejected", func(t *testing.T) {
@@ -555,6 +571,39 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 		cfg := base
 		cfg.EgressRestricted = true
 		assert.NoError(t, validateRenderProbeConfig(&cfg, true, "media_index"))
+	})
+
+	// A non-positive interval makes its scheduling path immediately due forever — for
+	// no_evidence_recheck_interval that is exactly the budget-burn loop the knob exists
+	// to close (persistently blocked gateways re-probed back-to-back), so misconfiguring
+	// it must fail at startup, not ship as a silent regression to the old behavior.
+	t.Run("non-positive intervals are rejected", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			mutate  func(*RenderProbeConfig)
+			wantErr string
+		}{
+			{"zero recheck", func(c *RenderProbeConfig) { c.RecheckInterval = 0 },
+				"render_probe.recheck_interval must be positive"},
+			{"zero retry", func(c *RenderProbeConfig) { c.RetryInterval = 0 },
+				"render_probe.retry_interval must be positive"},
+			{"zero broken recheck", func(c *RenderProbeConfig) { c.BrokenRecheckInterval = 0 },
+				"render_probe.broken_recheck_interval must be positive"},
+			{"zero no-evidence recheck", func(c *RenderProbeConfig) { c.NoEvidenceRecheckInterval = 0 },
+				"render_probe.no_evidence_recheck_interval must be positive"},
+			{"negative no-evidence recheck", func(c *RenderProbeConfig) { c.NoEvidenceRecheckInterval = -time.Hour },
+				"render_probe.no_evidence_recheck_interval must be positive"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := base
+				cfg.EgressRestricted = true
+				tc.mutate(&cfg)
+				err := validateRenderProbeConfig(&cfg, true, "media_index")
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+			})
+		}
 	})
 
 	// enabled defaults to true, so it is not an operator statement of intent —

@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/media/probe"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
@@ -49,6 +50,12 @@ type RenderProbeExecutorConfig struct {
 	// BrokenRecheckInterval schedules the next probe after gating; the probe is the only
 	// healer of render-gated rows (L0 skips them), so this also bounds heal latency.
 	BrokenRecheckInterval time.Duration
+	// NoEvidenceRecheckInterval schedules the next probe after a no-evidence outcome (a
+	// non-2xx served error page or an SSRF policy refusal). These outcomes never gate, so
+	// this bounds nothing but wasted work: a public gateway's persistent HTTP 410 does not
+	// lift on the gated cadence, and rechecking the blocked population daily starved
+	// coverage of never-probed URLs. Longer than BrokenRecheckInterval on purpose.
+	NoEvidenceRecheckInterval time.Duration
 	// Enforce turns render verdicts into viewability gates. False is shadow mode: the
 	// probe renders, classifies, debounces, and records everything exactly as
 	// enforcement would — verdicts, counters, pHashes — but never writes a gate, so
@@ -143,8 +150,17 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 	// here avoids launching a browser context at all.
 	if e.ssrfValidator != nil {
 		if err := e.ssrfValidator.ValidateHTTPURL(ctx, url); err != nil {
+			// A resolver failure is transient infrastructure, not a policy verdict —
+			// the ssrf package keeps ErrResolutionFailed distinct from ErrBlocked for
+			// exactly this attribution. Both paths preserve all probe state; only the
+			// recheck cadence differs: a policy block is durable (slow reprobe), a DNS
+			// blip is not (an L0-healthy URL must not lose a week of L1 coverage to it).
+			interval := e.noEvidenceInterval(wasGated)
+			if errors.Is(err, ssrf.ErrResolutionFailed) {
+				interval = e.cfg.RetryInterval
+			}
 			logger.WarnCtx(ctx, "Render probe refused by SSRF policy", zap.String("url", url), zap.Error(err))
-			return e.recordNoEvidence(ctx, url, fmt.Sprintf("ssrf policy refused render: %v", err), prev, now)
+			return e.recordNoEvidence(ctx, url, fmt.Sprintf("ssrf policy refused render: %v", err), prev, now, interval)
 		}
 	}
 
@@ -227,7 +243,8 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			zap.Int("main_status", capture.MainStatus),
 		)
 		return e.recordNoEvidence(ctx, url,
-			fmt.Sprintf("main document returned HTTP %d; frame not classified", capture.MainStatus), prev, now)
+			fmt.Sprintf("main document returned HTTP %d; frame not classified", capture.MainStatus),
+			prev, now, e.noEvidenceInterval(wasGated))
 	}
 
 	classification, err := probe.Classify(capture.Image, e.cfg.Fingerprints, e.cfg.BlankVarianceThreshold)
@@ -389,6 +406,20 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 // hammered by immediate retries, short enough that a transient blip costs one delay.
 const browserUnavailableRetryDelay = 5 * time.Minute
 
+// noEvidenceInterval picks the recheck cadence for a no-evidence outcome by what the
+// row's gate state makes of it. Ungated: NoEvidenceRecheckInterval — the condition is
+// durable (a fingerprint-keyed gateway block) and a faster cadence only re-confirms it.
+// Gated: BrokenRecheckInterval — the probe is a gated row's ONLY healer, and that
+// interval is the documented bound on heal latency; stretching a gated row's recheck to
+// the slow no-evidence cadence would keep recovered artwork hidden for up to a week
+// after a transient gateway failure (#138 bot F2).
+func (e *renderProbeExecutor) noEvidenceInterval(wasGated bool) time.Duration {
+	if wasGated {
+		return e.cfg.BrokenRecheckInterval
+	}
+	return e.cfg.NoEvidenceRecheckInterval
+}
+
 // recordNoEvidence persists a probe attempt that produced no evidence about the artwork
 // (SSRF policy refusal, or a main document served with a non-2xx status): the attempt
 // and its reason are recorded, but verdict, failure counter, gate marker, and the last
@@ -399,15 +430,16 @@ const browserUnavailableRetryDelay = 5 * time.Minute
 // would never heal the health row. First-ever attempts record a stalled verdict (the
 // closest existing category; a new enum value is not worth a migration) with the counter
 // still at zero, so no-evidence outcomes can never accumulate toward the gate threshold.
-// Constraints: next_check_at moves a full BrokenRecheckInterval out — for persistent
-// conditions (ipfs.io's bot-block of headless browsers) hourly retries would only burn
-// render capacity, and for gated rows this matches their existing recheck cadence.
-func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, now time.Time) error {
+// Constraints: the caller picks the recheck interval because it knows the condition's
+// durability — noEvidenceInterval for served error pages and policy refusals (slow for
+// ungated rows, heal-cadence for gated ones), RetryInterval for transient resolver
+// failures where a slow cadence would cost healthy URLs a week of L1 coverage.
+func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, now time.Time, recheckIn time.Duration) error {
 	row := schema.MediaRenderProbe{
 		MediaURL:    url,
 		Verdict:     schema.RenderProbeVerdictStalled,
 		LastError:   &errMsg,
-		NextCheckAt: now.Add(e.cfg.BrokenRecheckInterval),
+		NextCheckAt: now.Add(recheckIn),
 	}
 	if prev != nil {
 		row.Verdict = prev.Verdict

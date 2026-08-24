@@ -18,6 +18,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/media/probe"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
@@ -27,12 +28,13 @@ import (
 // consecutive failures, distinct intervals so next_check_at assertions can tell which
 // path scheduled the row.
 var renderProbeTestConfig = workflows.RenderProbeExecutorConfig{
-	BlankVarianceThreshold: 0.001,
-	FailureGateThreshold:   2,
-	RecheckInterval:        168 * time.Hour,
-	RetryInterval:          time.Hour,
-	BrokenRecheckInterval:  24 * time.Hour,
-	Enforce:                true, // most tests assert enforcement; shadow has its own suite
+	BlankVarianceThreshold:    0.001,
+	FailureGateThreshold:      2,
+	RecheckInterval:           168 * time.Hour,
+	RetryInterval:             time.Hour,
+	BrokenRecheckInterval:     24 * time.Hour,
+	NoEvidenceRecheckInterval: 72 * time.Hour, // distinct from the others so no-evidence rows are identifiable
+	Enforce:                   true,           // most tests assert enforcement; shadow has its own suite
 }
 
 type renderProbeMocks struct {
@@ -325,6 +327,35 @@ func TestExecuteRenderProbe_ssrfRefusalRecordsWithoutCounting(t *testing.T) {
 		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
 			assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict)
 			assert.Equal(t, 0, row.ConsecutiveFailures, "policy refusal is not render evidence")
+			require.NotNil(t, row.LastError)
+			assert.Contains(t, *row.LastError, "ssrf policy refused")
+			assert.Equal(t, m.now.Add(renderProbeTestConfig.NoEvidenceRecheckInterval), row.NextCheckAt,
+				"a policy block is durable — slow reprobe cadence")
+			return nil
+		})
+
+	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+}
+
+// TestExecuteRenderProbe_dnsResolutionFailureRetriesSoon pins the cadence split inside
+// the SSRF validation path (bot finding F2 on #138): ssrf.ErrResolutionFailed is a
+// transient resolver failure, not a policy verdict, so it must ride the short
+// RetryInterval — the long no-evidence cadence would cost an L0-healthy URL a week of
+// L1 coverage per DNS blip. State preservation is identical to a policy refusal.
+func TestExecuteRenderProbe_dnsResolutionFailureRetriesSoon(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://flaky-resolver.example/work.html"
+
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).
+		Return(fmt.Errorf("%w: DNS resolution failed for host %q", ssrf.ErrResolutionFailed, "flaky-resolver.example"))
+
+	m.store.EXPECT().
+		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+			assert.Equal(t, 0, row.ConsecutiveFailures, "a resolver failure is not render evidence")
+			assert.Equal(t, m.now.Add(renderProbeTestConfig.RetryInterval), row.NextCheckAt,
+				"transient resolver failure — short retry, not the no-evidence cadence")
 			require.NotNil(t, row.LastError)
 			assert.Contains(t, *row.LastError, "ssrf policy refused")
 			return nil
@@ -812,7 +843,7 @@ func TestExecuteRenderProbe_non2xxMainStatusRecordsWithoutCounting(t *testing.T)
 			assert.Nil(t, row.BaselinePhash, "an error page must never seed the baseline")
 			require.NotNil(t, row.LastError)
 			assert.Contains(t, *row.LastError, "HTTP 410")
-			assert.Equal(t, m.now.Add(renderProbeTestConfig.BrokenRecheckInterval), row.NextCheckAt)
+			assert.Equal(t, m.now.Add(renderProbeTestConfig.NoEvidenceRecheckInterval), row.NextCheckAt)
 			return nil
 		})
 
@@ -858,6 +889,9 @@ func TestExecuteRenderProbe_non2xxMainStatusPreservesExistingState(t *testing.T)
 			assert.Equal(t, captured, *row.CapturedAt)
 			require.NotNil(t, row.LastError)
 			assert.Contains(t, *row.LastError, "HTTP 429")
+			assert.Equal(t, m.now.Add(renderProbeTestConfig.BrokenRecheckInterval), row.NextCheckAt,
+				"a gated row keeps its heal cadence — the probe is its only healer, so the "+
+					"slow no-evidence interval would hide recovered artwork for a week")
 			return nil
 		})
 

@@ -312,6 +312,18 @@ type RenderProbeConfig struct {
 	// BrokenRecheckInterval schedules the next probe after gating (also bounds heal
 	// latency — the render probe is the only healer of render-gated rows)
 	BrokenRecheckInterval time.Duration `mapstructure:"broken_recheck_interval"`
+	// NoEvidenceRecheckInterval schedules the next probe after a no-evidence outcome on
+	// an UNGATED row — a non-2xx served error page (e.g. a public gateway's persistent
+	// HTTP 410 bot-block) or an SSRF policy refusal. Such an attempt says nothing about
+	// the artwork and its cause does not change on a faster cadence, so it reprobes on a
+	// slow interval. Sized long deliberately: public IPFS gateways that block headless
+	// chromium are the dominant population, and rechecking them daily spent the bulk of
+	// the render budget re-confirming the same block instead of covering new URLs.
+	// Exceptions: a gated row keeps BrokenRecheckInterval (the probe is its only healer,
+	// so that interval remains the heal-latency bound even when a recheck lands on a
+	// served error page), and a transient DNS resolution failure uses RetryInterval in
+	// both states.
+	NoEvidenceRecheckInterval time.Duration `mapstructure:"no_evidence_recheck_interval"`
 	// KnownBadFingerprints are pHashes of known-bad renders; matches gate immediately
 	KnownBadFingerprints []RenderProbeFingerprintConfig `mapstructure:"known_bad_fingerprints"`
 	// NoSandbox disables chromium's sandbox. Only for runtimes that cannot support it
@@ -751,6 +763,9 @@ func validateRenderProbeConfig(c *RenderProbeConfig, mediaEnabled bool, mediaQue
 	if c.BrokenRecheckInterval <= 0 {
 		invalid = append(invalid, "render_probe.broken_recheck_interval must be positive")
 	}
+	if c.NoEvidenceRecheckInterval <= 0 {
+		invalid = append(invalid, "render_probe.no_evidence_recheck_interval must be positive")
+	}
 	for _, fp := range c.KnownBadFingerprints {
 		cleaned := strings.TrimPrefix(strings.TrimSpace(strings.ToLower(fp.Phash)), "0x")
 		if cleaned == "" || len(cleaned) > 16 {
@@ -964,7 +979,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("render_probe.batch_size", 20)
 	v.SetDefault("render_probe.viewport_width", 1024)
 	v.SetDefault("render_probe.viewport_height", 1024)
-	v.SetDefault("render_probe.timeout_ms", 45000)
+	v.SetDefault("render_probe.timeout_ms", 90000)
 	v.SetDefault("render_probe.settle_ms", 15000)
 	v.SetDefault("render_probe.image_settle_ms", 2000)
 	v.SetDefault("render_probe.blank_variance_threshold", 0.001)
@@ -972,6 +987,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("render_probe.recheck_interval", "168h")
 	v.SetDefault("render_probe.retry_interval", "1h")
 	v.SetDefault("render_probe.broken_recheck_interval", "24h")
+	v.SetDefault("render_probe.no_evidence_recheck_interval", "168h")
 	v.SetDefault("render_probe.no_sandbox", false)
 	v.SetDefault("render_probe.egress_restricted", false)
 	v.SetDefault("max_image_size", 10*1024*1024)
@@ -1192,6 +1208,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"render_probe.recheck_interval",
 		"render_probe.retry_interval",
 		"render_probe.broken_recheck_interval",
+		"render_probe.no_evidence_recheck_interval",
 		"render_probe.no_sandbox",
 		"render_probe.egress_restricted",
 		// Media Health Sweeper config

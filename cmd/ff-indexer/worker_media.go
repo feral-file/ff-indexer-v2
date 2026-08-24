@@ -194,14 +194,15 @@ func registerWorkerMedia(
 			wcfg.Jobs.TokenQueue,
 			adapter.NewClock(),
 			workflows.RenderProbeExecutorConfig{
-				BlankVarianceThreshold: wcfg.RenderProbe.BlankVarianceThreshold,
-				FailureGateThreshold:   wcfg.RenderProbe.FailureGateThreshold,
-				RecheckInterval:        wcfg.RenderProbe.RecheckInterval,
-				RetryInterval:          wcfg.RenderProbe.RetryInterval,
-				BrokenRecheckInterval:  wcfg.RenderProbe.BrokenRecheckInterval,
-				Enforce:                wcfg.RenderProbe.Enforce,
-				ImageSettleMs:          wcfg.RenderProbe.ImageSettleMs,
-				Fingerprints:           fingerprints,
+				BlankVarianceThreshold:    wcfg.RenderProbe.BlankVarianceThreshold,
+				FailureGateThreshold:      wcfg.RenderProbe.FailureGateThreshold,
+				RecheckInterval:           wcfg.RenderProbe.RecheckInterval,
+				RetryInterval:             wcfg.RenderProbe.RetryInterval,
+				BrokenRecheckInterval:     wcfg.RenderProbe.BrokenRecheckInterval,
+				NoEvidenceRecheckInterval: wcfg.RenderProbe.NoEvidenceRecheckInterval,
+				Enforce:                   wcfg.RenderProbe.Enforce,
+				ImageSettleMs:             wcfg.RenderProbe.ImageSettleMs,
+				Fingerprints:              fingerprints,
 			},
 		)
 	}

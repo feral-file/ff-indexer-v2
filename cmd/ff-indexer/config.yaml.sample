@@ -226,7 +226,11 @@ render_probe:
   viewport_height: 1024
   # Must exceed settle_ms by at least 5s (validated at startup): the timeout covers
   # navigate + settle + screenshot, and less headroom guarantees stalled verdicts.
-  timeout_ms: 45000
+  # Sized for load-heavy generative works: at 45s, shadow data showed works whose sibling
+  # renders succeeded still timing out here (navigation/subresource load, not settle, ate
+  # the budget), gating viewable art. The cost is bounded — only the slow tail spends the
+  # extra time; a fast render returns as soon as it settles.
+  timeout_ms: 90000
   # How long the page keeps running after load before the capture. Generous on purpose:
   # the blank debounce only protects against transient blanks — a work that
   # deterministically needs longer than this window would be gated on its second probe
@@ -254,6 +258,17 @@ render_probe:
   recheck_interval: 168h
   retry_interval: 1h
   broken_recheck_interval: 24h
+  # Recheck cadence for no-evidence outcomes on UNGATED rows: a non-2xx served error
+  # page (e.g. a public IPFS gateway's persistent HTTP 410 bot-block) or an SSRF policy
+  # refusal. These never gate — they record the attempt and preserve prior state — so
+  # this only paces wasted work. Long on purpose: the blocked-gateway population is
+  # large and its cause does not lift on any faster cadence, so a 24h recheck spent most
+  # of the render budget re-confirming the same block instead of covering never-probed
+  # URLs. Two exceptions: an already-gated row keeps broken_recheck_interval (the probe
+  # is its only healer, so that stays the heal-latency bound even when a recheck lands
+  # on a served error page), and transient DNS resolution failures retry on
+  # retry_interval in both states.
+  no_evidence_recheck_interval: 168h
   # pHashes of known-bad renders (gateway error pages, directory listings, placeholders).
   # Capture the offending page once, compute its pHash, and list it here. Keep
   # max_distance small (4-8): a loose tolerance matches real art and hides it.

@@ -3690,15 +3690,25 @@ func (s *pgStore) UpsertMediaRenderProbe(ctx context.Context, probe schema.Media
 			return fmt.Errorf("failed to read current gate marker: %w", err)
 		}
 		probe.HealthGated = current.HealthGated // false when no row exists
-		// A gated row also keeps its urgent schedule. The stale-success shape: an
-		// executor snapshots an ungated row, renders for many seconds, and meanwhile a
-		// recovered/concurrent execution gates the URL from FRESHER evidence; the stale
-		// success then lands here as an observation. Releasing on it would undo newer
-		// negative evidence — wrong direction — but letting it overwrite next_check_at
-		// with the routine recheck would postpone the gate's healing probe from hours to
-		// a week. Taking the earlier of the two preserves the urgent cadence (and never
-		// delays: an earlier observation schedule just heals sooner).
-		if current.HealthGated && current.NextCheckAt.Before(probe.NextCheckAt) {
+		// A gated row also keeps its urgent schedule — but only while that schedule is
+		// still outstanding. The stale-success shape: an executor snapshots an ungated
+		// row, renders for many seconds, and meanwhile a recovered/concurrent execution
+		// gates the URL from FRESHER evidence; the stale success then lands here as an
+		// observation. Releasing on it would undo newer negative evidence — wrong
+		// direction — but letting it overwrite next_check_at with the routine recheck
+		// would postpone the gate's healing probe from hours to a week. Taking the
+		// earlier of the two preserves the urgent cadence (and never delays: an earlier
+		// observation schedule just heals sooner).
+		//
+		// The future-only guard closes the other direction (#138 bot F2): a PAST gate
+		// deadline means this write IS the due execution's own reschedule — a stale
+		// writer cannot land on one, because gates are acquired with a fresh
+		// BrokenRecheckInterval deadline and renders finish in minutes, not the day it
+		// would take that deadline to lapse. Unconditionally keeping the earlier value
+		// pinned such rows due forever: re-selected at top sweep priority every cycle,
+		// burning render capacity on the same blocked URL.
+		if current.HealthGated && current.NextCheckAt.After(time.Now()) &&
+			current.NextCheckAt.Before(probe.NextCheckAt) {
 			probe.NextCheckAt = current.NextCheckAt
 		}
 		return upsertMediaRenderProbeTx(tx, probe)
