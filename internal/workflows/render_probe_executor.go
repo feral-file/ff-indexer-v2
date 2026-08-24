@@ -155,7 +155,7 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			// exactly this attribution. Both paths preserve all probe state; only the
 			// recheck cadence differs: a policy block is durable (slow reprobe), a DNS
 			// blip is not (an L0-healthy URL must not lose a week of L1 coverage to it).
-			interval := e.cfg.NoEvidenceRecheckInterval
+			interval := e.noEvidenceInterval(wasGated)
 			if errors.Is(err, ssrf.ErrResolutionFailed) {
 				interval = e.cfg.RetryInterval
 			}
@@ -244,7 +244,7 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		)
 		return e.recordNoEvidence(ctx, url,
 			fmt.Sprintf("main document returned HTTP %d; frame not classified", capture.MainStatus),
-			prev, now, e.cfg.NoEvidenceRecheckInterval)
+			prev, now, e.noEvidenceInterval(wasGated))
 	}
 
 	classification, err := probe.Classify(capture.Image, e.cfg.Fingerprints, e.cfg.BlankVarianceThreshold)
@@ -406,6 +406,20 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 // hammered by immediate retries, short enough that a transient blip costs one delay.
 const browserUnavailableRetryDelay = 5 * time.Minute
 
+// noEvidenceInterval picks the recheck cadence for a no-evidence outcome by what the
+// row's gate state makes of it. Ungated: NoEvidenceRecheckInterval — the condition is
+// durable (a fingerprint-keyed gateway block) and a faster cadence only re-confirms it.
+// Gated: BrokenRecheckInterval — the probe is a gated row's ONLY healer, and that
+// interval is the documented bound on heal latency; stretching a gated row's recheck to
+// the slow no-evidence cadence would keep recovered artwork hidden for up to a week
+// after a transient gateway failure (#138 bot F2).
+func (e *renderProbeExecutor) noEvidenceInterval(wasGated bool) time.Duration {
+	if wasGated {
+		return e.cfg.BrokenRecheckInterval
+	}
+	return e.cfg.NoEvidenceRecheckInterval
+}
+
 // recordNoEvidence persists a probe attempt that produced no evidence about the artwork
 // (SSRF policy refusal, or a main document served with a non-2xx status): the attempt
 // and its reason are recorded, but verdict, failure counter, gate marker, and the last
@@ -417,10 +431,9 @@ const browserUnavailableRetryDelay = 5 * time.Minute
 // closest existing category; a new enum value is not worth a migration) with the counter
 // still at zero, so no-evidence outcomes can never accumulate toward the gate threshold.
 // Constraints: the caller picks the recheck interval because it knows the condition's
-// durability — NoEvidenceRecheckInterval for persistent conditions (ipfs.io's bot-block
-// of headless browsers, policy refusals) where a faster cadence only burns render
-// capacity re-confirming the same outcome, RetryInterval for transient ones (resolver
-// failures) where a slow cadence would cost healthy URLs a week of L1 coverage.
+// durability — noEvidenceInterval for served error pages and policy refusals (slow for
+// ungated rows, heal-cadence for gated ones), RetryInterval for transient resolver
+// failures where a slow cadence would cost healthy URLs a week of L1 coverage.
 func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, now time.Time, recheckIn time.Duration) error {
 	row := schema.MediaRenderProbe{
 		MediaURL:    url,

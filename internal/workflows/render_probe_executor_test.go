@@ -889,6 +889,9 @@ func TestExecuteRenderProbe_non2xxMainStatusPreservesExistingState(t *testing.T)
 			assert.Equal(t, captured, *row.CapturedAt)
 			require.NotNil(t, row.LastError)
 			assert.Contains(t, *row.LastError, "HTTP 429")
+			assert.Equal(t, m.now.Add(renderProbeTestConfig.BrokenRecheckInterval), row.NextCheckAt,
+				"a gated row keeps its heal cadence — the probe is its only healer, so the "+
+					"slow no-evidence interval would hide recovered artwork for a week")
 			return nil
 		})
 

@@ -1204,6 +1204,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"render_probe.recheck_interval",
 		"render_probe.retry_interval",
 		"render_probe.broken_recheck_interval",
+		"render_probe.no_evidence_recheck_interval",
 		"render_probe.no_sandbox",
 		"render_probe.egress_restricted",
 		// Media Health Sweeper config

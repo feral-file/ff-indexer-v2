@@ -6056,15 +6056,18 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 
 		// Acquire the gate for real, then write an observation claiming ungated: the
 		// stale-loaded-marker shape, in the direction that would clear a live gate.
+		// The gate's own deadline is in the near future, as in production: acquisition
+		// always schedules a fresh BrokenRecheckInterval-style heal deadline.
+		gateDeadline := time.Now().UTC().Add(24 * time.Hour)
 		reason := schema.RenderFailureBlank
 		_, err = store.AcquireRenderGate(ctx, schema.MediaRenderProbe{
 			MediaURL: obsURL, Verdict: schema.RenderProbeVerdictBlank,
-			ConsecutiveFailures: 2, CapturedAt: &past, NextCheckAt: past,
+			ConsecutiveFailures: 2, CapturedAt: &past, NextCheckAt: gateDeadline,
 		}, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true})
 		require.NoError(t, err)
 		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
 			MediaURL: obsURL, Verdict: schema.RenderProbeVerdictStalled,
-			ConsecutiveFailures: 3, HealthGated: false, CapturedAt: &past, NextCheckAt: past,
+			ConsecutiveFailures: 3, HealthGated: false, CapturedAt: &past, NextCheckAt: gateDeadline,
 		}))
 		row, err = store.GetMediaRenderProbe(ctx, obsURL)
 		require.NoError(t, err)
@@ -6100,6 +6103,30 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		require.NotNil(t, row)
 		assert.WithinDuration(t, sooner, row.NextCheckAt, time.Second,
 			"an earlier observation schedule is kept — it only heals sooner")
+
+		// The due-gate reschedule (#138 bot F2): once the gate's deadline has LAPSED,
+		// the next write is the due execution's own reschedule, not a stale racer — a
+		// stale success cannot land on a past deadline in production (gates are
+		// acquired with a fresh future heal deadline and renders finish in minutes).
+		// Pinning the earlier (past) value would keep the row due forever, re-selected
+		// at top sweep priority every cycle: the masked hot-loop.
+		lapsed := time.Now().UTC().Add(-time.Minute)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: obsURL, Verdict: schema.RenderProbeVerdictStalled,
+			ConsecutiveFailures: 3, CapturedAt: &past, NextCheckAt: lapsed,
+		}))
+		healLater := time.Now().UTC().Add(24 * time.Hour)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: obsURL, Verdict: schema.RenderProbeVerdictStalled,
+			ConsecutiveFailures: 3, CapturedAt: &past, NextCheckAt: healLater,
+		}))
+		row, err = store.GetMediaRenderProbe(ctx, obsURL)
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		assert.True(t, row.HealthGated, "the gate itself is untouched by the reschedule")
+		assert.WithinDuration(t, healLater, row.NextCheckAt, time.Second,
+			"a lapsed gate deadline must not pin the row due forever — the due "+
+				"execution's own reschedule wins")
 	})
 
 	t.Run("GetHealthGatedRenderProbes lists only held gates and release drains it", func(t *testing.T) {
