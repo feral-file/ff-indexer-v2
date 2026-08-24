@@ -312,13 +312,17 @@ type RenderProbeConfig struct {
 	// BrokenRecheckInterval schedules the next probe after gating (also bounds heal
 	// latency — the render probe is the only healer of render-gated rows)
 	BrokenRecheckInterval time.Duration `mapstructure:"broken_recheck_interval"`
-	// NoEvidenceRecheckInterval schedules the next probe after a no-evidence outcome — a
-	// non-2xx served error page (e.g. a public gateway's persistent HTTP 410 bot-block)
-	// or an SSRF policy refusal. Such an attempt says nothing about the artwork and its
-	// cause does not change on the gated cadence, so it reprobes on a slow interval rather
-	// than BrokenRecheckInterval. Sized long deliberately: public IPFS gateways that block
-	// headless chromium are the dominant population, and rechecking them daily spent the
-	// bulk of the render budget re-confirming the same block instead of covering new URLs.
+	// NoEvidenceRecheckInterval schedules the next probe after a no-evidence outcome on
+	// an UNGATED row — a non-2xx served error page (e.g. a public gateway's persistent
+	// HTTP 410 bot-block) or an SSRF policy refusal. Such an attempt says nothing about
+	// the artwork and its cause does not change on a faster cadence, so it reprobes on a
+	// slow interval. Sized long deliberately: public IPFS gateways that block headless
+	// chromium are the dominant population, and rechecking them daily spent the bulk of
+	// the render budget re-confirming the same block instead of covering new URLs.
+	// Exceptions: a gated row keeps BrokenRecheckInterval (the probe is its only healer,
+	// so that interval remains the heal-latency bound even when a recheck lands on a
+	// served error page), and a transient DNS resolution failure uses RetryInterval in
+	// both states.
 	NoEvidenceRecheckInterval time.Duration `mapstructure:"no_evidence_recheck_interval"`
 	// KnownBadFingerprints are pHashes of known-bad renders; matches gate immediately
 	KnownBadFingerprints []RenderProbeFingerprintConfig `mapstructure:"known_bad_fingerprints"`

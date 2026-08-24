@@ -258,13 +258,16 @@ render_probe:
   recheck_interval: 168h
   retry_interval: 1h
   broken_recheck_interval: 24h
-  # Recheck cadence for no-evidence outcomes: a non-2xx served error page (e.g. a public
-  # IPFS gateway's persistent HTTP 410 bot-block) or an SSRF policy refusal. These never
-  # gate — they record the attempt and preserve prior state — so this only paces wasted
-  # work. Long on purpose: the blocked-gateway population is large and its cause does not
-  # lift on any faster cadence, so a 24h recheck spent most of the render budget
-  # re-confirming the same block instead of covering never-probed URLs. Transient DNS
-  # resolution failures are the exception: they retry on retry_interval instead.
+  # Recheck cadence for no-evidence outcomes on UNGATED rows: a non-2xx served error
+  # page (e.g. a public IPFS gateway's persistent HTTP 410 bot-block) or an SSRF policy
+  # refusal. These never gate — they record the attempt and preserve prior state — so
+  # this only paces wasted work. Long on purpose: the blocked-gateway population is
+  # large and its cause does not lift on any faster cadence, so a 24h recheck spent most
+  # of the render budget re-confirming the same block instead of covering never-probed
+  # URLs. Two exceptions: an already-gated row keeps broken_recheck_interval (the probe
+  # is its only healer, so that stays the heal-latency bound even when a recheck lands
+  # on a served error page), and transient DNS resolution failures retry on
+  # retry_interval in both states.
   no_evidence_recheck_interval: 168h
   # pHashes of known-bad renders (gateway error pages, directory listings, placeholders).
   # Capture the offending page once, compute its pHash, and list it here. Keep

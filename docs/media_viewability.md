@@ -205,12 +205,15 @@ still counted as `stalled`/`blank`:
   frame when it is not 2xx: the attempt is recorded with the status in `last_error`,
   the previous verdict/counter/gate/capture state is preserved (same contract as an
   SSRF policy refusal), and `next_check_at` moves a `no_evidence_recheck_interval` out
-  (longer than `broken_recheck_interval`: a fingerprint-keyed gateway block does not lift
-  on any faster cadence, so a shorter interval only burns render budget re-confirming it
-  and starves coverage of never-probed URLs). One exception inside the SSRF path: a DNS
-  resolution failure (`ssrf.ErrResolutionFailed`) is transient infrastructure, not a
-  policy verdict, so it rides the short `retry_interval` instead — the slow cadence
-  would cost an L0-healthy URL a week of L1 coverage per resolver blip.
+  for ungated rows (longer than `broken_recheck_interval`: a fingerprint-keyed gateway
+  block does not lift on any faster cadence, so a shorter interval only burns render
+  budget re-confirming it and starves coverage of never-probed URLs). Two exceptions:
+  an already-gated row keeps `broken_recheck_interval` — the probe is a gated row's
+  only healer, so that interval remains the heal-latency bound even when a recheck
+  lands on a served error page — and a DNS resolution failure
+  (`ssrf.ErrResolutionFailed`) is transient infrastructure, not a policy verdict, so it
+  rides the short `retry_interval` in both states rather than costing an L0-healthy URL
+  a week of L1 coverage per resolver blip.
   Measured production shape: ipfs.io's HTTP 410 bot-block page — one line of text on
   white, variance ~0.00096 — classified 1,692 distinct healthy artworks as `blank`,
   all sharing pHash `0xb636363636363634`.
