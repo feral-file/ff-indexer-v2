@@ -93,24 +93,29 @@ func stopOneRenderer(t *testing.T, browserPid int, deadline time.Time) int {
 // incident) must still be killed by teardown, and the user-data dir must be removed.
 // With chromedp's stock cancel this leaks the stopped renderer unconditionally.
 func TestChromiumTeardownStoppedRenderer(t *testing.T) {
+	// A wedged page keeps the renderer alive and the probe blocked in WaitReady until
+	// the test decides to tear down, so there is no race against a fast successful
+	// render on a warm host.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(`<html><body style="margin:0">` +
-			`<div style="width:100vw;height:100vh;background:linear-gradient(135deg,#0af,#f0a)"></div>` +
-			`</body></html>`))
+		_, _ = w.Write([]byte(`<html><body style="background:#123"><script>for(;;){}</script></body></html>`))
 	}))
 	defer srv.Close()
 
 	rec := &cmdRecorder{}
-	// Settle long enough (4s) that the probe is still mid-render while the test finds
-	// and stops the renderer; timeout comfortably above it so the probe still succeeds
-	// or times out without racing the assertion — either end state must be leak-free.
-	renderer := newLeakTestRenderer(rec, 20000, 4000)
+	// Generous probe budget: this is the job's first chromium launch, and cold start on
+	// a contended CI runner can burn 30s+ before a renderer even exists (the same
+	// reason the allocator uses WSURLReadTimeout(60s)). The test never waits the full
+	// budget — it cancels the probe's context right after the SIGSTOP — the timeout
+	// only has to not fire first.
+	renderer := newLeakTestRenderer(rec, 180000, 1000)
 	defer func() { _ = renderer.Close() }()
 
+	probeCtx, cancelProbe := context.WithCancel(context.Background())
+	defer cancelProbe()
 	probeDone := make(chan error, 1)
 	go func() {
-		_, err := renderer.RenderProbe(context.Background(), srv.URL, 0)
+		_, err := renderer.RenderProbe(probeCtx, srv.URL, 0)
 		probeDone <- err
 	}()
 
@@ -124,12 +129,15 @@ func TestChromiumTeardownStoppedRenderer(t *testing.T) {
 			return true
 		}
 		return false
-	}, 10*time.Second, 50*time.Millisecond, "browser never launched")
+	}, 60*time.Second, 50*time.Millisecond, "browser never launched")
 
-	stopped := stopOneRenderer(t, browserPid, time.Now().Add(10*time.Second))
+	stopped := stopOneRenderer(t, browserPid, time.Now().Add(90*time.Second))
 	t.Logf("SIGSTOPped renderer pid %d under browser %d", stopped, browserPid)
 
-	<-probeDone // capture result irrelevant; only teardown hygiene is under test
+	// Teardown now: caller cancellation bridges into the browser context, same
+	// teardown path as the prod timeout.
+	cancelProbe()
+	<-probeDone // probe result irrelevant; only teardown hygiene is under test
 
 	// The load-bearing assertion: the stopped renderer itself must be dead. The group
 	// check below is vacuous without Setpgid (no such pgid exists → ESRCH), so this
