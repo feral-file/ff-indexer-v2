@@ -37,10 +37,13 @@ const (
 	DefaultViewportWidth  = 1024
 	DefaultViewportHeight = 1024
 	// DefaultTimeoutMs bounds the whole probe (navigate + settle + screenshot). Sized to
-	// leave ~30s of navigation headroom on top of the settle window: shrinking that
+	// leave ~75s of navigation headroom on top of the settle window: shrinking that
 	// headroom converts slow-loading (IPFS-hosted) works into stalled verdicts, the
-	// opposite of what a generous settle is for.
-	DefaultTimeoutMs = 45000
+	// opposite of what a generous settle is for. Widened from 45s after shadow data
+	// showed works whose sibling renders succeeded still timing out on navigation and
+	// subresource load (ff-indexer-v2#138); must stay equal to the config default so a
+	// supported `timeout_ms: 0` resolves to the same budget as an unset knob.
+	DefaultTimeoutMs = 90000
 	// DefaultSettleMs is how long the page runs after load before the capture. Generous
 	// on purpose: the blank debounce only protects against *transient* blanks, so a work
 	// that deterministically needs longer than the settle window (heavy WebGL compiling

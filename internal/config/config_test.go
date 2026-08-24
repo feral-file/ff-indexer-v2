@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/feral-file/ff-indexer-v2/internal/media/phash"
+	"github.com/feral-file/ff-indexer-v2/internal/media/probe"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
@@ -111,6 +112,13 @@ tezos:
 	// hide a token until an operator deliberately flips enforce.
 	assert.True(t, cfg.RenderProbe.Enabled, "probe observes by default")
 	assert.False(t, cfg.RenderProbe.Enforce, "shadow mode by default — enforcement is an explicit decision")
+	// timeout_ms: 0 is a supported "use the renderer default" path (validated on
+	// effective values), so the viper default and probe.DefaultTimeoutMs must be the
+	// same number — if they drift, an explicit zero silently buys a different render
+	// budget than an unset knob (bot finding F1 on #138: the 90s widening left the
+	// renderer fallback at 45s). Nothing but this assertion couples the two literals.
+	assert.Equal(t, probe.DefaultTimeoutMs, cfg.RenderProbe.TimeoutMs,
+		"render_probe.timeout_ms default must match probe.DefaultTimeoutMs")
 }
 
 // TestModerationSweeperDefaultMatchesStoreConstant anchors the config default to

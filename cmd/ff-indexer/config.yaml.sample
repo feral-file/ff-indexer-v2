@@ -263,7 +263,8 @@ render_probe:
   # gate — they record the attempt and preserve prior state — so this only paces wasted
   # work. Long on purpose: the blocked-gateway population is large and its cause does not
   # lift on any faster cadence, so a 24h recheck spent most of the render budget
-  # re-confirming the same block instead of covering never-probed URLs.
+  # re-confirming the same block instead of covering never-probed URLs. Transient DNS
+  # resolution failures are the exception: they retry on retry_interval instead.
   no_evidence_recheck_interval: 168h
   # pHashes of known-bad renders (gateway error pages, directory listings, placeholders).
   # Capture the offending page once, compute its pHash, and list it here. Keep

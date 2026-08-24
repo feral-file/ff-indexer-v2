@@ -207,7 +207,10 @@ still counted as `stalled`/`blank`:
   SSRF policy refusal), and `next_check_at` moves a `no_evidence_recheck_interval` out
   (longer than `broken_recheck_interval`: a fingerprint-keyed gateway block does not lift
   on any faster cadence, so a shorter interval only burns render budget re-confirming it
-  and starves coverage of never-probed URLs).
+  and starves coverage of never-probed URLs). One exception inside the SSRF path: a DNS
+  resolution failure (`ssrf.ErrResolutionFailed`) is transient infrastructure, not a
+  policy verdict, so it rides the short `retry_interval` instead — the slow cadence
+  would cost an L0-healthy URL a week of L1 coverage per resolver blip.
   Measured production shape: ipfs.io's HTTP 410 bot-block page — one line of text on
   white, variance ~0.00096 — classified 1,692 distinct healthy artworks as `blank`,
   all sharing pHash `0xb636363636363634`.

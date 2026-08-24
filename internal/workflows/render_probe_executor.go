@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/media/probe"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
@@ -149,8 +150,17 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 	// here avoids launching a browser context at all.
 	if e.ssrfValidator != nil {
 		if err := e.ssrfValidator.ValidateHTTPURL(ctx, url); err != nil {
+			// A resolver failure is transient infrastructure, not a policy verdict —
+			// the ssrf package keeps ErrResolutionFailed distinct from ErrBlocked for
+			// exactly this attribution. Both paths preserve all probe state; only the
+			// recheck cadence differs: a policy block is durable (slow reprobe), a DNS
+			// blip is not (an L0-healthy URL must not lose a week of L1 coverage to it).
+			interval := e.cfg.NoEvidenceRecheckInterval
+			if errors.Is(err, ssrf.ErrResolutionFailed) {
+				interval = e.cfg.RetryInterval
+			}
 			logger.WarnCtx(ctx, "Render probe refused by SSRF policy", zap.String("url", url), zap.Error(err))
-			return e.recordNoEvidence(ctx, url, fmt.Sprintf("ssrf policy refused render: %v", err), prev, now)
+			return e.recordNoEvidence(ctx, url, fmt.Sprintf("ssrf policy refused render: %v", err), prev, now, interval)
 		}
 	}
 
@@ -233,7 +243,8 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			zap.Int("main_status", capture.MainStatus),
 		)
 		return e.recordNoEvidence(ctx, url,
-			fmt.Sprintf("main document returned HTTP %d; frame not classified", capture.MainStatus), prev, now)
+			fmt.Sprintf("main document returned HTTP %d; frame not classified", capture.MainStatus),
+			prev, now, e.cfg.NoEvidenceRecheckInterval)
 	}
 
 	classification, err := probe.Classify(capture.Image, e.cfg.Fingerprints, e.cfg.BlankVarianceThreshold)
@@ -405,16 +416,17 @@ const browserUnavailableRetryDelay = 5 * time.Minute
 // would never heal the health row. First-ever attempts record a stalled verdict (the
 // closest existing category; a new enum value is not worth a migration) with the counter
 // still at zero, so no-evidence outcomes can never accumulate toward the gate threshold.
-// Constraints: next_check_at moves a full NoEvidenceRecheckInterval out — persistent
-// conditions (ipfs.io's bot-block of headless browsers) do not lift on any faster cadence,
-// so a shorter interval would only burn render capacity re-confirming the same block and
-// starve coverage of never-probed URLs.
-func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, now time.Time) error {
+// Constraints: the caller picks the recheck interval because it knows the condition's
+// durability — NoEvidenceRecheckInterval for persistent conditions (ipfs.io's bot-block
+// of headless browsers, policy refusals) where a faster cadence only burns render
+// capacity re-confirming the same outcome, RetryInterval for transient ones (resolver
+// failures) where a slow cadence would cost healthy URLs a week of L1 coverage.
+func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, now time.Time, recheckIn time.Duration) error {
 	row := schema.MediaRenderProbe{
 		MediaURL:    url,
 		Verdict:     schema.RenderProbeVerdictStalled,
 		LastError:   &errMsg,
-		NextCheckAt: now.Add(e.cfg.NoEvidenceRecheckInterval),
+		NextCheckAt: now.Add(recheckIn),
 	}
 	if prev != nil {
 		row.Verdict = prev.Verdict
