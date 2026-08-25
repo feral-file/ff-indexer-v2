@@ -15,12 +15,12 @@ import (
 
 	ethereum "github.com/ethereum/go-ethereum"
 	types "github.com/ethereum/go-ethereum/core/types"
-	gomock "go.uber.org/mock/gomock"
-
+	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	adapters "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	registry "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/registry"
 	registry0 "github.com/feral-file/ff-indexer-v2/internal/registry"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockEthereumProviderClient is a mock of EthereumClient interface.
@@ -224,7 +224,7 @@ func (mr *MockEthereumProviderClientMockRecorder) ParseEventLog(ctx, vLog any) *
 }
 
 // SubscribeNewHead mocks base method.
-func (m *MockEthereumProviderClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error) {
+func (m *MockEthereumProviderClient) SubscribeNewHead(ctx context.Context, ch chan<- *adapter.BlockHead) (ethereum.Subscription, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SubscribeNewHead", ctx, ch)
 	ret0, _ := ret[0].(ethereum.Subscription)

@@ -17,9 +17,8 @@ import (
 	ethereum "github.com/ethereum/go-ethereum"
 	common "github.com/ethereum/go-ethereum/common"
 	types "github.com/ethereum/go-ethereum/core/types"
-	gomock "go.uber.org/mock/gomock"
-
 	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockEthClient is a mock of EthClient interface.
@@ -149,7 +148,7 @@ func (mr *MockEthClientMockRecorder) SubscribeFilterLogs(ctx, query, ch any) *go
 }
 
 // SubscribeNewHead mocks base method.
-func (m *MockEthClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error) {
+func (m *MockEthClient) SubscribeNewHead(ctx context.Context, ch chan<- *adapter.BlockHead) (ethereum.Subscription, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SubscribeNewHead", ctx, ch)
 	ret0, _ := ret[0].(ethereum.Subscription)

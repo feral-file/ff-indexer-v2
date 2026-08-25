@@ -14,6 +14,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"go.uber.org/zap"
@@ -28,8 +29,9 @@ type EthClient interface {
 	// SubscribeFilterLogs subscribes to filter logs
 	SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)
 
-	// SubscribeNewHead subscribes to new block headers (eth_subscribe newHeads)
-	SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error)
+	// SubscribeNewHead subscribes to new block heads (eth_subscribe newHeads),
+	// delivering the node-reported hash — see BlockHead for why not types.Header.
+	SubscribeNewHead(ctx context.Context, ch chan<- *BlockHead) (ethereum.Subscription, error)
 
 	// FilterLogs retrieves logs that match the filter query
 	FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error)
@@ -54,6 +56,22 @@ type EthClient interface {
 
 	// Close closes the connection
 	Close()
+}
+
+// BlockHead is the subset of a newHeads notification that chain ingestion needs.
+//
+// Reason: ethclient.SubscribeNewHead decodes notifications into types.Header,
+// which drops the node-reported "hash". Recomputing it with Header.Hash() does
+// not reproduce it for current mainnet headers — the decoded struct lacks
+// fields newer than this go-ethereum version's RLP encoding (verified live:
+// every local hash differed from eth_getBlockByNumber's while each head's
+// parentHash matched the node hash of its predecessor). Parent-hash continuity
+// therefore has to be checked against the wire hash, so ingestion subscribes
+// through the raw RPC client into this type instead.
+type BlockHead struct {
+	Number     hexutil.Uint64 `json:"number"`
+	Hash       common.Hash    `json:"hash"`
+	ParentHash common.Hash    `json:"parentHash"`
 }
 
 // EthClientDialer defines an interface for dialing Ethereum clients
@@ -249,14 +267,15 @@ func (c *RealEthClient) SubscribeFilterLogs(ctx context.Context, query ethereum.
 	return sub, err
 }
 
-// SubscribeNewHead subscribes to new block headers with retry logic. Only the
+// SubscribeNewHead subscribes to new block heads with retry logic. Only the
 // subscribe call is retried; a subscription that later fails surfaces through
-// its Err channel and is the caller's to re-establish.
-func (c *RealEthClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error) {
+// its Err channel and is the caller's to re-establish. It uses the raw RPC
+// client so the notification's own hash reaches the caller (see BlockHead).
+func (c *RealEthClient) SubscribeNewHead(ctx context.Context, ch chan<- *BlockHead) (ethereum.Subscription, error) {
 	var sub ethereum.Subscription
 	err := c.executeWithRetry(ctx, func() error {
 		var err error
-		sub, err = c.client.SubscribeNewHead(ctx, ch)
+		sub, err = c.client.Client().EthSubscribe(ctx, ch, "newHeads")
 		return err
 	}, "SubscribeNewHead")
 	return sub, err

@@ -5,20 +5,43 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"go.uber.org/zap"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 )
 
-// headBufferSize bounds queued newHeads notifications while a log fetch is in
-// flight. Heads are coalesced on read (only the newest matters), so the buffer
-// absorbs a burst, not an outage: if it overflows, go-ethereum drops the
-// subscription with an error and the runner restarts from the durable cursor.
-const headBufferSize = 64
+const (
+	// headBufferSize bounds queued newHeads notifications while a log fetch is
+	// in flight. Heads are coalesced on read, so the buffer absorbs a burst, not
+	// an outage: go-ethereum queues up to 20k more behind it and then drops the
+	// subscription with an error, which restarts ingestion from the cursor.
+	headBufferSize = 64
+
+	// catchupBatchBlocks bounds one eth_getLogs fetch while filling a gap.
+	// Raw topic matches run ~470 per mainnet block (ERC-20 Transfers share the
+	// ERC-721 signature and are only discarded at parse time), so 20 blocks is
+	// ~9.4k logs — under Infura's 10k-result cap, so the pagination helper does
+	// not pay a halving cascade, and a few MB in memory instead of the ~23M
+	// logs a whole max_catchup_blocks range would materialize at once.
+	catchupBatchBlocks = 20
+
+	// reorgOverlap is how many already-emitted blocks are re-fetched when a
+	// head's parent hash does not match the last head seen. Two is the most the
+	// runner can use: it flushes block N when N+1's first event arrives and
+	// accepts a same-height re-flush, so the open block and the one just
+	// flushed are recoverable; anything older is behind the monotonic cursor
+	// and dropped regardless of what the subscriber re-fetches.
+	reorgOverlap = 2
+
+	// catchupLogEvery is the progress cadence (in batches) during a gap fill.
+	catchupLogEvery = 50
+)
 
 // ErrCatchupTooLarge is returned when the gap between the requested start block
 // and the chain head exceeds Config.MaxCatchupBlocks. It is deliberately fatal:
@@ -51,8 +74,27 @@ func NewSubscriber(cfg Config, ethereumClient EthereumClient) (blockchain.EventS
 	}, nil
 }
 
+// headRange is the block range one iteration of the head loop must emit.
+type headRange struct {
+	from, to uint64
+	// hash is the node-reported hash of the head at `to`, kept for the next
+	// continuity check (the wire hash — see adapter.BlockHead).
+	hash common.Hash
+}
+
+// streamState is the subscriber's position: the next block to fetch, the lower
+// bound below which nothing is ever fetched (the caller's fromBlock — a future
+// start_block must stay a hard boundary even while heads arrive below it),
+// and the hash of the last head emitted, for parent-hash continuity.
+type streamState struct {
+	next       uint64
+	lowerBound uint64
+	lastHash   common.Hash
+	haveHash   bool
+}
+
 // SubscribeEvents streams indexable events from fromBlock onward, driven by the
-// newHeads subscription: each new head triggers one eth_getLogs fetch covering
+// newHeads subscription: each new head triggers eth_getLogs fetches covering
 // every block not yet emitted, up to and including that head.
 //
 // Reason: the former eth_subscribe("logs") stream pushed every chain-wide log
@@ -65,10 +107,9 @@ func NewSubscriber(cfg Config, ethereumClient EthereumClient) (blockchain.EventS
 // order before live blocks.
 //
 // Trade-offs: events land one fetch round-trip after the head (well under the
-// 12 s block interval); tip reorgs are handled by number, so a replaced block's
-// events are re-emitted at the same height when its successor head arrives and
-// rely on the runner's same-height tolerance plus job dedup, exactly as the
-// push stream did.
+// 12 s block interval). Reorgs are handled by number with a bounded overlap
+// (see nextRange); the runner's monotonic cursor, not the subscriber, is what
+// limits how deep a reorg can be repaired — exactly as with the push stream.
 //
 // Constraints: a single stream orders everything. Two independent log
 // subscriptions were rejected because go-ethereum forwards each on its own
@@ -80,7 +121,7 @@ func NewSubscriber(cfg Config, ethereumClient EthereumClient) (blockchain.EventS
 // retry from the durable cursor. Intentionally ignored logs are returned as
 // (nil, nil) from ParseEventLog and skipped.
 func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler blockchain.EventHandler) error {
-	heads := make(chan *types.Header, headBufferSize)
+	heads := make(chan *adapter.BlockHead, headBufferSize)
 	sub, err := s.client.SubscribeNewHead(ctx, heads)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to new heads: %w", err)
@@ -91,7 +132,7 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 		logger.InfoCtx(ctx, "Unsubscribed from ethereum new heads")
 	}()
 
-	next := fromBlock
+	state := streamState{next: fromBlock, lowerBound: fromBlock}
 	for {
 		select {
 		case <-ctx.Done():
@@ -99,65 +140,126 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 		case err := <-sub.Err():
 			return fmt.Errorf("new heads subscription error: %w", err)
 		case head := <-heads:
-			// Only the newest head matters: everything below it is covered by
-			// the same range fetch. Draining here keeps a slow catch-up from
-			// paying one fetch per queued head afterwards.
-			head = drainHeads(heads, head)
-			next, err = s.ingestThrough(ctx, next, head.Number.Uint64(), handler)
-			if err != nil {
+			rng, ok := s.nextRange(ctx, &state, head, drainHeads(heads))
+			if !ok {
+				continue
+			}
+			if err := s.ingestRange(ctx, rng, handler); err != nil {
 				return err
 			}
+			state.next = rng.to + 1
+			state.lastHash, state.haveHash = rng.hash, true
 		}
 	}
 }
 
-// drainHeads returns the last head already queued behind the one just read.
-func drainHeads(heads <-chan *types.Header, latest *types.Header) *types.Header {
+// drainHeads returns every head already queued behind the one just read.
+func drainHeads(heads <-chan *adapter.BlockHead) []*adapter.BlockHead {
+	var queued []*adapter.BlockHead
 	for {
 		select {
 		case h := <-heads:
-			latest = h
+			queued = append(queued, h)
 		default:
-			return latest
+			return queued
 		}
 	}
 }
 
-// ingestThrough fetches and emits every indexable log in [min(next, head), head]
-// and returns the next block to fetch (head + 1).
+// nextRange turns the head just read plus any queued behind it into the block
+// range to emit, or ok=false when there is nothing to do yet.
 //
-// A head below next means the tip was reorganized (or a duplicate notification);
-// re-fetching from that height re-emits the replaced blocks' events at the same
-// heights, which the runner accepts (same-height flush) and job unique keys
-// deduplicate.
-func (s *ethSubscriber) ingestThrough(ctx context.Context, next, head uint64, handler blockchain.EventHandler) (uint64, error) {
-	from := next
-	if head < from {
-		logger.WarnCtx(ctx, "Ethereum head below next expected block, re-fetching (reorg or duplicate head)",
-			zap.Uint64("head", head), zap.Uint64("next", next))
-		from = head
+// Rules, in order:
+//   - Heads below the lower bound are ignored: a future start_block is a hard
+//     boundary, and re-fetches never dip under it.
+//   - The range ends at the highest queued head; it starts at `next`, lowered to
+//     the lowest queued head if any is at or below `next` (replacement headers
+//     after a reorg arrive at heights already emitted — geth emits every new
+//     canonical header, and coalescing must not skip the earlier ones).
+//   - If the first head continues from `next` but its parent is not the last
+//     head we emitted, the chain reorganized underneath us without a
+//     replacement header we could act on; re-fetch reorgOverlap blocks.
+//
+// Re-emitted heights land on the runner's same-height tolerance and the job
+// unique keys, so an overlap is never worse than a duplicate-suppressed replay.
+func (s *ethSubscriber) nextRange(ctx context.Context, st *streamState, first *adapter.BlockHead, queued []*adapter.BlockHead) (headRange, bool) {
+	all := append([]*adapter.BlockHead{first}, queued...)
+	from, to := st.next, uint64(0)
+	var toHash common.Hash
+	found := false
+	for _, h := range all {
+		n := uint64(h.Number)
+		if n < st.lowerBound {
+			continue
+		}
+		if !found || n >= to {
+			to, toHash, found = n, h.Hash, true
+		}
+		if n < from {
+			logger.WarnCtx(ctx, "Ethereum head below next expected block, re-fetching (reorg or duplicate head)",
+				zap.Uint64("head", n), zap.Uint64("next", st.next))
+			from = n
+		}
+	}
+	if !found {
+		logger.DebugCtx(ctx, "Ignoring ethereum heads below start block",
+			zap.Uint64("head", uint64(first.Number)), zap.Uint64("startBlock", st.lowerBound))
+		return headRange{}, false
 	}
 
-	span := head - from + 1
+	if st.haveHash && uint64(first.Number) == st.next && first.ParentHash != st.lastHash {
+		overlapFrom := st.next - min(reorgOverlap, st.next)
+		logger.WarnCtx(ctx, "Ethereum head does not continue from last emitted head, re-fetching overlap (reorg)",
+			zap.Uint64("head", uint64(first.Number)), zap.String("parent", first.ParentHash.Hex()),
+			zap.String("lastHead", st.lastHash.Hex()), zap.Uint64("refetchFrom", overlapFrom))
+		if overlapFrom < from {
+			from = overlapFrom
+		}
+	}
+	if from < st.lowerBound {
+		from = st.lowerBound
+	}
+	return headRange{from: from, to: to, hash: toHash}, true
+}
+
+// ingestRange fetches and emits every indexable log in [rng.from, rng.to] in
+// bounded batches so a long catch-up streams through memory instead of
+// materializing the whole range (see catchupBatchBlocks).
+func (s *ethSubscriber) ingestRange(ctx context.Context, rng headRange, handler blockchain.EventHandler) error {
+	span := rng.to - rng.from + 1
 	if s.cfg.MaxCatchupBlocks > 0 && span > s.cfg.MaxCatchupBlocks {
-		return next, fmt.Errorf("%w: need blocks %d-%d (%d blocks, max %d); reset the block cursor deliberately or raise ethereum.max_catchup_blocks",
-			ErrCatchupTooLarge, from, head, span, s.cfg.MaxCatchupBlocks)
+		return fmt.Errorf("%w: need blocks %d-%d (%d blocks, max %d); reset the block cursor deliberately or raise ethereum.max_catchup_blocks",
+			ErrCatchupTooLarge, rng.from, rng.to, span, s.cfg.MaxCatchupBlocks)
 	}
 	if span > 1 {
 		logger.InfoCtx(ctx, "Ethereum ingestion catching up to head",
-			zap.Uint64("fromBlock", from), zap.Uint64("toBlock", head), zap.Uint64("blocks", span))
+			zap.Uint64("fromBlock", rng.from), zap.Uint64("toBlock", rng.to), zap.Uint64("blocks", span))
 	}
 
-	logs, err := s.client.FetchIngestionLogs(ctx, from, head)
-	if err != nil {
-		return next, fmt.Errorf("fetch ingestion logs for blocks %d-%d: %w", from, head, err)
-	}
-	for _, vLog := range logs {
-		if err := s.emitLog(ctx, vLog, handler); err != nil {
-			return next, err
+	batches := 0
+	for from := rng.from; from <= rng.to; from += catchupBatchBlocks {
+		// A shutdown or runner failure mid-catch-up must not keep paying for
+		// batches whose events nobody will consume.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		to := min(from+catchupBatchBlocks-1, rng.to)
+		logs, err := s.client.FetchIngestionLogs(ctx, from, to)
+		if err != nil {
+			return fmt.Errorf("fetch ingestion logs for blocks %d-%d: %w", from, to, err)
+		}
+		for _, vLog := range logs {
+			if err := s.emitLog(ctx, vLog, handler); err != nil {
+				return err
+			}
+		}
+		batches++
+		if batches%catchupLogEvery == 0 {
+			logger.InfoCtx(ctx, "Ethereum ingestion catch-up progress",
+				zap.Uint64("throughBlock", to), zap.Uint64("targetBlock", rng.to), zap.Int("batches", batches))
 		}
 	}
-	return head + 1, nil
+	return nil
 }
 
 // emitLog parses one log and hands the resulting event to the handler.

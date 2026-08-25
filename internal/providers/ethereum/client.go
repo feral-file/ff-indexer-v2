@@ -43,7 +43,7 @@ var ErrOriginationNotFound = errors.New("origination not found")
 type EthereumClient interface {
 	// SubscribeNewHead subscribes to new block headers. Chain ingestion drives
 	// its block-by-block log fetches from this stream; see FetchIngestionLogs.
-	SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error)
+	SubscribeNewHead(ctx context.Context, ch chan<- *adapter.BlockHead) (ethereum.Subscription, error)
 
 	// FetchIngestionLogs returns every log chain ingestion indexes (standard NFT
 	// event signatures plus the registry's custom signatures for this chain) in
@@ -222,7 +222,7 @@ func NewGuardedClient(chainID domain.Chain, client adapter.EthClient, clock adap
 }
 
 // SubscribeNewHead subscribes to new block headers.
-func (f *ethereumClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error) {
+func (f *ethereumClient) SubscribeNewHead(ctx context.Context, ch chan<- *adapter.BlockHead) (ethereum.Subscription, error) {
 	return f.client.SubscribeNewHead(ctx, ch)
 }
 
