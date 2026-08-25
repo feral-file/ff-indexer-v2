@@ -69,7 +69,7 @@ These are intentional trade-offs, not silent bugs. Operators should size **`bloc
 
 Ethereum `start_block` and Tezos `start_level` (wired into the same ingestion starting height) are **not** “only when the DB cursor is empty”. When either value is **non‑zero**, it **unconditionally** selects where `SubscribeEvents` begins, **independent of** the persisted cursor.
 
-If the configured start is **behind** the persisted cursor, live subscription may replay old heights; the **monotonic guard drops** those buffers until the stream is past the checkpoint. To **intentionally rewind or backfill** from an earlier height, operators must align intent by adjusting or clearing the stored cursor in `key_value_store` (and setting the desired start), as documented in [`docs/constraints.md`](constraints.md).
+If the configured start is **behind** the persisted cursor, the stream may replay old heights; the **monotonic guard drops** those buffers until the stream is past the checkpoint. On **Ethereum** the start is honored literally — ingestion fetches `[start_block, head]` — so it is also bounded by **`ethereum.max_catchup_blocks`**: a `start_block` further behind head than that fails startup with `ErrCatchupTooLarge` (the former `eth_subscribe("logs")` stream silently ignored such a value, since providers never replay history into a subscription). Set `start_block: 0` to resume from the cursor, or a value within the bound for a deliberate short rewind. To **intentionally rewind or backfill** from an earlier height, operators must align intent by adjusting or clearing the stored cursor in `key_value_store` (and setting the desired start), as documented in [`docs/constraints.md`](constraints.md).
 
 ### Ethereum ingestion specifics
 
