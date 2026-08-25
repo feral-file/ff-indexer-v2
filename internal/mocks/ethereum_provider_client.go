@@ -15,11 +15,12 @@ import (
 
 	ethereum "github.com/ethereum/go-ethereum"
 	types "github.com/ethereum/go-ethereum/core/types"
+	gomock "go.uber.org/mock/gomock"
+
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	adapters "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	registry "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/registry"
 	registry0 "github.com/feral-file/ff-indexer-v2/internal/registry"
-	gomock "go.uber.org/mock/gomock"
 )
 
 // MockEthereumProviderClient is a mock of EthereumClient interface.
@@ -85,6 +86,21 @@ func (m *MockEthereumProviderClient) DiscoverOwnedTokensFromLogs(ctx context.Con
 func (mr *MockEthereumProviderClientMockRecorder) DiscoverOwnedTokensFromLogs(ctx, ownerAddress, logs, blacklist any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscoverOwnedTokensFromLogs", reflect.TypeOf((*MockEthereumProviderClient)(nil).DiscoverOwnedTokensFromLogs), ctx, ownerAddress, logs, blacklist)
+}
+
+// FetchIngestionLogs mocks base method.
+func (m *MockEthereumProviderClient) FetchIngestionLogs(ctx context.Context, fromBlock, toBlock uint64) ([]types.Log, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchIngestionLogs", ctx, fromBlock, toBlock)
+	ret0, _ := ret[0].([]types.Log)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchIngestionLogs indicates an expected call of FetchIngestionLogs.
+func (mr *MockEthereumProviderClientMockRecorder) FetchIngestionLogs(ctx, fromBlock, toBlock any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchIngestionLogs", reflect.TypeOf((*MockEthereumProviderClient)(nil).FetchIngestionLogs), ctx, fromBlock, toBlock)
 }
 
 // FetchOwnerLogsWindow mocks base method.
@@ -207,19 +223,19 @@ func (mr *MockEthereumProviderClientMockRecorder) ParseEventLog(ctx, vLog any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ParseEventLog", reflect.TypeOf((*MockEthereumProviderClient)(nil).ParseEventLog), ctx, vLog)
 }
 
-// SubscribeFilterLogs mocks base method.
-func (m *MockEthereumProviderClient) SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
+// SubscribeNewHead mocks base method.
+func (m *MockEthereumProviderClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SubscribeFilterLogs", ctx, query, ch)
+	ret := m.ctrl.Call(m, "SubscribeNewHead", ctx, ch)
 	ret0, _ := ret[0].(ethereum.Subscription)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// SubscribeFilterLogs indicates an expected call of SubscribeFilterLogs.
-func (mr *MockEthereumProviderClientMockRecorder) SubscribeFilterLogs(ctx, query, ch any) *gomock.Call {
+// SubscribeNewHead indicates an expected call of SubscribeNewHead.
+func (mr *MockEthereumProviderClientMockRecorder) SubscribeNewHead(ctx, ch any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeFilterLogs", reflect.TypeOf((*MockEthereumProviderClient)(nil).SubscribeFilterLogs), ctx, query, ch)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeNewHead", reflect.TypeOf((*MockEthereumProviderClient)(nil).SubscribeNewHead), ctx, ch)
 }
 
 // SupportsProvenance mocks base method.

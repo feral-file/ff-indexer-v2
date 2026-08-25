@@ -846,12 +846,31 @@ func TestLoadAppConfig_GuardEnvVarsReachConfig(t *testing.T) {
 	t.Setenv("FF_INDEXER_ETHEREUM_GETLOGS_SPAN_CAP", "10000")
 	t.Setenv("FF_INDEXER_ETHEREUM_GETLOGS_CALL_BUDGET", "3000")
 	t.Setenv("FF_INDEXER_ETHEREUM_FULL_PROVENANCE_DISABLED", "true")
+	t.Setenv("FF_INDEXER_ETHEREUM_MAX_CATCHUP_BLOCKS", "1234")
 
 	cfg, err := LoadAppConfig("", "")
 	require.NoError(t, err)
 	require.Equal(t, uint64(10000), cfg.Ethereum.GetLogsSpanCap)
 	require.Equal(t, 3000, cfg.Ethereum.GetLogsCallBudget)
 	require.True(t, cfg.Ethereum.FullProvenanceDisabled)
+	require.Equal(t, uint64(1234), cfg.Ethereum.MaxCatchupBlocks)
+}
+
+// TestLoadAppConfig_MaxCatchupBlocksDefault pins the catch-up bound's default:
+// the binary must refuse an unbounded history walk out of the box, because a
+// fresh deploy with a stale cursor is exactly the case the bound exists for.
+func TestLoadAppConfig_MaxCatchupBlocksDefault(t *testing.T) {
+	t.Setenv("FF_INDEXER_DATABASE_HOST", "localhost")
+	t.Setenv("FF_INDEXER_DATABASE_DBNAME", "ff")
+	t.Setenv("FF_INDEXER_JOBS_TOKEN_QUEUE", "token_index")
+	t.Setenv("FF_INDEXER_ETHEREUM_RPC_URL", "http://rpc.invalid")
+	t.Setenv("FF_INDEXER_ETHEREUM_WEBSOCKET_URL", "ws://rpc.invalid")
+	t.Setenv("FF_INDEXER_TEZOS_API_URL", "http://tzkt.invalid")
+	t.Setenv("FF_INDEXER_TEZOS_WEBSOCKET_URL", "ws://tzkt.invalid")
+
+	cfg, err := LoadAppConfig("", "")
+	require.NoError(t, err)
+	require.Equal(t, uint64(50_000), cfg.Ethereum.MaxCatchupBlocks)
 }
 
 // TestLoadAppConfig_ScanWindowConcurrency pins the owner-scan parallelism knob:

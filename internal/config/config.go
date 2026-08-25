@@ -100,6 +100,13 @@ type EthereumConfig struct {
 	// FullProvenanceDisabled: skip per-token history walks (full provenance and the
 	// ERC-1155 owner event replay); tokens keep minimal provenance until backfilled.
 	FullProvenanceDisabled bool `mapstructure:"full_provenance_disabled"`
+	// MaxCatchupBlocks: the largest gap between the ingestion start block (cursor+1
+	// or start_block) and the chain head that ingestion will fill by fetching logs
+	// on subscribe. A larger gap is a startup error (ErrCatchupTooLarge) rather
+	// than a silent multi-million-block eth_getLogs walk: a cursor that far behind
+	// means an intentional rewind or a stale database, and either wants an
+	// operator decision (see docs/constraints.md on cursor resets). 0 = unbounded.
+	MaxCatchupBlocks uint64 `mapstructure:"max_catchup_blocks"`
 }
 
 // TezosConfig holds Tezos-specific configuration
@@ -952,6 +959,9 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("ethereum.scan_window_concurrency", 2)
 	v.SetDefault("ethereum.getlogs_call_budget", 0)
 	v.SetDefault("ethereum.full_provenance_disabled", false)
+	// ~7 days of mainnet blocks: covers any realistic outage while refusing to
+	// walk a stale or reset cursor from genesis at startup.
+	v.SetDefault("ethereum.max_catchup_blocks", 50_000)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("tezos.block_head_ttl", 10)
@@ -1126,6 +1136,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.getlogs_call_budget",
 		"ethereum.scan_window_concurrency",
 		"ethereum.full_provenance_disabled",
+		"ethereum.max_catchup_blocks",
 		// Tezos
 		"tezos.api_url",
 		"tezos.websocket_url",

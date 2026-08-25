@@ -41,8 +41,15 @@ var ErrOriginationNotFound = errors.New("origination not found")
 //
 //go:generate mockgen -source=client.go -destination=../../mocks/ethereum_provider_client.go -package=mocks -mock_names=EthereumClient=MockEthereumProviderClient
 type EthereumClient interface {
-	// SubscribeFilterLogs subscribes to filter logs
-	SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)
+	// SubscribeNewHead subscribes to new block headers. Chain ingestion drives
+	// its block-by-block log fetches from this stream; see FetchIngestionLogs.
+	SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error)
+
+	// FetchIngestionLogs returns every log chain ingestion indexes (standard NFT
+	// event signatures plus the registry's custom signatures for this chain) in
+	// the inclusive block range [fromBlock, toBlock], paginated under the
+	// provider's span cap. Logs are returned in ascending (block, log index) order.
+	FetchIngestionLogs(ctx context.Context, fromBlock, toBlock uint64) ([]types.Log, error)
 
 	// GetLatestBlock returns the latest block number
 	GetLatestBlock(ctx context.Context) (uint64, error)
@@ -214,9 +221,46 @@ func NewGuardedClient(chainID domain.Chain, client adapter.EthClient, clock adap
 	return ec, nil
 }
 
-// SubscribeFilterLogs subscribes to filter logs
-func (f *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
-	return f.client.SubscribeFilterLogs(ctx, query, ch)
+// SubscribeNewHead subscribes to new block headers.
+func (f *ethereumClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error) {
+	return f.client.SubscribeNewHead(ctx, ch)
+}
+
+// FetchIngestionLogs fetches the indexable logs for [fromBlock, toBlock].
+//
+// Reason: chain ingestion used to hold one eth_subscribe("logs") filter on these
+// same topics. The ERC-721 Transfer signature is shared with ERC-20, so that
+// stream carried ~470 logs/block of which ~1% were NFT-shaped — harmless on a
+// per-block-priced provider, but ruinous on one that bills every pushed
+// notification (Chainstack: 1 RU each, ~100M/month). An HTTP eth_getLogs is
+// billed per call regardless of response size, so fetching each block's logs
+// on demand keeps the exact same filter and drops the metered volume by ~99%.
+// Trade-offs: one eth_getLogs per block in steady state; catch-up ranges are
+// walked by the guarded pagination helper (span cap, call budget, retry).
+// Constraints: the filter must stay identical to what the adapters can parse
+// (see ParseEventLog); narrowing it here silently drops events.
+func (f *ethereumClient) FetchIngestionLogs(ctx context.Context, fromBlock, toBlock uint64) ([]types.Log, error) {
+	signatures := helpers.StandardEventSignatures()
+	signatures = append(signatures, f.adapterRegistry.GetCustomEventSignaturesForChain(f.chainID)...)
+
+	logs, err := f.pagination.FilterLogsWithPagination(ctx, ethereum.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(fromBlock),
+		ToBlock:   new(big.Int).SetUint64(toBlock),
+		Topics:    [][]common.Hash{signatures},
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Providers return logs in chain order per call and the pagination helper
+	// walks windows ascending, so this is normally a no-op; it makes the
+	// ordering contract explicit instead of provider-dependent.
+	sort.SliceStable(logs, func(i, j int) bool {
+		if logs[i].BlockNumber != logs[j].BlockNumber {
+			return logs[i].BlockNumber < logs[j].BlockNumber
+		}
+		return logs[i].Index < logs[j].Index
+	})
+	return logs, nil
 }
 
 // GetLatestBlock returns the latest block number using the cached provider

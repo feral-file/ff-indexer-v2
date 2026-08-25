@@ -148,6 +148,21 @@ func (mr *MockEthClientMockRecorder) SubscribeFilterLogs(ctx, query, ch any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeFilterLogs", reflect.TypeOf((*MockEthClient)(nil).SubscribeFilterLogs), ctx, query, ch)
 }
 
+// SubscribeNewHead mocks base method.
+func (m *MockEthClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SubscribeNewHead", ctx, ch)
+	ret0, _ := ret[0].(ethereum.Subscription)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SubscribeNewHead indicates an expected call of SubscribeNewHead.
+func (mr *MockEthClientMockRecorder) SubscribeNewHead(ctx, ch any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeNewHead", reflect.TypeOf((*MockEthClient)(nil).SubscribeNewHead), ctx, ch)
+}
+
 // TransactionReceipt mocks base method.
 func (m *MockEthClient) TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error) {
 	m.ctrl.T.Helper()

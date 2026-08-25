@@ -28,6 +28,9 @@ type EthClient interface {
 	// SubscribeFilterLogs subscribes to filter logs
 	SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)
 
+	// SubscribeNewHead subscribes to new block headers (eth_subscribe newHeads)
+	SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error)
+
 	// FilterLogs retrieves logs that match the filter query
 	FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error)
 
@@ -243,6 +246,19 @@ func (c *RealEthClient) SubscribeFilterLogs(ctx context.Context, query ethereum.
 		sub, err = c.client.SubscribeFilterLogs(ctx, query, ch)
 		return err
 	}, "SubscribeFilterLogs")
+	return sub, err
+}
+
+// SubscribeNewHead subscribes to new block headers with retry logic. Only the
+// subscribe call is retried; a subscription that later fails surfaces through
+// its Err channel and is the caller's to re-establish.
+func (c *RealEthClient) SubscribeNewHead(ctx context.Context, ch chan<- *types.Header) (ethereum.Subscription, error) {
+	var sub ethereum.Subscription
+	err := c.executeWithRetry(ctx, func() error {
+		var err error
+		sub, err = c.client.SubscribeNewHead(ctx, ch)
+		return err
+	}, "SubscribeNewHead")
 	return sub, err
 }
 
