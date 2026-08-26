@@ -267,9 +267,11 @@ the second look ran under the first look's conditions: in the same 2026-08-25 au
 every one at counter 4, while raising the settle alone rescued none of them on idle
 hardware — the artifact is contention, so the fix is to remove it for the look that
 decides. The cost is queue round-trips, never occupied slots; media processing is
-unaffected. Rows that accumulated `stalled` counters before this contract were reset by
-migration 028 (ungated only), so a legacy stall count cannot serve as a blank's first
-strike. The 5 honest blanks in
+unaffected. Every ungated non-zero counter accumulated before this contract was reset by
+migration 028 — including `blank` rows, whose counts could contain earlier stalls — so a
+legacy stall can never serve as a blank's first strike. Run 028 *after* the new image is
+live (see the migration header): a pre-#142 worker still running would repopulate stall
+counts into the window. The 5 honest blanks in
 that sample (HTTP 200 shells that paint nothing) were blank on every backend — exactly
 the class L1 exists for and L0 cannot see.
 

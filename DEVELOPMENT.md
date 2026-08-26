@@ -229,6 +229,16 @@ missing column — jobs error instead of deferring.
 Running the backfill while the guard is still enabled is harmless but useless:
 every job re-skips and re-marks; re-run the file after the guard is off.
 
+**Migration 028 (render-probe counter reset) — run AFTER the new image:**
+
+Unlike the default ordering, `028.sql` is applied after the ff-indexer-v2#142 image
+is live (or with the media worker stopped). It is pure data — it zeroes every ungated
+`media_render_probes.consecutive_failures` accumulated while render timeouts still
+counted toward the gate — and no code depends on it. Applied before the new image, a
+still-running pre-#142 worker repopulates stall counts into the window between the
+reset and the restart, and the new executor cannot tell those from blank debounce
+state. Re-running the file is a no-op.
+
 **Migration 017 (token_events uniqueness) - REQUIRED:**
 
 This migration adds the `token_events_ownership_unique` partial index that application code depends on for idempotent ownership event insertion.
