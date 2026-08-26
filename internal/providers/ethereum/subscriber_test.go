@@ -215,19 +215,19 @@ func TestSubscribeEvents_CatchupIsBatched(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	chain := &headChain{}
-	mockClient, _, _ := headFixture(t, ctrl, chain.next(145))
+	mockClient, _, _ := headFixture(t, ctrl, chain.next(125))
 	subscriber := newTestSubscriber(t, mockClient, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	log110, log130 := transferLog(110, 0), transferLog(130, 0)
+	log105, log115 := transferLog(105, 0), transferLog(115, 0)
 	gomock.InOrder(
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(119)).Return([]types.Log{log110}, nil),
-		mockClient.EXPECT().ParseEventLog(gomock.Any(), log110).Return(eventFor(log110), nil),
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(120), uint64(139)).Return([]types.Log{log130}, nil),
-		mockClient.EXPECT().ParseEventLog(gomock.Any(), log130).Return(eventFor(log130), nil),
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(140), uint64(145)).DoAndReturn(fetchThenCancel(cancel)),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(109)).Return([]types.Log{log105}, nil),
+		mockClient.EXPECT().ParseEventLog(gomock.Any(), log105).Return(eventFor(log105), nil),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(110), uint64(119)).Return([]types.Log{log115}, nil),
+		mockClient.EXPECT().ParseEventLog(gomock.Any(), log115).Return(eventFor(log115), nil),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(120), uint64(125)).DoAndReturn(fetchThenCancel(cancel)),
 	)
 
 	var seen []uint64
@@ -236,7 +236,7 @@ func TestSubscribeEvents_CatchupIsBatched(t *testing.T) {
 		return nil
 	})
 	require.ErrorIs(t, err, context.Canceled)
-	require.Equal(t, []uint64{110, 130}, seen, "batches emit in order before the next fetch")
+	require.Equal(t, []uint64{105, 115}, seen, "batches emit in order before the next fetch")
 }
 
 // TestSubscribeEvents_CoalescesQueuedHeads pins that heads queued during a slow
@@ -552,14 +552,14 @@ func TestSubscribeEvents_ReportsEveryBatchAndStopsOnLateFailure(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	chain := &headChain{}
-	mockClient, _, _ := headFixture(t, ctrl, chain.next(145))
+	mockClient, _, _ := headFixture(t, ctrl, chain.next(125))
 	subscriber := newTestSubscriber(t, mockClient, 0)
 
 	fetchErr := errors.New("provider 503")
 	gomock.InOrder(
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(119)).Return(nil, nil),
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(120), uint64(139)).Return(nil, nil),
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(140), uint64(145)).Return(nil, fetchErr),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(109)).Return(nil, nil),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(110), uint64(119)).Return(nil, nil),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(120), uint64(125)).Return(nil, fetchErr),
 	)
 
 	var reported []uint64
@@ -570,7 +570,7 @@ func TestSubscribeEvents_ReportsEveryBatchAndStopsOnLateFailure(t *testing.T) {
 
 	err := subscriber.SubscribeEvents(context.Background(), 100, func(*domain.BlockchainEvent) error { return nil })
 	require.ErrorIs(t, err, fetchErr)
-	require.Equal(t, []uint64{119, 139}, reported, "batches before the failure were reported; the failed one was not")
+	require.Equal(t, []uint64{109, 119}, reported, "batches before the failure were reported; the failed one was not")
 }
 
 // TestSubscribeEvents_ReportsScannedRangeAfterEvents pins the progress
@@ -642,7 +642,7 @@ func TestSubscribeEvents_UnboundedCatchupWhenZero(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(1), uint64(20)).DoAndReturn(fetchThenCancel(cancel))
+	mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(1), uint64(10)).DoAndReturn(fetchThenCancel(cancel))
 
 	err := subscriber.SubscribeEvents(ctx, 1, func(*domain.BlockchainEvent) error { return nil })
 	require.ErrorIs(t, err, context.Canceled)

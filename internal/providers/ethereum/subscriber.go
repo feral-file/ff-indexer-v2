@@ -24,12 +24,15 @@ const (
 	headBufferSize = 64
 
 	// catchupBatchBlocks bounds one eth_getLogs fetch while filling a gap.
-	// Raw topic matches run ~470 per mainnet block (ERC-20 Transfers share the
-	// ERC-721 signature and are only discarded at parse time), so 20 blocks is
-	// ~9.4k logs — under Infura's 10k-result cap, so the pagination helper does
-	// not pay a halving cascade, and a few MB in memory instead of the ~23M
-	// logs a whole max_catchup_blocks range would materialize at once.
-	catchupBatchBlocks = 20
+	// Raw topic matches average ~470 per mainnet block (ERC-20 Transfers share
+	// the ERC-721 signature and are only discarded at parse time) but busy
+	// stretches run well above that: measured live, a 20-block batch tripped
+	// Infura's 10k-result cap (its hint suggested 18) and the halving cascade
+	// plus 503 retries stalled the first batch for over a minute. Ten blocks is
+	// ~4.7k logs on average — margin under the cap, so batches complete in one
+	// call, and a few MB in memory instead of the ~23M logs a whole
+	// max_catchup_blocks range would materialize at once.
+	catchupBatchBlocks = 10
 
 	// catchupLogEvery is the progress cadence (in batches) during a gap fill.
 	catchupLogEvery = 50
