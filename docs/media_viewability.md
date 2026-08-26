@@ -142,7 +142,7 @@ render capacity (~356k eligible URLs at rollout) and whatever ranks last waits w
 
 1. **Urgent re-probes** — URLs holding an active gate (the probe is their only healer;
    queueing a heal behind the seeding pass hides a recovered token for weeks) and
-   pending blank/stalled debounces (starving the second look makes every accumulated
+   pending blank debounces (starving the second look makes every accumulated
    first-failure gate in one burst when seeding drains, instead of spread out at the
    designed retry cadence).
 2. **Never-probed coverage** — HTML/animation before images (byte checks are weakest for
@@ -163,7 +163,7 @@ watch `media_render_probes`, hand-verify a random sample of would-be-gated URLs
 SELECT media_url, verdict, consecutive_failures, last_error
 FROM media_render_probes
 WHERE verdict = 'known_bad_fingerprint'
-   OR (verdict IN ('blank','stalled') AND consecutive_failures >= 2)
+   OR (verdict = 'blank' AND consecutive_failures >= 2)
 ORDER BY random() LIMIT 50;
 ```
 
@@ -184,14 +184,34 @@ fixed viewport, waits for the page to settle, screenshots, and classifies:
 - **blank** — near-zero luminance variance. Gates only after
   `failure_gate_threshold` (default 2) consecutive failures, because slow WebGL under
   software GL and intentionally dark works produce false blanks.
-- **stalled** — navigation failure or timeout. Debounced like blank.
+- **stalled** — navigation failure or timeout. Recorded, never counted: a timeout is a
+  no-evidence outcome (below), not a failure.
 - **rendered_ok** — resets the failure counter; if the URL was render-gated, heals it
   (the probe is the *only* healer of `render_*` rows — see the ownership rule).
 
-**Not every probe attempt is a verdict.** Two outcomes are recorded as *no evidence about
-the artwork* and never advance the failure counter, because both were measured in
-production (2026-08-17/18) marching healthy URLs toward the gate threshold when they were
-still counted as `stalled`/`blank`:
+**Not every probe attempt is a verdict.** Three outcomes are recorded as *no evidence
+about the artwork* and never advance the failure counter, because each was measured in
+production marching healthy URLs toward the gate threshold when it was still counted as
+`stalled`/`blank`:
+
+- **A stall** (navigation failure or timeout) keeps its `stalled` label and `last_error`
+  for telemetry, but the counter, gate marker, and last capture are carried forward
+  untouched, so it can neither gate nor accumulate. "The prober could not finish
+  looking" is not "the prober saw it broken": prod-01 is a shared 4-vCPU droplet
+  rendering under software GL with `media_worker.concurrency: 4`, and a collector's
+  player runs the same page alone on real hardware. Measured 2026-08-25 by re-probing 40
+  production would-gate stalls on unloaded hardware with the indexer's own renderer,
+  classifier, and configuration: 29 rendered (20 inside the *old* 45s budget), and the
+  28 that rendered in every configuration carried counters of 9–13 — the debounce had
+  re-measured the loaded prober nine times over. Accepted trade-off: a page that hangs
+  for every viewer is no longer gated by L1, the same conservative contract L0 lives by.
+  Cadence: a first stall retries on `retry_interval`; a stall following a stall is
+  treated as durable and moves to `no_evidence_recheck_interval` (`broken_recheck_interval`
+  for a gated row), or ~1,300 persistently stalling URLs on an hourly retry would
+  out-spend the daily render budget. The probe no longer writes `render_stalled`; rows
+  gated with it earlier keep the reason until their healing render, and the render-due
+  query's urgent tier keys on a non-zero counter rather than the verdict, so a stall
+  retry does not jump the coverage queue.
 
 - **Browser launch failure** (`probe.ErrBrowserUnavailable`: fork/exec exhaustion,
   chromium startup crash, DevTools socket timeout) is a worker-host failure. The job is
@@ -232,8 +252,24 @@ scripts — all keep the full window, as does an animation media_source on any r
 any unknown, mixed, or unsniffed signal. A wrong shortcut manufactures a blank verdict
 on real art; a wrong full settle only costs seconds.
 
-Gating writes `token_media_health.failure_reason` (`render_blank` / `render_stalled` /
-`render_known_bad`) through the same `BatchUpdateTokensViewability` + webhook path as
+**The confirming look must be able to disagree with the first.** A blank's second probe
+— the one at `consecutive_failures ≥ 1` whose blank gates — and a gated URL's healing
+probe are *confirmation probes*: they render at `confirm_settle_ms` (default 30s)
+regardless of render class, and one at a time per worker, with no other render from that
+worker in flight (first looks share a lane; a confirmation holds it exclusively, and Go's
+`RWMutex` lets a waiting confirmation block new first looks so it cannot starve). The
+threshold-2 debounce failed in production not because two looks are too few but because
+the second look ran under the first look's conditions: in the same 2026-08-25 audit, 31 of
+40 would-gate `blank` rows rendered on unloaded hardware in every configuration tried,
+every one at counter 4, while raising the settle alone rescued none of them on idle
+hardware — the artifact is contention, so the fix is to remove it for the look that
+decides. The cost is bounded: other probe jobs on that worker wait one render
+(`timeout_ms`) holding their slot; media processing is unaffected. The 5 honest blanks in
+that sample (HTTP 200 shells that paint nothing) were blank on every backend — exactly
+the class L1 exists for and L0 cannot see.
+
+Gating writes `token_media_health.failure_reason` (`render_blank` / `render_known_bad`;
+`render_stalled` survives only on rows gated before stalls stopped counting) through the same `BatchUpdateTokensViewability` + webhook path as
 L0, so consumers see one consistent viewability stream.
 
 **The gate is URL-level state, held on `media_render_probes.health_gated`.** Token health

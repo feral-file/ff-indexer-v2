@@ -208,8 +208,9 @@ rasterizer:
 # classifies the painted frame (blank / known-bad fingerprint / rendered ok), and gates
 # token viewability on confirmed failures. The media health sweeper enqueues probe jobs;
 # the CGO media worker executes them (requires media_enabled: true and chromium in the
-# image). Fingerprint matches gate immediately; blank/stalled gate only after
-# failure_gate_threshold consecutive probes.
+# image). Fingerprint matches gate immediately; blank gates only after
+# failure_gate_threshold consecutive probes; a stall (timeout) is recorded but never
+# counts — it is evidence about the prober's load, not the page.
 render_probe:
   # Enabled by default, but only runs where media_enabled is true (probes execute in the
   # media worker; on lightweight deployments a default-enabled probe is simply inert).
@@ -240,6 +241,13 @@ render_probe:
   # (they paint on decode — the full window above exists for generative works). SVG and
   # anything animation-flavored keeps the full settle. <= 0 disables the shortcut.
   image_settle_ms: 2000
+  # Settle for confirmation probes: the second look that can gate a blank, and the heal
+  # attempt for a gated URL. Confirmations also render one at a time per worker. The
+  # confirming look is only evidence if it can disagree with the first — under the same
+  # settle and the same load it cannot (shadow audit 2026-08-25: 31/40 would-gate blanks
+  # rendered fine elsewhere, all at counter 4). Must fit under timeout_ms with headroom.
+  # <= 0 keeps the class settle for confirmations.
+  confirm_settle_ms: 30000
   blank_variance_threshold: 0.001
   # Chromium runs sandboxed by default. Only set true where the runtime cannot support
   # the sandbox (no unprivileged user namespaces / restrictive seccomp) — an unsandboxed

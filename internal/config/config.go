@@ -315,9 +315,14 @@ type RenderProbeConfig struct {
 	// (they paint on decode; the full window exists for generative works). <= 0 disables
 	// the shortcut and every class gets SettleMs
 	ImageSettleMs int `mapstructure:"image_settle_ms"`
+	// ConfirmSettleMs is the settle for confirmation probes — the second look that can
+	// gate a blank, and the heal attempt for a gated URL. Confirmations also render one
+	// at a time per worker. Longer than SettleMs on purpose: the confirming look is only
+	// evidence if it can disagree with the first. <= 0 keeps the class settle
+	ConfirmSettleMs int `mapstructure:"confirm_settle_ms"`
 	// BlankVarianceThreshold: frames with normalized luminance variance below this are blank
 	BlankVarianceThreshold float64 `mapstructure:"blank_variance_threshold"`
-	// FailureGateThreshold: consecutive blank/stalled probes before viewability gates
+	// FailureGateThreshold: consecutive blank probes before viewability gates (a stall never counts)
 	// (fingerprint matches gate immediately)
 	FailureGateThreshold int `mapstructure:"failure_gate_threshold"`
 	// RecheckInterval schedules the next probe after rendered_ok
@@ -743,6 +748,15 @@ func validateRenderProbeConfig(c *RenderProbeConfig, mediaEnabled bool, mediaQue
 				"stalls in the settle sleep and gates healthy media after the debounce",
 			effTimeout, effSettle, probe.MinRenderHeadroomMs))
 	}
+	// The same headroom rule for the confirmation settle: it replaces settle_ms on the
+	// probes that decide gate state, so a confirmation that cannot fit the budget would
+	// stall every second look — and a stall never heals a gated row.
+	if c.ConfirmSettleMs > 0 && effTimeout < c.ConfirmSettleMs+probe.MinRenderHeadroomMs {
+		invalid = append(invalid, fmt.Sprintf(
+			"render_probe.timeout_ms (effective %dms) must exceed confirm_settle_ms (%dms) by at least %dms: "+
+				"every confirmation probe would stall in the settle sleep",
+			effTimeout, c.ConfirmSettleMs, probe.MinRenderHeadroomMs))
+	}
 	// Viewport bounds are validated against the renderer's capture caps at startup
 	// because the failure mode of an oversized viewport is silent and severe: chromium
 	// allocates and captures the frame, the renderer rejects it post-hoc (encoded or
@@ -1010,6 +1024,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("render_probe.timeout_ms", 90000)
 	v.SetDefault("render_probe.settle_ms", 15000)
 	v.SetDefault("render_probe.image_settle_ms", 2000)
+	v.SetDefault("render_probe.confirm_settle_ms", 30000)
 	v.SetDefault("render_probe.blank_variance_threshold", 0.001)
 	v.SetDefault("render_probe.failure_gate_threshold", 2)
 	v.SetDefault("render_probe.recheck_interval", "168h")
@@ -1233,6 +1248,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"render_probe.enforce",
 		"render_probe.settle_ms",
 		"render_probe.image_settle_ms",
+		"render_probe.confirm_settle_ms",
 		"render_probe.blank_variance_threshold",
 		"render_probe.failure_gate_threshold",
 		"render_probe.recheck_interval",

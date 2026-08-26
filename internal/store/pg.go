@@ -3358,7 +3358,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 // meaningful probe there; a screenshot of an MP4 proves nothing).
 //
 // Ordering is three priority tiers — urgent re-probes (active gates and pending
-// blank/stalled debounces), then never-probed coverage, then routine rechecks — and the
+// blank debounces), then never-probed coverage, then routine rechecks — and the
 // tier split is load-bearing, not cosmetic. The render corpus is far larger than render
 // capacity (~356k eligible URLs at rollout against a handful of probes per minute), so
 // whatever ranks last waits weeks. Ranking re-probes last starves heals (a gated URL's
@@ -3432,9 +3432,13 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		-- when the never-probed backlog is weeks long, as it is at initial rollout):
 		--   0. Urgent re-probes: active gates (the probe is a gated URL's ONLY healer, so
 		--      queueing heals behind a 350k-URL seeding pass hides recovered tokens for
-		--      weeks) and pending blank/stalled debounces (starving the second look makes
+		--      weeks) and pending blank debounces (starving the second look makes
 		--      every accumulated first-failure gate in one burst when seeding drains,
-		--      instead of spread out at the designed retry cadence).
+		--      instead of spread out at the designed retry cadence). Keyed on the
+		--      counter, not the verdict: a stall never advances the counter (no
+		--      evidence), so a stalled row at zero is a retry, not a second look, and
+		--      must not jump the coverage queue — while a blank debounce whose latest
+		--      attempt stalled keeps its non-zero counter and stays urgent.
 		--   1. Never-probed coverage.
 		--   2. Routine rechecks of rendered_ok URLs. Ranked LAST deliberately: as seeded
 		--      URLs come due again (RecheckInterval), putting any re-probe above coverage
@@ -3443,7 +3447,7 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		--      thing on this list to postpone.
 		ORDER BY CASE
 		           WHEN p.media_url_hash IS NOT NULL
-		                AND (p.health_gated = true OR p.verdict IN ('blank', 'stalled')) THEN 0
+		                AND (p.health_gated = true OR p.consecutive_failures > 0) THEN 0
 		           WHEN p.media_url_hash IS NULL THEN 1
 		           ELSE 2
 		         END ASC,

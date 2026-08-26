@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -39,13 +40,14 @@ type RenderProbeExecutor interface {
 type RenderProbeExecutorConfig struct {
 	// BlankVarianceThreshold: frames with normalized luminance variance below this are blank.
 	BlankVarianceThreshold float64
-	// FailureGateThreshold is how many consecutive blank/stalled probes gate viewability
-	// (known-bad fingerprint matches gate immediately, ignoring this).
+	// FailureGateThreshold is how many consecutive blank probes gate viewability
+	// (known-bad fingerprint matches gate immediately, ignoring this; a stall never
+	// counts — see ExecuteRenderProbe).
 	FailureGateThreshold int
 	// RecheckInterval schedules the next probe after rendered_ok.
 	RecheckInterval time.Duration
-	// RetryInterval schedules the next probe after a not-yet-gating blank/stalled (the
-	// debounce window).
+	// RetryInterval schedules the next probe after a not-yet-gating blank (the debounce
+	// window) and after a first stall (a stall under load deserves a soon retry).
 	RetryInterval time.Duration
 	// BrokenRecheckInterval schedules the next probe after gating; the probe is the only
 	// healer of render-gated rows (L0 skips them), so this also bounds heal latency.
@@ -70,6 +72,11 @@ type RenderProbeExecutorConfig struct {
 	// image majority of the corpus (~60% at rollout) roughly halves total render
 	// throughput for nothing. <= 0 disables the shortcut (full settle for everything).
 	ImageSettleMs int
+	// ConfirmSettleMs is the settle for a confirmation probe: one whose blank would gate
+	// (consecutive_failures > 0) or whose render would heal a gate. It replaces the class
+	// settle for those probes, and they also render alone (see renderProbeExecutor.lane).
+	// <= 0 keeps the class settle for confirmations.
+	ConfirmSettleMs int
 	// Fingerprints are known-bad render pHashes (directory listings, error pages,
 	// placeholders); a match gates immediately.
 	Fingerprints []probe.Fingerprint
@@ -84,6 +91,9 @@ type renderProbeExecutor struct {
 	tokenQueue    string
 	clock         adapter.Clock
 	cfg           RenderProbeExecutorConfig
+	// lane serializes confirmation probes against every other render on this worker:
+	// first looks hold it shared, a confirmation holds it exclusively. See render.
+	lane sync.RWMutex
 }
 
 // NewRenderProbeExecutor creates a render probe executor.
@@ -123,16 +133,19 @@ func (e *renderProbeExecutor) gated(prev *schema.MediaRenderProbe) bool {
 // ExecuteRenderProbe implements RenderProbeExecutor.
 //
 // Reason: the debounce state machine lives here, not in SQL — fingerprint gates
-// immediately (unambiguous), blank/stalled gate only at FailureGateThreshold consecutive
+// immediately (unambiguous), blank gates only at FailureGateThreshold consecutive
 // failures because slow WebGL under software GL and intentionally dark works produce
 // false blanks on a single observation. Outcomes that carry no evidence about the
 // artwork never touch that counter: a browser that failed to launch reschedules the job
-// (worker-host failure), and a main document served non-2xx or an SSRF refusal is
-// recorded via recordNoEvidence. Trade-offs: a URL gated by the probe is healed
-// only by the probe (L0 excludes render_% rows), so BrokenRecheckInterval bounds how long
-// a false gate can last. Constraints: baseline_phash is passed on every successful
-// capture but the store upsert never overwrites an existing baseline (capture-only
-// contract, feral-file#3485).
+// (worker-host failure); a main document served non-2xx or an SSRF refusal is recorded
+// via recordNoEvidence; and a stall (load failure or timeout) is recorded via
+// recordStalled — "the prober could not finish looking" is not "the prober saw it
+// broken". Trade-offs: a URL gated by the probe is healed only by the probe (L0 excludes
+// render_% rows), so BrokenRecheckInterval bounds how long a false gate can last; a page
+// that hangs for every viewer is no longer gated by L1 at all, the same conservative
+// contract L0 lives by (a false broken hides real art). Constraints: baseline_phash is
+// passed on every successful capture but the store upsert never overwrites an existing
+// baseline (capture-only contract, feral-file#3485).
 func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string) error {
 	now := e.clock.Now()
 
@@ -144,6 +157,9 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		return fmt.Errorf("failed to load previous render probe: %w", err)
 	}
 	wasGated := e.gated(prev)
+	// A confirmation is the look whose outcome changes gate state: a blank now would
+	// gate (the counter is already non-zero), or a render now would heal.
+	confirming := wasGated || (prev != nil && prev.ConsecutiveFailures > 0)
 
 	// Chromium performs its own network I/O outside the SSRF-protected HTTP client. The
 	// renderer validates every browser request, but refusing an obviously blocked URL
@@ -184,22 +200,12 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		row.HealthGated = prev.HealthGated
 	}
 
-	// Static raster images paint on decode; everything else (HTML, animation sources,
-	// SVG, mixed or unknown signals) keeps the renderer's full settle. A store failure
-	// here is infrastructure, same as the probe-row load above — fail the job rather
-	// than guess a class.
-	settleMs := 0 // renderer default
-	if e.cfg.ImageSettleMs > 0 {
-		staticImage, err := e.store.IsStaticImageRenderClass(ctx, url)
-		if err != nil {
-			return fmt.Errorf("failed to classify render class: %w", err)
-		}
-		if staticImage {
-			settleMs = e.cfg.ImageSettleMs
-		}
+	settleMs, err := e.settleFor(ctx, url, confirming)
+	if err != nil {
+		return err
 	}
 
-	capture, renderErr := e.renderer.RenderProbe(ctx, url, settleMs)
+	capture, renderErr := e.render(ctx, url, settleMs, confirming)
 	if renderErr != nil {
 		// Job cancellation / worker shutdown says nothing about the artwork: leave all
 		// probe state untouched so the URL stays due and the next run judges it. The job
@@ -224,12 +230,17 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			return fmt.Errorf("browser unavailable (%w); rescheduling: %w",
 				renderErr, jobs.ErrReschedule(now.Add(browserUnavailableRetryDelay)))
 		}
-		// Load/timeout failure: the "stalled" verdict.
-		errMsg := renderErr.Error()
-		row.Verdict = schema.RenderProbeVerdictStalled
-		row.LastError = &errMsg
-		row.ConsecutiveFailures++
-		return e.finishFailure(ctx, url, row, wasGated, now)
+		// Load/timeout failure: the "stalled" verdict, recorded as telemetry, never as
+		// evidence. Measured 2026-08-25 by re-probing 40 production would-gate stalls on
+		// unloaded hardware in production's own configuration: 29 rendered (20 inside
+		// the OLD 45s budget), and the 28 that rendered in every configuration carried
+		// counters of 9–13 — the debounce had re-measured the loaded prober, not the
+		// page, nine times over.
+		logger.WarnCtx(ctx, "Render probe stalled, recorded without evidence",
+			zap.String("url", url),
+			zap.Error(renderErr),
+		)
+		return e.recordStalled(ctx, url, renderErr.Error(), prev, wasGated, now)
 	}
 
 	// A non-2xx main document means the server sent an error body instead of the
@@ -294,8 +305,8 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 	case schema.RenderProbeVerdictKnownBadFingerprint:
 		errMsg := fmt.Sprintf("render matched known-bad fingerprint %q", classification.MatchedLabel)
 		row.LastError = &errMsg
-		// The counter is blank/stalled debounce state and a fingerprint match is not a
-		// blank/stalled observation, so it resets rather than increments. Incrementing
+		// The counter is blank debounce state and a fingerprint match is not a blank
+		// observation, so it resets rather than increments. Incrementing
 		// bypassed the debounce after a rollback: release-on-disable preserves the probe
 		// row, so a retained fingerprint count of 1 plus one transient blank after
 		// re-enable reached the threshold and gated healthy media on a single
@@ -339,12 +350,12 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 	}
 }
 
-// finishFailure applies the debounce policy for blank/stalled outcomes: record below the
+// finishFailure applies the debounce policy for a blank outcome: record below the
 // threshold, gate at it. wasGated keeps an already-gated row gated (and re-broadcasts
 // nothing — the health row is already broken, so the update is idempotent).
 func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row schema.MediaRenderProbe, wasGated bool, now time.Time) error {
 	// An already-gated URL stays gated: a further failure never releases it, and the
-	// marker must survive verdict changes (a fingerprint gate followed by a stall below
+	// marker must survive verdict changes (a fingerprint gate followed by a blank below
 	// the threshold) or the health row could never be healed.
 	gate := wasGated || row.ConsecutiveFailures >= e.cfg.FailureGateThreshold
 	if gate {
@@ -382,10 +393,9 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 		return nil
 	}
 
+	// Only blank reaches here now; RenderFailureStalled stays defined for rows gated
+	// before stalls stopped counting, until their healing render clears them.
 	reason := schema.RenderFailureBlank
-	if row.Verdict == schema.RenderProbeVerdictStalled {
-		reason = schema.RenderFailureStalled
-	}
 	// Idempotent for an already-gated row: it refreshes the reason to match the newest
 	// verdict without changing whether the URL is gated. Marker and health rows go in one
 	// locked transaction so concurrent indexing cannot slip an ungated row in between.
@@ -420,26 +430,74 @@ func (e *renderProbeExecutor) noEvidenceInterval(wasGated bool) time.Duration {
 	return e.cfg.NoEvidenceRecheckInterval
 }
 
-// recordNoEvidence persists a probe attempt that produced no evidence about the artwork
-// (SSRF policy refusal, or a main document served with a non-2xx status): the attempt
-// and its reason are recorded, but verdict, failure counter, gate marker, and the last
-// successful capture's metadata are preserved from the previous row.
+// settleFor picks the settle window for one probe.
 //
-// Reason: overwriting a prior gate's verdict/counter here would strand a gated URL as
+// Reason: a confirmation probe takes ConfirmSettleMs regardless of render class — the
+// confirming look is only evidence if it can disagree with the first look, and one that
+// re-runs the first look's window under the first look's load cannot (31/40 production
+// would-gate blanks re-probed on unloaded hardware rendered fine, every one at counter
+// 4). Otherwise static raster images paint on decode and take ImageSettleMs; everything
+// else (HTML, animation sources, SVG, mixed or unknown signals) keeps the renderer's
+// default. Constraints: a class-lookup store failure is infrastructure, same as the
+// probe-row load — fail the job rather than guess a class.
+func (e *renderProbeExecutor) settleFor(ctx context.Context, url string, confirming bool) (int, error) {
+	if confirming && e.cfg.ConfirmSettleMs > 0 {
+		return e.cfg.ConfirmSettleMs, nil
+	}
+	if e.cfg.ImageSettleMs <= 0 {
+		return 0, nil // renderer default
+	}
+	staticImage, err := e.store.IsStaticImageRenderClass(ctx, url)
+	if err != nil {
+		return 0, fmt.Errorf("failed to classify render class: %w", err)
+	}
+	if staticImage {
+		return e.cfg.ImageSettleMs, nil
+	}
+	return 0, nil
+}
+
+// render runs the browser under the confirmation lane: first looks share the lane, a
+// confirmation holds it exclusively and so renders with no other probe from this worker
+// in flight.
+//
+// Reason: the threshold-2 debounce failed in production not because two looks are too
+// few but because the second look ran under the same conditions as the first. prod-01
+// is a shared 4-vCPU droplet rendering under software GL with media_worker.concurrency
+// 4, so a confirming probe rendered beside three others exactly like the first one did
+// and reproduced the CPU-starved blank every time. Trade-offs: while a confirmation
+// renders, other probe jobs on this worker wait on the lane holding their slot — bounded
+// by one render (timeout_ms); media processing jobs are unaffected. Go's RWMutex blocks
+// new readers once a writer waits, so confirmations cannot starve. Constraints: the
+// lane is per executor, hence per worker process; it cannot see other processes'
+// renders.
+func (e *renderProbeExecutor) render(ctx context.Context, url string, settleMs int, confirming bool) (*probe.Capture, error) {
+	if confirming {
+		e.lane.Lock()
+		defer e.lane.Unlock()
+	} else {
+		e.lane.RLock()
+		defer e.lane.RUnlock()
+	}
+	return e.renderer.RenderProbe(ctx, url, settleMs)
+}
+
+// carriedRow builds the probe row for an attempt that produced no evidence about the
+// artwork: the attempt (error, next check) is new; verdict, failure counter, gate
+// marker, and the last successful capture's metadata are carried from the previous row.
+//
+// Reason: overwriting a prior gate's verdict/counter would strand a gated URL as
 // permanently broken — a later successful render would not recognize it as gated and so
-// would never heal the health row. First-ever attempts record a stalled verdict (the
-// closest existing category; a new enum value is not worth a migration) with the counter
-// still at zero, so no-evidence outcomes can never accumulate toward the gate threshold.
-// Constraints: the caller picks the recheck interval because it knows the condition's
-// durability — noEvidenceInterval for served error pages and policy refusals (slow for
-// ungated rows, heal-cadence for gated ones), RetryInterval for transient resolver
-// failures where a slow cadence would cost healthy URLs a week of L1 coverage.
-func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, now time.Time, recheckIn time.Duration) error {
+// would never heal the health row. First-ever attempts get a stalled verdict (the
+// closest existing category; a new enum value is not worth a migration) with the
+// counter still at zero, so no-evidence outcomes can never accumulate toward the gate
+// threshold.
+func carriedRow(url, errMsg string, prev *schema.MediaRenderProbe, nextCheckAt time.Time) schema.MediaRenderProbe {
 	row := schema.MediaRenderProbe{
 		MediaURL:    url,
 		Verdict:     schema.RenderProbeVerdictStalled,
 		LastError:   &errMsg,
-		NextCheckAt: now.Add(recheckIn),
+		NextCheckAt: nextCheckAt,
 	}
 	if prev != nil {
 		row.Verdict = prev.Verdict
@@ -451,6 +509,43 @@ func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg 
 		row.Viewport = prev.Viewport
 		row.CapturedAt = prev.CapturedAt
 	}
+	return row
+}
+
+// recordNoEvidence persists a probe attempt that produced no evidence about the artwork
+// (SSRF policy refusal, or a main document served with a non-2xx status) — carriedRow's
+// contract, at the caller's cadence. Constraints: the caller picks the recheck interval
+// because it knows the condition's durability — noEvidenceInterval for served error
+// pages and policy refusals (slow for ungated rows, heal-cadence for gated ones),
+// RetryInterval for transient resolver failures where a slow cadence would cost healthy
+// URLs a week of L1 coverage.
+func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, now time.Time, recheckIn time.Duration) error {
+	if err := e.store.UpsertMediaRenderProbe(ctx, carriedRow(url, errMsg, prev, now.Add(recheckIn))); err != nil {
+		return fmt.Errorf("failed to upsert render probe: %w", err)
+	}
+	return nil
+}
+
+// recordStalled persists a load failure or timeout as the stalled verdict under the
+// no-evidence contract: the label and error are recorded for telemetry, but the failure
+// counter, gate marker, and last capture are carried forward untouched, so a stall can
+// neither gate nor march a URL toward the threshold.
+//
+// Reason: a timeout is a fact about the prober's budget and load, not about the page —
+// see ExecuteRenderProbe. Cadence: a first stall retries on RetryInterval, because a
+// stall under load is the transient case worth a soon second look; a stall following a
+// stall is treated as durable and moves to noEvidenceInterval, or ~1,300 persistently
+// stalling URLs on an hourly retry would out-spend the whole daily render budget and
+// starve coverage of never-probed URLs. Trade-offs: a page that recovers after two
+// stalls waits the slow cadence for L1 to notice — it is not hidden meanwhile, since
+// stalls never gate.
+func (e *renderProbeExecutor) recordStalled(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, wasGated bool, now time.Time) error {
+	interval := e.cfg.RetryInterval
+	if prev != nil && prev.Verdict == schema.RenderProbeVerdictStalled {
+		interval = e.noEvidenceInterval(wasGated)
+	}
+	row := carriedRow(url, errMsg, prev, now.Add(interval))
+	row.Verdict = schema.RenderProbeVerdictStalled
 	if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
 		return fmt.Errorf("failed to upsert render probe: %w", err)
 	}

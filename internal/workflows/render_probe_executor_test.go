@@ -181,31 +181,64 @@ func TestExecuteRenderProbe_secondBlankGatesViewability(t *testing.T) {
 	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
 }
 
-func TestExecuteRenderProbe_stalledRenderCountsTowardGate(t *testing.T) {
-	m, exec := setupRenderProbe(t, renderProbeTestConfig)
-	url := "https://example.com/hangs.html"
+// TestExecuteRenderProbe_stalledRecordsNoEvidence pins the stall contract: a timeout is
+// recorded under its own label but carries the counter and gate state forward untouched,
+// so it can neither gate nor march a URL toward the threshold. Before this, 40 audited
+// production would-gate stalls rendered 29 times on unloaded hardware in production's own
+// configuration, at counters of 9–13.
+func TestExecuteRenderProbe_stalledRecordsNoEvidence(t *testing.T) {
+	t.Run("a stall after a blank keeps the counter and retries soon", func(t *testing.T) {
+		m, exec := setupRenderProbe(t, renderProbeTestConfig)
+		url := "https://example.com/hangs.html"
 
-	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
-	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
-		MediaURL:            url,
-		Verdict:             schema.RenderProbeVerdictStalled,
-		ConsecutiveFailures: 1,
-	}, nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
+		m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+		m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+			MediaURL:            url,
+			Verdict:             schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 1,
+		}, nil)
+		m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
 
-	m.store.EXPECT().
-		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe, upd store.MediaHealthUpdate) ([]uint64, error) {
-			assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict)
-			assert.Equal(t, 2, row.ConsecutiveFailures)
-			assert.Nil(t, row.Phash, "no frame, no phash")
-			require.NotNil(t, upd.FailureReason)
-			assert.Equal(t, schema.RenderFailureStalled, *upd.FailureReason)
-			return []uint64{9}, nil
-		})
-	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{9}).Return(nil, nil)
+		// No AcquireRenderGate: the strict mock enforces that a stall at the threshold
+		// does not gate.
+		m.store.EXPECT().
+			UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+				assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict, "the label is kept for telemetry")
+				assert.Equal(t, 1, row.ConsecutiveFailures, "a stall never advances the counter")
+				assert.False(t, row.HealthGated)
+				assert.Nil(t, row.Phash, "no frame, no phash")
+				require.NotNil(t, row.LastError)
+				assert.Contains(t, *row.LastError, "context deadline exceeded")
+				assert.Equal(t, m.now.Add(renderProbeTestConfig.RetryInterval), row.NextCheckAt,
+					"a first stall is the transient case: soon retry")
+				return nil
+			})
 
-	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+		require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+	})
+
+	t.Run("a stall after a stall is durable and moves to the no-evidence cadence", func(t *testing.T) {
+		m, exec := setupRenderProbe(t, renderProbeTestConfig)
+		url := "https://example.com/always-hangs.html"
+
+		m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+		m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+			MediaURL: url,
+			Verdict:  schema.RenderProbeVerdictStalled,
+		}, nil)
+		m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
+		m.store.EXPECT().
+			UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+				assert.Equal(t, 0, row.ConsecutiveFailures)
+				assert.Equal(t, m.now.Add(renderProbeTestConfig.NoEvidenceRecheckInterval), row.NextCheckAt,
+					"repeat stalls must not hold an hourly retry that would out-spend the render budget")
+				return nil
+			})
+
+		require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+	})
 }
 
 func TestExecuteRenderProbe_fingerprintGatesImmediately(t *testing.T) {
@@ -229,7 +262,7 @@ func TestExecuteRenderProbe_fingerprintGatesImmediately(t *testing.T) {
 		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe, upd store.MediaHealthUpdate) ([]uint64, error) {
 			assert.Equal(t, schema.RenderProbeVerdictKnownBadFingerprint, row.Verdict)
 			assert.Equal(t, 0, row.ConsecutiveFailures,
-				"the counter is blank/stalled debounce state; a fingerprint match is not a blank/stalled observation")
+				"the counter is blank debounce state; a fingerprint match is not a blank observation")
 			require.NotNil(t, row.LastError)
 			assert.Contains(t, *row.LastError, "kubo-dir-listing")
 			require.NotNil(t, upd.FailureReason)
@@ -467,20 +500,112 @@ func TestExecuteRenderProbe_gateSurvivesVerdictChange(t *testing.T) {
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
 
-	// The stall lands at count 2, below the threshold of 3 — but the URL is already
-	// gated, so the marker must persist and the row stay on the broken cadence.
+	// The stall changes the label but carries the counter and the marker forward: the
+	// gate must persist through the verdict change or the health row could never heal.
 	m.store.EXPECT().
-		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe, _ store.MediaHealthUpdate) ([]uint64, error) {
+		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
 			assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict)
-			assert.Equal(t, 2, row.ConsecutiveFailures)
-			assert.True(t, row.HealthGated, "an existing gate must survive a verdict change below threshold")
-			assert.Equal(t, m.now.Add(cfg.BrokenRecheckInterval), row.NextCheckAt)
-			return []uint64{1}, nil
+			assert.Equal(t, 1, row.ConsecutiveFailures)
+			assert.True(t, row.HealthGated, "an existing gate must survive a verdict change")
+			assert.Equal(t, m.now.Add(cfg.RetryInterval), row.NextCheckAt,
+				"a gated row's first stall retries soon: the probe is its only healer")
+			return nil
 		})
-	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{1}).Return(nil, nil)
 
 	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+}
+
+// TestExecuteRenderProbe_confirmationSettle pins which probes are confirmations and what
+// they render with: a non-zero counter or a held gate takes ConfirmSettleMs regardless of
+// render class (the class lookup is skipped), a first look keeps the class settle.
+func TestExecuteRenderProbe_confirmationSettle(t *testing.T) {
+	cfg := renderProbeTestConfig
+	cfg.ImageSettleMs = 2000
+	cfg.ConfirmSettleMs = 30000
+
+	cases := []struct {
+		name          string
+		prev          *schema.MediaRenderProbe
+		wantSettleMs  int
+		wantClassCall bool
+	}{
+		{"first look uses the class settle", nil, 2000, true},
+		{"counter above zero confirms", &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictBlank, ConsecutiveFailures: 1}, 30000, false},
+		{"a held gate confirms", &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictKnownBadFingerprint, HealthGated: true}, 30000, false},
+		{"a clean prior render is a first look", &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictRenderedOK}, 2000, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, exec := setupRenderProbe(t, cfg)
+			url := "https://example.com/confirm.jpg"
+			if tc.prev != nil {
+				tc.prev.MediaURL = url
+			}
+			m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+			m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(tc.prev, nil)
+			if tc.wantClassCall {
+				m.store.EXPECT().IsStaticImageRenderClass(gomock.Any(), url).Return(true, nil)
+			}
+			m.renderer.EXPECT().RenderProbe(gomock.Any(), url, tc.wantSettleMs).Return(contentFrame(), nil)
+			if tc.prev != nil && tc.prev.HealthGated {
+				m.store.EXPECT().ReleaseRenderGate(gomock.Any(), gomock.Any()).Return(nil, nil)
+			} else {
+				m.store.EXPECT().UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).Return(nil)
+			}
+			require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+		})
+	}
+}
+
+// TestExecuteRenderProbe_confirmationRendersAlone pins the lane: a confirmation waits for
+// every in-flight first look on the executor to finish and renders with none beside it.
+// The second look is only evidence if it can disagree with the first, and one that runs
+// under the first look's contention cannot.
+func TestExecuteRenderProbe_confirmationRendersAlone(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	first := "https://example.com/first-look.html"
+	confirm := "https://example.com/confirm.html"
+
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), first).Return(nil, nil)
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), confirm).Return(&schema.MediaRenderProbe{
+		MediaURL:            confirm,
+		Verdict:             schema.RenderProbeVerdictBlank,
+		ConsecutiveFailures: 1,
+	}, nil)
+	m.store.EXPECT().UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).Return(nil).Times(2)
+
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	confirmRendered := make(chan struct{})
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), first, 0).
+		DoAndReturn(func(context.Context, string, int) (*probe.Capture, error) {
+			close(firstStarted)
+			<-releaseFirst
+			return contentFrame(), nil
+		})
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), confirm, 0).
+		DoAndReturn(func(context.Context, string, int) (*probe.Capture, error) {
+			close(confirmRendered)
+			return contentFrame(), nil
+		})
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- exec.ExecuteRenderProbe(context.Background(), first) }()
+	<-firstStarted
+	confirmDone := make(chan error, 1)
+	go func() { confirmDone <- exec.ExecuteRenderProbe(context.Background(), confirm) }()
+
+	select {
+	case <-confirmRendered:
+		t.Fatal("confirmation rendered while a first look was in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseFirst)
+	require.NoError(t, <-firstDone)
+	require.NoError(t, <-confirmDone)
+	<-confirmRendered
 }
 
 // TestExecuteRenderProbe_failedReleaseRetainsGate pins recovery durability: when the
@@ -778,7 +903,7 @@ func TestExecuteRenderProbe_stallAfterCapturePreservesCaptureMetadata(t *testing
 		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
 			assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict)
-			assert.Equal(t, 1, row.ConsecutiveFailures)
+			assert.Equal(t, 0, row.ConsecutiveFailures, "a stall is no evidence; the counter is carried, not advanced")
 			require.NotNil(t, row.Phash, "the last capture's pHash survives a stall")
 			assert.Equal(t, prevPhash, *row.Phash)
 			require.NotNil(t, row.EngineVersion)

@@ -299,6 +299,7 @@ FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://ws.example.com
 FF_INDEXER_TEZOS_API_URL=https://api.tzkt.io
 FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
 FF_INDEXER_RENDER_PROBE_NO_EVIDENCE_RECHECK_INTERVAL=42h
+FF_INDEXER_RENDER_PROBE_CONFIRM_SETTLE_MS=31000
 `
 	require.NoError(t, os.WriteFile(envFile, []byte(envContent), 0600))
 
@@ -334,6 +335,8 @@ database:
 	// making the production cadence untunable without a config-file change).
 	assert.Equal(t, 42*time.Hour, cfg.RenderProbe.NoEvidenceRecheckInterval,
 		"render_probe.no_evidence_recheck_interval must be bound in bindAllEnvVars")
+	assert.Equal(t, 31000, cfg.RenderProbe.ConfirmSettleMs,
+		"render_probe.confirm_settle_ms must be bound in bindAllEnvVars")
 }
 
 func TestLoadAppConfig_FxhashRateLimiterFromEnv(t *testing.T) {
@@ -593,6 +596,10 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 				"render_probe.no_evidence_recheck_interval must be positive"},
 			{"negative no-evidence recheck", func(c *RenderProbeConfig) { c.NoEvidenceRecheckInterval = -time.Hour },
 				"render_probe.no_evidence_recheck_interval must be positive"},
+			// The confirmation settle replaces settle_ms on the probes that decide gate
+			// state, so it needs the same budget headroom or every second look stalls.
+			{"confirm settle without timeout headroom", func(c *RenderProbeConfig) { c.ConfirmSettleMs = probe.DefaultTimeoutMs },
+				"must exceed confirm_settle_ms"},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {

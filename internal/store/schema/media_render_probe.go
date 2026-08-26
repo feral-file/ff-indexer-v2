@@ -68,8 +68,9 @@ type MediaRenderProbe struct {
 	// Verdict is the classification of the last probe
 	Verdict RenderProbeVerdict `gorm:"column:verdict;not null;type:render_probe_verdict"`
 
-	// ConsecutiveFailures counts successive blank/stalled probes (debounce state;
-	// known_bad_fingerprint gates immediately and does not use this counter)
+	// ConsecutiveFailures counts successive blank probes (debounce state;
+	// known_bad_fingerprint gates immediately and does not use this counter; a stall
+	// carries it forward unchanged)
 	ConsecutiveFailures int `gorm:"column:consecutive_failures;not null;default:0"`
 
 	// HealthGated records whether this probe currently holds a render_% gate on the
