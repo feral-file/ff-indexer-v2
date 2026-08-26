@@ -517,8 +517,10 @@ func TestExecuteRenderProbe_gateSurvivesVerdictChange(t *testing.T) {
 }
 
 // TestExecuteRenderProbe_confirmationSettle pins which probes are confirmations and what
-// they render with: a non-zero counter or a held gate takes ConfirmSettleMs regardless of
-// render class (the class lookup is skipped), a first look keeps the class settle.
+// they render with: the look whose blank would reach the gate threshold, or a held gate,
+// takes ConfirmSettleMs regardless of render class (the class lookup is skipped); every
+// other look keeps the class settle. Derived from the threshold so a threshold of one
+// (legal) makes every probe a confirmation rather than gating on a shared first look.
 func TestExecuteRenderProbe_confirmationSettle(t *testing.T) {
 	cfg := renderProbeTestConfig
 	cfg.ImageSettleMs = 2000
@@ -526,17 +528,23 @@ func TestExecuteRenderProbe_confirmationSettle(t *testing.T) {
 
 	cases := []struct {
 		name          string
+		threshold     int
 		prev          *schema.MediaRenderProbe
 		wantSettleMs  int
 		wantClassCall bool
 	}{
-		{"first look uses the class settle", nil, 2000, true},
-		{"counter above zero confirms", &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictBlank, ConsecutiveFailures: 1}, 30000, false},
-		{"a held gate confirms", &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictKnownBadFingerprint, HealthGated: true}, 30000, false},
-		{"a clean prior render is a first look", &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictRenderedOK}, 2000, true},
+		{"first look uses the class settle", 2, nil, 2000, true},
+		{"the look that can gate confirms", 2, &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictBlank, ConsecutiveFailures: 1}, 30000, false},
+		{"a held gate confirms", 2, &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictKnownBadFingerprint, HealthGated: true}, 30000, false},
+		{"a clean prior render is a first look", 2, &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictRenderedOK}, 2000, true},
+		{"threshold one: even a never-probed URL confirms", 1, nil, 30000, false},
+		{"threshold three: the middle look is not the deciding one", 3, &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictBlank, ConsecutiveFailures: 1}, 2000, true},
+		{"threshold three: the deciding look confirms", 3, &schema.MediaRenderProbe{Verdict: schema.RenderProbeVerdictBlank, ConsecutiveFailures: 2}, 30000, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			cfg := cfg
+			cfg.FailureGateThreshold = tc.threshold
 			m, exec := setupRenderProbe(t, cfg)
 			url := "https://example.com/confirm.jpg"
 			if tc.prev != nil {

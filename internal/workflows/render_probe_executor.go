@@ -71,10 +71,10 @@ type RenderProbeExecutorConfig struct {
 	// image majority of the corpus (~60% at rollout) roughly halves total render
 	// throughput for nothing. <= 0 disables the shortcut (full settle for everything).
 	ImageSettleMs int
-	// ConfirmSettleMs is the settle for a confirmation probe: one whose blank would gate
-	// (consecutive_failures > 0) or whose render would heal a gate. It replaces the class
-	// settle for those probes, and they also render alone (see renderProbeExecutor.lane).
-	// <= 0 keeps the class settle for confirmations.
+	// ConfirmSettleMs is the settle for a confirmation probe: one whose blank would reach
+	// FailureGateThreshold (the second probe at the default 2; every probe at 1) or whose
+	// render would heal a gate. It replaces the class settle for those probes, and they
+	// also render alone (see renderProbeExecutor.lane). <= 0 keeps the class settle.
 	ConfirmSettleMs int
 	// Fingerprints are known-bad render pHashes (directory listings, error pages,
 	// placeholders); a match gates immediately.
@@ -156,9 +156,7 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		return fmt.Errorf("failed to load previous render probe: %w", err)
 	}
 	wasGated := e.gated(prev)
-	// A confirmation is the look whose outcome changes gate state: a blank now would
-	// gate (the counter is already non-zero), or a render now would heal.
-	confirming := wasGated || (prev != nil && prev.ConsecutiveFailures > 0)
+	confirming := e.confirming(prev, wasGated)
 
 	// Chromium performs its own network I/O outside the SSRF-protected HTTP client. The
 	// renderer validates every browser request, but refusing an obviously blocked URL
@@ -436,6 +434,26 @@ func (e *renderProbeExecutor) noEvidenceInterval(wasGated bool) time.Duration {
 		return e.cfg.BrokenRecheckInterval
 	}
 	return e.cfg.NoEvidenceRecheckInterval
+}
+
+// confirming reports whether this probe is the look whose outcome changes gate state: a
+// blank now would reach FailureGateThreshold, or a render now would heal a held gate.
+//
+// Reason: derived from the threshold, not from "counter > 0" (the first cut), because
+// failure_gate_threshold accepts 1 — under which a never-probed URL's first blank gates,
+// and keying on the counter would have run that deciding look on the shared lane at the
+// first-look settle (#142 bot round 2). Constraints: at a threshold above 2 the looks
+// between the first and the deciding one stay ordinary first looks by design; only the
+// look that can gate needs the confirmation conditions.
+func (e *renderProbeExecutor) confirming(prev *schema.MediaRenderProbe, wasGated bool) bool {
+	if wasGated {
+		return true
+	}
+	failures := 0
+	if prev != nil {
+		failures = prev.ConsecutiveFailures
+	}
+	return failures+1 >= e.cfg.FailureGateThreshold
 }
 
 // settleFor picks the settle window for one probe.

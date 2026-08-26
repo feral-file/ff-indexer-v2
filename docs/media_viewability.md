@@ -252,9 +252,9 @@ scripts — all keep the full window, as does an animation media_source on any r
 any unknown, mixed, or unsniffed signal. A wrong shortcut manufactures a blank verdict
 on real art; a wrong full settle only costs seconds.
 
-**The confirming look must be able to disagree with the first.** A blank's second probe
-— the one at `consecutive_failures ≥ 1` whose blank gates — and a gated URL's healing
-probe are *confirmation probes*: they render at `confirm_settle_ms` (default 30s)
+**The confirming look must be able to disagree with the first.** The probe whose blank
+would reach `failure_gate_threshold` (the second at the default of 2; every probe at 1)
+and a gated URL's healing probe are *confirmation probes*: they render at `confirm_settle_ms` (default 30s)
 regardless of render class, and one at a time per worker, with no other render from that
 worker in flight: first looks share a render lane, a confirmation takes it alone, and a
 probe the lane cannot admit is **rescheduled** (30s) rather than parked — probe jobs share
