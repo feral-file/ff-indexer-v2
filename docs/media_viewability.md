@@ -256,15 +256,20 @@ on real art; a wrong full settle only costs seconds.
 — the one at `consecutive_failures ≥ 1` whose blank gates — and a gated URL's healing
 probe are *confirmation probes*: they render at `confirm_settle_ms` (default 30s)
 regardless of render class, and one at a time per worker, with no other render from that
-worker in flight (first looks share a lane; a confirmation holds it exclusively, and Go's
-`RWMutex` lets a waiting confirmation block new first looks so it cannot starve). The
-threshold-2 debounce failed in production not because two looks are too few but because
+worker in flight: first looks share a render lane, a confirmation takes it alone, and a
+probe the lane cannot admit is **rescheduled** (30s) rather than parked — probe jobs share
+the media queue's worker pool with media indexing, so a probe waiting in its slot would
+be a slot media indexing cannot have. A confirmation turned away behind in-flight first
+looks holds new first looks off (they reschedule too) until it gets in on its retry, and
+the hold expires on its own if it never returns. The threshold-2 debounce failed in production not because two looks are too few but because
 the second look ran under the first look's conditions: in the same 2026-08-25 audit, 31 of
 40 would-gate `blank` rows rendered on unloaded hardware in every configuration tried,
 every one at counter 4, while raising the settle alone rescued none of them on idle
 hardware — the artifact is contention, so the fix is to remove it for the look that
-decides. The cost is bounded: other probe jobs on that worker wait one render
-(`timeout_ms`) holding their slot; media processing is unaffected. The 5 honest blanks in
+decides. The cost is queue round-trips, never occupied slots; media processing is
+unaffected. Rows that accumulated `stalled` counters before this contract were reset by
+migration 028 (ungated only), so a legacy stall count cannot serve as a blank's first
+strike. The 5 honest blanks in
 that sample (HTTP 200 shells that paint nothing) were blank on every backend — exactly
 the class L1 exists for and L0 cannot see.
 

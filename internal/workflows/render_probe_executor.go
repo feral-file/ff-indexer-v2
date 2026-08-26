@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -91,9 +90,9 @@ type renderProbeExecutor struct {
 	tokenQueue    string
 	clock         adapter.Clock
 	cfg           RenderProbeExecutorConfig
-	// lane serializes confirmation probes against every other render on this worker:
-	// first looks hold it shared, a confirmation holds it exclusively. See render.
-	lane sync.RWMutex
+	// lane admits renders: first looks share it, a confirmation takes it alone, and a
+	// render that cannot enter is rescheduled rather than parked in a worker slot.
+	lane renderLane
 }
 
 // NewRenderProbeExecutor creates a render probe executor.
@@ -205,8 +204,17 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		return err
 	}
 
-	capture, renderErr := e.render(ctx, url, settleMs, confirming)
+	capture, renderErr := e.render(ctx, url, settleMs, confirming, now)
 	if renderErr != nil {
+		// The lane is busy: nothing rendered, nothing is known, no state is written. The
+		// job comes back after laneBusyRetryDelay and the slot runs other work meanwhile.
+		if errors.Is(renderErr, errRenderLaneBusy) {
+			logger.InfoCtx(ctx, "Render lane busy, rescheduling probe",
+				zap.String("url", url),
+				zap.Bool("confirming", confirming),
+			)
+			return fmt.Errorf("%w; rescheduling: %w", renderErr, jobs.ErrReschedule(now.Add(laneBusyRetryDelay)))
+		}
 		// Job cancellation / worker shutdown says nothing about the artwork: leave all
 		// probe state untouched so the URL stays due and the next run judges it. The job
 		// error surfaces to the queue for normal retry handling.
@@ -457,28 +465,28 @@ func (e *renderProbeExecutor) settleFor(ctx context.Context, url string, confirm
 	return 0, nil
 }
 
-// render runs the browser under the confirmation lane: first looks share the lane, a
+// errRenderLaneBusy reports that the render lane turned the probe away; the caller
+// reschedules the job with all probe state untouched.
+var errRenderLaneBusy = errors.New("render lane busy")
+
+// render runs the browser under the render lane: first looks share the lane, a
 // confirmation holds it exclusively and so renders with no other probe from this worker
-// in flight.
+// in flight. A render the lane cannot admit returns errRenderLaneBusy without rendering.
 //
 // Reason: the threshold-2 debounce failed in production not because two looks are too
 // few but because the second look ran under the same conditions as the first. prod-01
 // is a shared 4-vCPU droplet rendering under software GL with media_worker.concurrency
 // 4, so a confirming probe rendered beside three others exactly like the first one did
-// and reproduced the CPU-starved blank every time. Trade-offs: while a confirmation
-// renders, other probe jobs on this worker wait on the lane holding their slot — bounded
-// by one render (timeout_ms); media processing jobs are unaffected. Go's RWMutex blocks
-// new readers once a writer waits, so confirmations cannot starve. Constraints: the
-// lane is per executor, hence per worker process; it cannot see other processes'
-// renders.
-func (e *renderProbeExecutor) render(ctx context.Context, url string, settleMs int, confirming bool) (*probe.Capture, error) {
-	if confirming {
-		e.lane.Lock()
-		defer e.lane.Unlock()
-	} else {
-		e.lane.RLock()
-		defer e.lane.RUnlock()
+// and reproduced the CPU-starved blank every time. Trade-offs: a turned-away probe costs
+// a queue round-trip (laneBusyRetryDelay) instead of holding its worker slot, so media
+// indexing on the shared pool keeps running however many confirmations are due — see
+// renderLane for why blocking was rejected. Constraints: the lane is per executor, hence
+// per worker process; it cannot see other processes' renders.
+func (e *renderProbeExecutor) render(ctx context.Context, url string, settleMs int, confirming bool, now time.Time) (*probe.Capture, error) {
+	if !e.lane.tryEnter(confirming, now) {
+		return nil, errRenderLaneBusy
 	}
+	defer e.lane.leave(confirming)
 	return e.renderer.RenderProbe(ctx, url, settleMs)
 }
 

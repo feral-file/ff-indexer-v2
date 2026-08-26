@@ -558,54 +558,59 @@ func TestExecuteRenderProbe_confirmationSettle(t *testing.T) {
 	}
 }
 
-// TestExecuteRenderProbe_confirmationRendersAlone pins the lane: a confirmation waits for
-// every in-flight first look on the executor to finish and renders with none beside it.
-// The second look is only evidence if it can disagree with the first, and one that runs
-// under the first look's contention cannot.
+// TestExecuteRenderProbe_confirmationRendersAlone pins the lane: a confirmation cannot
+// join in-flight first looks and a first look cannot join an in-flight confirmation —
+// and neither waits in its worker slot: the turned-away probe is rescheduled with no
+// state written, then renders on its retry once the lane has drained.
 func TestExecuteRenderProbe_confirmationRendersAlone(t *testing.T) {
 	m, exec := setupRenderProbe(t, renderProbeTestConfig)
 	first := "https://example.com/first-look.html"
 	confirm := "https://example.com/confirm.html"
-
-	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), first).Return(nil, nil)
-	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), confirm).Return(&schema.MediaRenderProbe{
+	confirmRow := &schema.MediaRenderProbe{
 		MediaURL:            confirm,
 		Verdict:             schema.RenderProbeVerdictBlank,
 		ConsecutiveFailures: 1,
-	}, nil)
+	}
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), first).Return(nil, nil).AnyTimes()
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), confirm).Return(confirmRow, nil).AnyTimes()
+	// Exactly two successful renders are recorded across the whole scenario; a
+	// turned-away probe writes nothing (the strict mock would fail a third upsert).
 	m.store.EXPECT().UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).Return(nil).Times(2)
 
-	firstStarted := make(chan struct{})
-	releaseFirst := make(chan struct{})
-	confirmRendered := make(chan struct{})
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), first, 0).
-		DoAndReturn(func(context.Context, string, int) (*probe.Capture, error) {
-			close(firstStarted)
-			<-releaseFirst
-			return contentFrame(), nil
-		})
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), confirm, 0).
-		DoAndReturn(func(context.Context, string, int) (*probe.Capture, error) {
-			close(confirmRendered)
-			return contentFrame(), nil
-		})
+	release := make(chan struct{})
+	started := make(chan struct{}, 2)
+	blocking := func(context.Context, string, int) (*probe.Capture, error) {
+		started <- struct{}{}
+		<-release
+		return contentFrame(), nil
+	}
+	assertRescheduled := func(t *testing.T, err error) {
+		t.Helper()
+		var re *jobs.RescheduleError
+		require.ErrorAs(t, err, &re)
+		assert.Equal(t, m.now.Add(30*time.Second).UTC(), re.At, "laneBusyRetryDelay")
+	}
 
+	// A first look holds the lane: the confirmation is turned away, not parked.
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), first, 0).DoAndReturn(blocking)
 	firstDone := make(chan error, 1)
 	go func() { firstDone <- exec.ExecuteRenderProbe(context.Background(), first) }()
-	<-firstStarted
+	<-started
+	assertRescheduled(t, exec.ExecuteRenderProbe(context.Background(), confirm))
+	close(release)
+	require.NoError(t, <-firstDone)
+
+	// The retry finds the lane drained and renders; while it does, a first look is
+	// turned away in turn.
+	release = make(chan struct{})
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), confirm, 0).DoAndReturn(blocking)
 	confirmDone := make(chan error, 1)
 	go func() { confirmDone <- exec.ExecuteRenderProbe(context.Background(), confirm) }()
-
-	select {
-	case <-confirmRendered:
-		t.Fatal("confirmation rendered while a first look was in flight")
-	case <-time.After(100 * time.Millisecond):
-	}
-	close(releaseFirst)
-	require.NoError(t, <-firstDone)
+	<-started
+	assertRescheduled(t, exec.ExecuteRenderProbe(context.Background(), first))
+	close(release)
 	require.NoError(t, <-confirmDone)
-	<-confirmRendered
 }
 
 // TestExecuteRenderProbe_failedReleaseRetainsGate pins recovery durability: when the

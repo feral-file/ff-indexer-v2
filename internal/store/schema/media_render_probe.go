@@ -31,7 +31,9 @@ func (v RenderProbeVerdict) String() string {
 const (
 	// RenderFailureBlank gates after consecutive blank frames.
 	RenderFailureBlank = "render_blank"
-	// RenderFailureStalled gates after consecutive load failures/timeouts.
+	// RenderFailureStalled is legacy: written when stalls still counted toward the gate
+	// (before #142). The probe no longer writes it; rows carrying it are healed by the
+	// probe like any other render_ reason, so it stays defined until the last one heals.
 	RenderFailureStalled = "render_stalled"
 	// RenderFailureKnownBad gates immediately on a known-bad fingerprint match.
 	RenderFailureKnownBad = "render_known_bad"
