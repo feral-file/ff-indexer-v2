@@ -44,7 +44,8 @@ var ErrCallBudgetExhausted = errors.New("pagination call budget exhausted")
 // cap dynamically additionally pays a halving cascade of rejected calls per walk.
 type PaginationGuards struct {
 	// SpanCap is the provider's known eth_getLogs block-range cap, expressed as the
-	// maximum accepted toBlock-fromBlock difference (10000 for Infura). When set, step
+	// maximum accepted toBlock-fromBlock difference (10000 for Infura; Chainstack
+	// accepts up to 10100; both verified live). When set, step
 	// sizing starts at the cap instead of probing down to it with rejected calls and
 	// one-second sleeps. Dynamic discovery still applies on top, so a misconfigured
 	// (too large) value degrades to the old cascade behavior instead of failing.

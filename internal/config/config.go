@@ -69,7 +69,8 @@ type EthereumConfig struct {
 	// See ethereum.ClientGuards for full semantics; the short version:
 	//
 	// GetLogsSpanCap: the provider's eth_getLogs block-range cap as max
-	// toBlock-fromBlock (10000 for Infura). Seeds pagination at the cap instead of
+	// toBlock-fromBlock (10000 for Infura; Chainstack accepts up to 10100, both
+	// verified live — 10000 is right for either). Seeds pagination at the cap instead of
 	// paying a halving cascade of rejected calls per walk.
 	GetLogsSpanCap uint64 `mapstructure:"getlogs_span_cap"`
 	// GetLogsCallBudget: max FilterLogs calls per pagination walk; exceeding it
