@@ -406,6 +406,42 @@ func TestSubscribeEvents_TipOnlyReorgReconcilesToEmittedBoundary(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+// TestSubscribeEvents_StaleTipDoesNotShortenLag pins that a delayed head whose
+// parent the node no longer considers canonical is discarded: it must not be
+// retained or raise the confirmation tip, so the lag keeps its full depth for
+// the canonical chain (which then confirms 101 only when A103 arrives).
+func TestSubscribeEvents_StaleTipDoesNotShortenLag(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	a100, a101, a102 := chain.next(100), chain.next(101), chain.next(102)
+	_, _ = a100, a101
+	mockClient, push, _ := headFixture(t, ctrl, a100, a101, a102)
+	subscriber := newLaggedSubscriber(t, mockClient, 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	staleB103 := head(103, common.HexToHash("0xb103"), common.HexToHash("0xb102"))
+	a103 := chain.next(103) // canonical, on A102
+	gomock.InOrder(
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{staleB103})),
+		// B103's parent disagrees with retained A102; the node confirms A102 is canonical.
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(102)).DoAndReturn(
+			func(context.Context, uint64) (*adapter.BlockHead, error) {
+				push(a103) // arrives after the stale tip was processed
+				return a102, nil
+			}),
+		// No fetch of 101 on the stale tip; A103 confirms it.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(101), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
+	)
+
+	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 // TestSubscribeEvents_TipOnlyDeepReorgStopsAtLastEmitted pins the bound of the
 // walk: it reaches the last emitted height (100), finds it replaced (the deep
 // reorg signal), and does not walk further or replay anything.

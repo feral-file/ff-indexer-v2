@@ -210,9 +210,6 @@ func (s *ethSubscriber) record(ctx context.Context, st *streamState, h *adapter.
 			zap.Uint64("head", n), zap.Uint64("startBlock", st.lowerBound))
 		return nil
 	}
-	if n > st.tip {
-		st.tip = n
-	}
 	prev, seen := st.heads[n]
 	if n < st.next {
 		if seen && prev.Hash == h.Hash {
@@ -221,12 +218,28 @@ func (s *ethSubscriber) record(ctx context.Context, st *streamState, h *adapter.
 		st.reportDeepReorg(ctx, n, h.Hash)
 		return nil
 	}
+	// Reconcile before retaining: a head is only allowed to extend the
+	// retained chain (and raise the confirmation tip) once its ancestry agrees
+	// with it. A stale tip — one whose parent the node itself no longer
+	// considers canonical — must not shorten the lag for everyone else.
+	stale, err := s.reconcile(ctx, st, h)
+	if err != nil {
+		return err
+	}
+	if stale {
+		logger.DebugCtx(ctx, "Ignoring stale ethereum head (parent is not canonical)",
+			zap.Uint64("height", n), zap.String("hash", h.Hash.Hex()), zap.String("parent", h.ParentHash.Hex()))
+		return nil
+	}
 	if seen && prev.Hash != h.Hash {
 		logger.InfoCtx(ctx, "Ethereum shallow reorg absorbed within confirmation lag",
 			zap.Uint64("height", n), zap.String("old", prev.Hash.Hex()), zap.String("new", h.Hash.Hex()))
 	}
 	st.heads[n] = h
-	return s.reconcile(ctx, st, h)
+	if n > st.tip {
+		st.tip = n
+	}
+	return nil
 }
 
 // reconcile handles a head whose parent disagrees with the retained head at the
@@ -237,26 +250,29 @@ func (s *ethSubscriber) record(ctx context.Context, st *streamState, h *adapter.
 // and only on a known mismatch: with nothing retained at a height (first head,
 // coalescing gap, or a restart) there is nothing to reconcile, and the walk
 // stops. Reaching the last emitted height with a different hash is a reorg
-// deeper than the lag: reported, never replayed (see planRange). Not covered:
-// a deep reorg that spans a process restart — the retained heads live in
-// memory and the cursor stores no hash.
-func (s *ethSubscriber) reconcile(ctx context.Context, st *streamState, h *adapter.BlockHead) error {
+// deeper than the lag: reported, never replayed (see planRange).
+//
+// It returns stale=true when the node says the retained chain is canonical
+// where the new head's ancestry disagrees — the new head is the stale one and
+// must not be retained. Not covered: a deep reorg that spans a process
+// restart — the retained heads live in memory and the cursor stores no hash.
+func (s *ethSubscriber) reconcile(ctx context.Context, st *streamState, h *adapter.BlockHead) (stale bool, err error) {
 	n := uint64(h.Number)
 	if n == 0 {
-		return nil
+		return false, nil
 	}
 	expected := h.ParentHash
 	for k := n - 1; ; k-- {
 		retained, ok := st.heads[k]
 		if !ok || retained.Hash == expected {
-			return nil // nothing retained to compare against, or the chains rejoin
+			return false, nil // nothing retained to compare against, or the chains rejoin
 		}
 		canonical, err := s.client.HeadByNumber(ctx, k)
 		if err != nil {
-			return fmt.Errorf("reconcile reorg at height %d: %w", k, err)
+			return false, fmt.Errorf("reconcile reorg at height %d: %w", k, err)
 		}
 		if retained.Hash == canonical.Hash {
-			return nil // the new head is the stale one; the retained chain is canonical
+			return true, nil // the retained chain is canonical; the new head is stale
 		}
 		if k < st.next {
 			st.reportDeepReorg(ctx, k, canonical.Hash)
@@ -267,7 +283,7 @@ func (s *ethSubscriber) reconcile(ctx context.Context, st *streamState, h *adapt
 		st.heads[k] = canonical
 		expected = canonical.ParentHash
 		if k == 0 {
-			return nil
+			return false, nil
 		}
 	}
 }
