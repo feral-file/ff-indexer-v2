@@ -211,16 +211,35 @@ type queueItem struct {
 	event          *domain.BlockchainEvent
 	scannedThrough uint64
 	progress       bool
+	// done receives the outcome of applying a progress marker, so the source
+	// can treat "reported" as "persisted" before scanning further.
+	done chan error
 }
 
 func (r *runner) enqueue(ctx context.Context, event *domain.BlockchainEvent) error {
 	return r.push(ctx, queueItem{event: event})
 }
 
-// markScanned queues a progress marker; it shares the event queue so it is
-// applied strictly after the events it vouches for.
+// markScanned queues a progress marker and waits for the flush loop to apply
+// it. It shares the event queue so it is applied strictly after the events it
+// vouches for, and it returns only once the open block is flushed and the
+// cursor is persisted — so a source that reports after every batch never has
+// to re-scan a batch whose report returned nil, whatever fails next.
 func (r *runner) markScanned(ctx context.Context, through uint64) error {
-	return r.push(ctx, queueItem{progress: true, scannedThrough: through})
+	done := make(chan error, 1)
+	if err := r.push(ctx, queueItem{progress: true, scannedThrough: through, done: done}); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-r.doneCh:
+		return errors.New("ingestion runner is closed")
+	case <-r.flushFailed:
+		return fmt.Errorf("ingestion flush loop failed: %w", r.flushErr)
+	case err := <-done:
+		return err
+	}
 }
 
 func (r *runner) push(ctx context.Context, item queueItem) error {
@@ -268,6 +287,7 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 		case item := <-r.queue:
 			if item.progress {
 				err = r.applyProgress(ctx, st, item.scannedThrough)
+				item.done <- err
 			} else {
 				err = r.acceptEvent(ctx, st, item.event)
 			}

@@ -132,6 +132,21 @@ func (mr *MockEthClientMockRecorder) FilterLogs(ctx, query any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FilterLogs", reflect.TypeOf((*MockEthClient)(nil).FilterLogs), ctx, query)
 }
 
+// HeadByNumber mocks base method.
+func (m *MockEthClient) HeadByNumber(ctx context.Context, number uint64) (*adapter.BlockHead, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HeadByNumber", ctx, number)
+	ret0, _ := ret[0].(*adapter.BlockHead)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HeadByNumber indicates an expected call of HeadByNumber.
+func (mr *MockEthClientMockRecorder) HeadByNumber(ctx, number any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadByNumber", reflect.TypeOf((*MockEthClient)(nil).HeadByNumber), ctx, number)
+}
+
 // HeaderByNumber mocks base method.
 func (m *MockEthClient) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
 	m.ctrl.T.Helper()

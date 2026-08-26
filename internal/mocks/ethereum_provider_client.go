@@ -163,6 +163,21 @@ func (mr *MockEthereumProviderClientMockRecorder) GetTokenEvents(ctx, contractAd
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenEvents", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetTokenEvents), ctx, contractAddress, tokenNumber, standard)
 }
 
+// HeadByNumber mocks base method.
+func (m *MockEthereumProviderClient) HeadByNumber(ctx context.Context, number uint64) (*adapter.BlockHead, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HeadByNumber", ctx, number)
+	ret0, _ := ret[0].(*adapter.BlockHead)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HeadByNumber indicates an expected call of HeadByNumber.
+func (mr *MockEthereumProviderClientMockRecorder) HeadByNumber(ctx, number any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadByNumber", reflect.TypeOf((*MockEthereumProviderClient)(nil).HeadByNumber), ctx, number)
+}
+
 // IsVendorOnlyMetadata mocks base method.
 func (m *MockEthereumProviderClient) IsVendorOnlyMetadata(contractAddress string) bool {
 	m.ctrl.T.Helper()

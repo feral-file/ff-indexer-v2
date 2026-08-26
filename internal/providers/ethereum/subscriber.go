@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"go.uber.org/zap"
 
@@ -139,7 +140,10 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 		case err := <-sub.Err():
 			return fmt.Errorf("new heads subscription error: %w", err)
 		case head := <-heads:
-			from, to, ok := s.planRange(ctx, &state, append([]*adapter.BlockHead{head}, drainHeads(heads)...))
+			from, to, ok, err := s.planRange(ctx, &state, append([]*adapter.BlockHead{head}, drainHeads(heads)...))
+			if err != nil {
+				return err
+			}
 			if !ok {
 				continue
 			}
@@ -147,11 +151,6 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 				return err
 			}
 			state.advance(to)
-			if s.progress != nil {
-				if err := s.progress(to); err != nil {
-					return fmt.Errorf("report scanned range through %d: %w", to, err)
-				}
-			}
 		}
 	}
 }
@@ -183,31 +182,33 @@ func drainHeads(heads <-chan *adapter.BlockHead) []*adapter.BlockHead {
 //     replay would flush the open (orphaned) block, advance the cursor past the
 //     replacement, and drop it — worse than an explicit, operator-visible gap.
 //
-// A parent-hash mismatch inside the range about to be emitted is reported the
-// same way (it is the same deep reorg seen through a provider that announces
-// only the new tip).
-func (s *ethSubscriber) planRange(ctx context.Context, st *streamState, batch []*adapter.BlockHead) (from, to uint64, ok bool) {
+// A head whose parent disagrees with the retained chain is reconciled against
+// canonical heads by number (see reconcile), so a deep reorg announced only by
+// a later tip is still found and reported.
+func (s *ethSubscriber) planRange(ctx context.Context, st *streamState, batch []*adapter.BlockHead) (from, to uint64, ok bool, err error) {
 	for _, h := range batch {
-		st.record(ctx, h)
+		if err := s.record(ctx, st, h); err != nil {
+			return 0, 0, false, err
+		}
 	}
 	if st.tip < s.cfg.ConfirmationBlocks {
-		return 0, 0, false
+		return 0, 0, false, nil
 	}
 	to = st.tip - s.cfg.ConfirmationBlocks
 	if to < st.next {
-		return 0, 0, false
+		return 0, 0, false, nil
 	}
-	st.checkContinuity(ctx, st.next, to)
-	return st.next, to, true
+	return st.next, to, true, nil
 }
 
-// record stores one head according to the rules in planRange.
-func (st *streamState) record(ctx context.Context, h *adapter.BlockHead) {
+// record stores one head according to the rules in planRange, reconciling
+// the retained chain when the head's parent disagrees with it.
+func (s *ethSubscriber) record(ctx context.Context, st *streamState, h *adapter.BlockHead) error {
 	n := uint64(h.Number)
 	if n < st.lowerBound {
 		logger.DebugCtx(ctx, "Ignoring ethereum head below start block",
 			zap.Uint64("head", n), zap.Uint64("startBlock", st.lowerBound))
-		return
+		return nil
 	}
 	if n > st.tip {
 		st.tip = n
@@ -215,38 +216,68 @@ func (st *streamState) record(ctx context.Context, h *adapter.BlockHead) {
 	prev, seen := st.heads[n]
 	if n < st.next {
 		if seen && prev.Hash == h.Hash {
-			return // duplicate notification of an already-emitted head
+			return nil // duplicate notification of an already-emitted head
 		}
-		logger.ErrorCtx(ctx, errors.New("ethereum reorg deeper than confirmation lag: an emitted block was replaced"),
-			zap.Uint64("height", n), zap.Uint64("lastEmitted", st.next-1),
-			zap.String("newHash", h.Hash.Hex()), zap.String("hint", "events for the affected heights may be orphaned; reindex the range"))
-		return
+		st.reportDeepReorg(ctx, n, h.Hash)
+		return nil
 	}
 	if seen && prev.Hash != h.Hash {
 		logger.InfoCtx(ctx, "Ethereum shallow reorg absorbed within confirmation lag",
 			zap.Uint64("height", n), zap.String("old", prev.Hash.Hex()), zap.String("new", h.Hash.Hex()))
 	}
 	st.heads[n] = h
+	return s.reconcile(ctx, st, h)
 }
 
-// checkContinuity reports a parent-hash break inside [from, to] against the
-// heads recorded so far. It never changes what is emitted (see planRange).
-func (st *streamState) checkContinuity(ctx context.Context, from, to uint64) {
-	for n := from; n <= to; n++ {
-		h, ok := st.heads[n]
-		if !ok || n == 0 {
-			continue
+// reconcile handles a head whose parent disagrees with the retained head at the
+// previous height: the chain reorganized somewhere below it, and a provider
+// may announce that only through this later tip. It walks canonical heads by
+// number (wire hashes) down from the parent until the retained chain matches
+// again, replacing stale retained heads — at most ConfirmationBlocks+1 fetches,
+// and only on a known mismatch: with nothing retained at a height (first head,
+// coalescing gap, or a restart) there is nothing to reconcile, and the walk
+// stops. Reaching the last emitted height with a different hash is a reorg
+// deeper than the lag: reported, never replayed (see planRange). Not covered:
+// a deep reorg that spans a process restart — the retained heads live in
+// memory and the cursor stores no hash.
+func (s *ethSubscriber) reconcile(ctx context.Context, st *streamState, h *adapter.BlockHead) error {
+	n := uint64(h.Number)
+	if n == 0 {
+		return nil
+	}
+	expected := h.ParentHash
+	for k := n - 1; ; k-- {
+		retained, ok := st.heads[k]
+		if !ok || retained.Hash == expected {
+			return nil // nothing retained to compare against, or the chains rejoin
 		}
-		parent, ok := st.heads[n-1]
-		if !ok {
-			continue
+		canonical, err := s.client.HeadByNumber(ctx, k)
+		if err != nil {
+			return fmt.Errorf("reconcile reorg at height %d: %w", k, err)
 		}
-		if h.ParentHash != parent.Hash {
-			logger.ErrorCtx(ctx, errors.New("ethereum reorg deeper than confirmation lag: parent hash does not match the emitted chain"),
-				zap.Uint64("height", n), zap.String("parent", h.ParentHash.Hex()), zap.String("emitted", parent.Hash.Hex()),
-				zap.String("hint", "events for the affected heights may be orphaned; reindex the range"))
+		if retained.Hash == canonical.Hash {
+			return nil // the new head is the stale one; the retained chain is canonical
+		}
+		if k < st.next {
+			st.reportDeepReorg(ctx, k, canonical.Hash)
+		} else {
+			logger.InfoCtx(ctx, "Ethereum shallow reorg absorbed within confirmation lag",
+				zap.Uint64("height", k), zap.String("old", retained.Hash.Hex()), zap.String("new", canonical.Hash.Hex()))
+		}
+		st.heads[k] = canonical
+		expected = canonical.ParentHash
+		if k == 0 {
+			return nil
 		}
 	}
+}
+
+// reportDeepReorg logs the operator-visible signal for an emitted block that
+// the chain has since replaced.
+func (st *streamState) reportDeepReorg(ctx context.Context, height uint64, newHash common.Hash) {
+	logger.ErrorCtx(ctx, errors.New("ethereum reorg deeper than confirmation lag: an emitted block was replaced"),
+		zap.Uint64("height", height), zap.Uint64("lastEmitted", st.next-1),
+		zap.String("newHash", newHash.Hex()), zap.String("hint", "events for the affected heights may be orphaned; reindex the range"))
 }
 
 // advance moves past `to` and forgets heads below the last emitted height.
@@ -288,6 +319,14 @@ func (s *ethSubscriber) ingestRange(ctx context.Context, from, to uint64, handle
 		for _, vLog := range logs {
 			if err := s.emitLog(ctx, vLog, handler); err != nil {
 				return err
+			}
+		}
+		// Report every batch, not the range: the runner persists the cursor
+		// before returning, so a later batch failing (and the restart it
+		// causes) never re-scans this one or trips the catch-up bound on it.
+		if s.progress != nil {
+			if err := s.progress(batchTo); err != nil {
+				return fmt.Errorf("report scanned range through %d: %w", batchTo, err)
 			}
 		}
 		batches++

@@ -45,6 +45,10 @@ type EthereumClient interface {
 	// its block-by-block log fetches from this stream; see FetchIngestionLogs.
 	SubscribeNewHead(ctx context.Context, ch chan<- *adapter.BlockHead) (ethereum.Subscription, error)
 
+	// HeadByNumber returns the canonical head at a height with its node-reported
+	// hash, for reorg reconciliation against subscription heads.
+	HeadByNumber(ctx context.Context, number uint64) (*adapter.BlockHead, error)
+
 	// FetchIngestionLogs returns every log chain ingestion indexes (standard NFT
 	// event signatures plus the registry's custom signatures for this chain) in
 	// the inclusive block range [fromBlock, toBlock], paginated under the
@@ -224,6 +228,11 @@ func NewGuardedClient(chainID domain.Chain, client adapter.EthClient, clock adap
 // SubscribeNewHead subscribes to new block headers.
 func (f *ethereumClient) SubscribeNewHead(ctx context.Context, ch chan<- *adapter.BlockHead) (ethereum.Subscription, error) {
 	return f.client.SubscribeNewHead(ctx, ch)
+}
+
+// HeadByNumber returns the canonical head at a height (wire hash).
+func (f *ethereumClient) HeadByNumber(ctx context.Context, number uint64) (*adapter.BlockHead, error) {
+	return f.client.HeadByNumber(ctx, number)
 }
 
 // FetchIngestionLogs fetches the indexable logs for [fromBlock, toBlock].

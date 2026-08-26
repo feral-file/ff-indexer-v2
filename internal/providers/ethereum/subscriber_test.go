@@ -26,13 +26,23 @@ import (
 // sees a canonical chain unless a test deliberately breaks it. Hashes are
 // synthetic: the subscriber only ever compares them, never recomputes them.
 type headChain struct {
-	last *adapter.BlockHead
-	seq  uint64
+	last     *adapter.BlockHead
+	byHeight map[uint64]*adapter.BlockHead
+	seq      uint64
 }
 
 func (c *headChain) hash(n uint64, tag string) common.Hash {
 	c.seq++
 	return common.BytesToHash([]byte(fmt.Sprintf("%s-%d-%d", tag, n, c.seq)))
+}
+
+func (c *headChain) remember(h *adapter.BlockHead) *adapter.BlockHead {
+	if c.byHeight == nil {
+		c.byHeight = map[uint64]*adapter.BlockHead{}
+	}
+	c.byHeight[uint64(h.Number)] = h
+	c.last = h
+	return h
 }
 
 // next returns a head at height n whose parent is the previously built head.
@@ -41,16 +51,28 @@ func (c *headChain) next(n uint64) *adapter.BlockHead {
 	if c.last != nil {
 		h.ParentHash = c.last.Hash
 	}
-	c.last = h
-	return h
+	return c.remember(h)
 }
 
-// fork returns a head at height n that does NOT descend from the chain built
-// so far (a replacement block after a reorg); it becomes the new tip.
+// fork returns a replacement head at height n: a different block that still
+// descends from the head built at n-1 (a one-block reorg at n). It becomes the
+// new tip.
 func (c *headChain) fork(n uint64) *adapter.BlockHead {
 	h := &adapter.BlockHead{Number: hexutil.Uint64(n), Hash: c.hash(n, "fork"), ParentHash: common.HexToHash("0xdead")}
-	c.last = h
-	return h
+	if parent, ok := c.byHeight[n-1]; ok {
+		h.ParentHash = parent.Hash
+	}
+	return c.remember(h)
+}
+
+// orphanTip returns a head at height n whose parent is a block this chain has
+// never seen — a reorg below n announced only by this later tip.
+func (c *headChain) orphanTip(n uint64, parent common.Hash) *adapter.BlockHead {
+	return c.remember(&adapter.BlockHead{Number: hexutil.Uint64(n), Hash: c.hash(n, "orphan-tip"), ParentHash: parent})
+}
+
+func head(n uint64, hash, parent common.Hash) *adapter.BlockHead {
+	return &adapter.BlockHead{Number: hexutil.Uint64(n), Hash: hash, ParentHash: parent}
 }
 
 // headFixture wires a mock client whose newHeads subscription has the given
@@ -310,10 +332,13 @@ func TestSubscribeEvents_DeepReorgIsReportedNotReplayed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	fork100 := chain.fork(100)
 	gomock.InOrder(
 		// 100 emitted; then 100 itself is replaced and 101 builds on the fork.
 		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).
-			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.fork(100), chain.next(101)})),
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{fork100, chain.next(101)})),
+		// 101's parent is the fork, not the emitted 100: reconcile confirms 100 was replaced.
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(100)).Return(fork100, nil),
 		// Only 101 is fetched; the replaced 100 is reported, not replayed.
 		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(101), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
 	)
@@ -336,14 +361,111 @@ func TestSubscribeEvents_FutureStartBlockIsHardLowerBound(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	h501 := chain.next(501)
+	below := chain.fork(499) // a replacement below the start block: ignored
 	gomock.InOrder(
 		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(500), uint64(500)).
-			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.fork(499), chain.next(501)})),
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{below, h501})),
 		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(501), uint64(501)).DoAndReturn(fetchThenCancel(cancel)),
 	)
 
 	err := subscriber.SubscribeEvents(ctx, 500, func(*domain.BlockchainEvent) error { return nil })
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestSubscribeEvents_TipOnlyReorgReconcilesToEmittedBoundary pins reconcile:
+// a reorg announced only by a later tip (B103 whose parent is an unseen B102)
+// walks canonical heads down by number until the retained chain matches — here
+// at the emitted block 100 — replacing stale retained heads, with no re-fetch
+// of anything emitted.
+func TestSubscribeEvents_TipOnlyReorgReconcilesToEmittedBoundary(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	a100, a101, a102 := chain.next(100), chain.next(101), chain.next(102)
+	mockClient, push, _ := headFixture(t, ctrl, a100, a101, a102)
+	subscriber := newLaggedSubscriber(t, mockClient, 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b101 := head(101, common.HexToHash("0xb101"), a100.Hash) // rejoins the emitted chain at 100
+	b102 := head(102, common.HexToHash("0xb102"), b101.Hash)
+	b103 := chain.orphanTip(103, b102.Hash)
+	gomock.InOrder(
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{b103})),
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(102)).Return(b102, nil),
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(101)).Return(b101, nil),
+		// retained 100 == b101's parent: walk stops; 101 is confirmed by tip 103.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(101), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
+	)
+
+	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestSubscribeEvents_TipOnlyDeepReorgStopsAtLastEmitted pins the bound of the
+// walk: it reaches the last emitted height (100), finds it replaced (the deep
+// reorg signal), and does not walk further or replay anything.
+func TestSubscribeEvents_TipOnlyDeepReorgStopsAtLastEmitted(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	mockClient, push, _ := headFixture(t, ctrl, chain.next(100), chain.next(101), chain.next(102))
+	subscriber := newLaggedSubscriber(t, mockClient, 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b100 := head(100, common.HexToHash("0xb100"), common.HexToHash("0x99"))
+	b101 := head(101, common.HexToHash("0xb101"), b100.Hash)
+	b102 := head(102, common.HexToHash("0xb102"), b101.Hash)
+	b103 := chain.orphanTip(103, b102.Hash)
+	gomock.InOrder(
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{b103})),
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(102)).Return(b102, nil),
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(101)).Return(b101, nil),
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(100)).Return(b100, nil), // emitted 100 replaced: reported
+		// no HeadByNumber(99); emission continues from 101 by number.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(101), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
+	)
+
+	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestSubscribeEvents_ReportsEveryBatchAndStopsOnLateFailure pins per-batch
+// durability: each batch is reported (and, via the runner, persisted) before
+// the next is fetched, so a failure in a later batch leaves the earlier ones
+// reported and returns the fetch error.
+func TestSubscribeEvents_ReportsEveryBatchAndStopsOnLateFailure(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	mockClient, _, _ := headFixture(t, ctrl, chain.next(145))
+	subscriber := newTestSubscriber(t, mockClient, 0)
+
+	fetchErr := errors.New("provider 503")
+	gomock.InOrder(
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(119)).Return(nil, nil),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(120), uint64(139)).Return(nil, nil),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(140), uint64(145)).Return(nil, fetchErr),
+	)
+
+	var reported []uint64
+	subscriber.(blockchain.ProgressReporter).SetProgressHandler(func(through uint64) error {
+		reported = append(reported, through)
+		return nil
+	})
+
+	err := subscriber.SubscribeEvents(context.Background(), 100, func(*domain.BlockchainEvent) error { return nil })
+	require.ErrorIs(t, err, fetchErr)
+	require.Equal(t, []uint64{119, 139}, reported, "batches before the failure were reported; the failed one was not")
 }
 
 // TestSubscribeEvents_ReportsScannedRangeAfterEvents pins the progress

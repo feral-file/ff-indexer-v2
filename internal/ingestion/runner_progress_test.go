@@ -2,6 +2,7 @@ package ingestion_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -95,6 +96,41 @@ func TestRunner_ProgressFlushesOpenBlockThenAdvances(t *testing.T) {
 			require.NoError(t, source.progress(1000)) // block 1000 complete: flush now
 			require.NoError(t, source.progress(1003)) // 1001..1003 scanned, empty
 			time.Sleep(50 * time.Millisecond)
+			return context.Canceled
+		})
+	source.EXPECT().Close()
+
+	runner := newProgressRunner(t, ctrl, source, store, jq, blacklist)
+	defer func() { _ = runner.Close() }()
+	require.ErrorIs(t, runner.Run(context.Background()), context.Canceled)
+}
+
+// TestRunner_ProgressReturnsOnlyAfterPersist pins the ack: the report call
+// returns after the cursor write for that height has completed, so a source
+// may treat a nil return as durable.
+func TestRunner_ProgressReturnsOnlyAfterPersist(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	source := &progressSource{MockBlockchainEventSource: mocks.NewMockBlockchainEventSource(ctrl)}
+	store := mocks.NewMockStore(ctrl)
+	jq := mocks.NewMockJobQueue(ctrl)
+	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
+
+	var persisted atomic.Uint64
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(999), nil).AnyTimes()
+	store.EXPECT().SetBlockCursor(gomock.Any(), string(domain.ChainEthereumMainnet), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, through uint64) error {
+			time.Sleep(20 * time.Millisecond) // make a premature return observable
+			persisted.Store(through)
+			return nil
+		}).Times(2)
+
+	source.EXPECT().
+		SubscribeEvents(gomock.Any(), uint64(1000), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, _ uint64, _ blockchain.EventHandler) error {
+			require.NoError(t, source.progress(1010))
+			require.Equal(t, uint64(1010), persisted.Load(), "report must not return before the cursor write")
+			require.NoError(t, source.progress(1020))
+			require.Equal(t, uint64(1020), persisted.Load())
 			return context.Canceled
 		})
 	source.EXPECT().Close()

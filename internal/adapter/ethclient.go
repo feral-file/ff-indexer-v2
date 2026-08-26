@@ -43,6 +43,10 @@ type EthClient interface {
 	// HeaderByNumber returns a header by number
 	HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error)
 
+	// HeadByNumber returns the canonical head at a height with the node-reported
+	// hash (eth_getBlockByNumber without transactions); see BlockHead
+	HeadByNumber(ctx context.Context, number uint64) (*BlockHead, error)
+
 	// BlockReceipts returns every receipt of the block at the given number
 	// (eth_getBlockReceipts) — the complete log source for a block whose
 	// matching logs exceed the provider's eth_getLogs result cap
@@ -318,6 +322,25 @@ func (c *RealEthClient) HeaderByNumber(ctx context.Context, number *big.Int) (*t
 		return err
 	}, "HeaderByNumber")
 	return header, err
+}
+
+// HeadByNumber fetches the canonical head at a height with retry logic. It goes
+// through the raw RPC client for the same reason as SubscribeNewHead: only the
+// wire hash is comparable with subscription hashes.
+func (c *RealEthClient) HeadByNumber(ctx context.Context, number uint64) (*BlockHead, error) {
+	var head *BlockHead
+	err := c.executeWithRetry(ctx, func() error {
+		var result *BlockHead
+		if err := c.client.Client().CallContext(ctx, &result, "eth_getBlockByNumber", hexutil.EncodeUint64(number), false); err != nil {
+			return err
+		}
+		if result == nil {
+			return backoff.Permanent(fmt.Errorf("block %d: %w", number, ethereum.NotFound))
+		}
+		head = result
+		return nil
+	}, "HeadByNumber")
+	return head, err
 }
 
 // BlockReceipts returns the receipts of a block with retry logic
