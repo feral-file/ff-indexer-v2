@@ -293,18 +293,23 @@ func (s *ethSubscriber) reconcile(ctx context.Context, st *streamState, h *adapt
 		if err != nil {
 			return false, fmt.Errorf("reconcile reorg at height %d: %w", k, err)
 		}
-		switch {
-		case !ok && canonical.Hash != expected:
-			return true, nil // the new head's ancestry is not canonical: stale
-		case ok && retained.Hash == canonical.Hash:
-			return true, nil // the retained chain is canonical: the new head is stale
-		case ok && k < st.next:
-			st.reportDeepReorg(ctx, k, canonical.Hash)
-		case ok:
-			logger.InfoCtx(ctx, "Ethereum shallow reorg absorbed within confirmation lag",
-				zap.Uint64("height", k), zap.String("old", retained.Hash.Hex()), zap.String("new", canonical.Hash.Hex()))
+		if ok && retained.Hash != canonical.Hash {
+			// The retained chain is stale here whatever the incoming head is;
+			// refresh it so later checks compare against the canonical chain.
+			if k < st.next {
+				st.reportDeepReorg(ctx, k, canonical.Hash)
+			} else {
+				logger.InfoCtx(ctx, "Ethereum shallow reorg absorbed within confirmation lag",
+					zap.Uint64("height", k), zap.String("old", retained.Hash.Hex()), zap.String("new", canonical.Hash.Hex()))
+			}
 		}
 		st.heads[k] = canonical
+		if canonical.Hash != expected {
+			// The ancestry the incoming head claims is not what the node holds
+			// canonical at this height: the incoming head is stale, whether the
+			// retained head was canonical (round-5 case) or a third branch.
+			return true, nil
+		}
 		expected = canonical.ParentHash
 		if k == 0 {
 			return false, nil

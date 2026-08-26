@@ -511,6 +511,51 @@ func TestSubscribeEvents_ReorgAboveBoundaryAfterCatchupIsAbsorbed(t *testing.T) 
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+// TestSubscribeEvents_QueuedDoubleReorgRejectsStaleHead pins the three-branch
+// case: retained A102, incoming B103 (parent B102), while the node holds a
+// third branch C102. B103's ancestry is not canonical, so it is discarded and
+// neither the tip nor scanned progress advances; the retained chain is
+// refreshed to C102, and the canonical C103 later confirms 101 without any
+// further reconciliation fetch.
+func TestSubscribeEvents_QueuedDoubleReorgRejectsStaleHead(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	a100, a101, a102 := chain.next(100), chain.next(101), chain.next(102)
+	_ = a100
+	mockClient, push, _ := headFixture(t, ctrl, a100, a101, a102)
+	subscriber := newLaggedSubscriber(t, mockClient, 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b103 := head(103, common.HexToHash("0xb103"), common.HexToHash("0xb102"))
+	c102 := head(102, common.HexToHash("0xc102"), a101.Hash)
+	c103 := head(103, common.HexToHash("0xc103"), c102.Hash)
+	var reported []uint64
+	subscriber.(blockchain.ProgressReporter).SetProgressHandler(func(through uint64) error {
+		reported = append(reported, through)
+		return nil
+	})
+	gomock.InOrder(
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{b103})),
+		// B103's parent matches neither retained A102 nor canonical C102: stale.
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(102)).DoAndReturn(
+			func(context.Context, uint64) (*adapter.BlockHead, error) {
+				push(c103)
+				return c102, nil
+			}),
+		// Only the canonical C103 (parent == refreshed C102) confirms 101.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(101), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
+	)
+
+	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, []uint64{100, 101}, reported, "no progress between the stale head and the canonical confirmation")
+}
+
 // TestSubscribeEvents_TipOnlyDeepReorgStopsAtLastEmitted pins the bound of the
 // walk: it reaches the last emitted height (100), finds it replaced (the deep
 // reorg signal), and does not walk further or replay anything.
