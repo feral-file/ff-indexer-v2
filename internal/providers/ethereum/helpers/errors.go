@@ -4,6 +4,8 @@ package helpers
 import (
 	"errors"
 	"strings"
+
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 // ErrContractNotFound is returned when a contract is not found or self-destructed.
@@ -52,13 +54,19 @@ func containsAny(err error, needles ...string) bool {
 //   - Infura:     "range 9999999 exceeds limit of 10000" (verified live)
 //   - Chainstack: "Block range limit exceeded. See more details at
 //     https://docs.chainstack.com/docs/limits#evm-range-limits" (-32602;
-//     reported by users, Chainstack's own docs do not print it)
+//     reported by users, Chainstack's own docs do not print it — until a
+//     soak pins the exact text, any -32602 "invalid params" whose message
+//     mentions a range or limit is treated as a span cap as well, so wording
+//     drift degrades to a halving, not to an aborted walk)
 //   - others:     "query exceeds max block range 100000",
 //     "eth_getLogs is limited to 1024 block range", "block range is too wide",
 //     "range too large"
 func IsBlockRangeCapError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if isInvalidParams(err) && containsAny(err, "range", "limit") {
+		return true
 	}
 	return containsAny(err,
 		"exceeds limit of",
@@ -68,6 +76,14 @@ func IsBlockRangeCapError(err error) bool {
 		"range too large",
 		"range is too large",
 	) || (containsAny(err, "limited to") && containsAny(err, "block range"))
+}
+
+// isInvalidParams reports whether err carries JSON-RPC code -32602 (invalid
+// params), the code Chainstack uses for its block-range rejection. The retry
+// layer wraps provider errors with %w, so the code survives to callers.
+func isInvalidParams(err error) bool {
+	var rpcErr rpc.Error
+	return errors.As(err, &rpcErr) && rpcErr.ErrorCode() == -32602
 }
 
 // IsTooManyResultsError reports whether a log query failed due to provider

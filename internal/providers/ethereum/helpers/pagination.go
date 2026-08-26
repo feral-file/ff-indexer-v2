@@ -38,13 +38,14 @@ var ErrCallBudgetExhausted = errors.New("pagination call budget exhausted")
 // PaginationGuards bounds the RPC cost of a pagination walk against a
 // credit-metered provider. The zero value disables both guards.
 //
-// Reason: on a provider that caps eth_getLogs by block span (Infura, Chainstack: toBlock-fromBlock
+// Reason: on a provider that caps eth_getLogs by block span (Infura: toBlock-fromBlock
 // <= 10000), a genesis-to-head walk is thousands of sequential calls at ~255 credits
 // each. An unbounded walk can consume an entire daily credit quota; discovering the
 // cap dynamically additionally pays a halving cascade of rejected calls per walk.
 type PaginationGuards struct {
 	// SpanCap is the provider's known eth_getLogs block-range cap, expressed as the
-	// maximum accepted toBlock-fromBlock difference (10000 for Infura and Chainstack). When set, step
+	// maximum accepted toBlock-fromBlock difference (10000 for Infura; Chainstack's
+	// "10,000 blocks" is unverified — configure 9999 until a soak confirms). When set, step
 	// sizing starts at the cap instead of probing down to it with rejected calls and
 	// one-second sleeps. Dynamic discovery still applies on top, so a misconfigured
 	// (too large) value degrades to the old cascade behavior instead of failing.

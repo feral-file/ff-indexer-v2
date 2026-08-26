@@ -156,13 +156,14 @@ var ErrGuardedHistoryReplay = errors.New("history replay disabled by credit guar
 // ClientGuards bounds the RPC credit cost of expensive client operations against a
 // credit-metered provider. The zero value disables all guards (current behavior).
 //
-// Reason: with a 10k eth_getLogs block-span cap (Infura, Chainstack), unguarded full-history walks
+// Reason: with a ~10k eth_getLogs block-span cap (Infura, Chainstack), unguarded full-history walks
 // cost millions of credits per wallet scan (each eth_getLogs call is ~255 credits and
 // each walk is thousands of calls). These guards existed as a production incident
 // response; the durable fix is chunked, resumable scanning at the workflow layer.
 type ClientGuards struct {
 	// GetLogsSpanCap seeds pagination at the provider's known block-span cap
-	// (toBlock-fromBlock; 10000 for Infura and Chainstack). See helpers.PaginationGuards.SpanCap.
+	// (toBlock-fromBlock; 10000 for Infura, 9999 for Chainstack until its boundary
+	// is verified). See helpers.PaginationGuards.SpanCap.
 	GetLogsSpanCap uint64
 	// GetLogsCallBudget caps FilterLogs calls per pagination walk.
 	// See helpers.PaginationGuards.CallBudget.
