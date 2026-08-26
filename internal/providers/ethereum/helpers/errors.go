@@ -54,8 +54,8 @@ func containsAny(err error, needles ...string) bool {
 //   - Infura:     "range 9999999 exceeds limit of 10000" (verified live)
 //   - Chainstack: "Block range limit exceeded. See more details at
 //     https://docs.chainstack.com/docs/limits#evm-range-limits" (-32602;
-//     reported by users, Chainstack's own docs do not print it — until a
-//     soak pins the exact text, any -32602 "invalid params" whose message
+//     verified live through RealEthClient on 2026-08-26 — rejected above
+//     toBlock-fromBlock = 10100. Any -32602 "invalid params" whose message
 //     mentions a range or limit is treated as a span cap as well, so wording
 //     drift degrades to a halving, not to an aborted walk)
 //   - others:     "query exceeds max block range 100000",

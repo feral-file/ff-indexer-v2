@@ -134,13 +134,14 @@ The Ethereum code path is provider-agnostic, but two providers are known and the
 | | Infura (Team) | Chainstack (Growth) |
 |---|---|---|
 | Billing | credits, **daily** quota, hard 402 stop | request units, **monthly** quota, $15/1M overage |
-| `eth_getLogs` | 255 credits; span cap `toBlock-fromBlock ≤ 10000` (verified live) | 1 RU, **2 RU when `fromBlock` is ≥127 blocks behind the tip** (every history walk); span cap documented as "10,000 blocks" — inclusive/exclusive **not verified**, so set `FF_INDEXER_ETHEREUM_GETLOGS_SPAN_CAP=9999` until a soak confirms `10000` |
+| `eth_getLogs` | 255 credits; span cap `toBlock-fromBlock ≤ 10000` (verified live) | 1 RU, **2 RU when `fromBlock` is ≥127 blocks behind the tip** (every history walk); span cap accepts `toBlock-fromBlock ≤ 10100` (verified live 2026-08-26; docs say "10,000 blocks"), so `FF_INDEXER_ETHEREUM_GETLOGS_SPAN_CAP=10000` fits both providers; a 10k-block owner-scan window answered in ~0.5 s |
 | WebSocket | `eth_subscribe logs` billed 300 credits/block | **every pushed notification is 1 RU** — the reason chain ingestion is head-driven pull (`newHeads` + per-block `eth_getLogs`), see `docs/architecture.md` |
 | Rate limit | 40k credits/s | 250 requests/s (Growth); peak concurrent `eth_getLogs` ≈ `token_worker.concurrency × scan_window_concurrency × 3` |
-| Archive state | included | included on paid plans, **but the node must be deployed in Archive mode** — `GetContractDeployer` binary-searches `eth_getCode` at historical blocks and a Full node answers `missing trie node` |
-| Over-range error | `range N exceeds limit of 10000` | `Block range limit exceeded. See more details at https://docs.chainstack.com/docs/limits#evm-range-limits` (`-32602`) |
+| Archive state | included | included on paid plans, **but the node must be deployed in Archive mode** — `GetContractDeployer` binary-searches `eth_getCode` at historical blocks and a Full node answers `missing trie node` (the Global Node endpoint used for the soak served `eth_getCode` at block 5,000,000) |
+| Over-range error | `range N exceeds limit of 10000` | `Block range limit exceeded. See more details at https://docs.chainstack.com/docs/limits#evm-range-limits` (`-32602`, verified live) |
+| Saturation | — | a burst of accepted 10k-block scans left the endpoint unresponsive (even `eth_blockNumber` timing out) for ~4 minutes after the client disconnected; server-side scans outlive the request. Keep `scan_window_concurrency` conservative on the first soak and watch for it |
 
-Both phrasings (and drpc's `query returns too many logs`) are recognised by `helpers.IsBlockRangeCapError` / `IsTooManyResultsError`, which is what lets pagination halve instead of aborting a walk. When adding a provider, run a full-history owner scan against it first and add any new limit message there, with a test.
+Both phrasings (and drpc's `query returns too many logs`) are recognised by `helpers.IsBlockRangeCapError` / `IsTooManyResultsError`, which is what lets pagination halve instead of aborting a walk. `TestE2E_OverRangeGetLogsIsClassifiedAndPaginated` (`-tags e2elive`, `E2E_ETH_WS=wss://...`) issues an over-cap request through the production client, asserts the classifier recognises the rejection, and paginates the same range to completion — run it against any new provider before cut-over, and add any new limit message to the classifier with a test.
 
 ## Running Locally
 

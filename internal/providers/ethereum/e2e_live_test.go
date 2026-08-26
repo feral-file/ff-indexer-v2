@@ -18,6 +18,7 @@ import (
 	"math/big"
 	"os"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -247,4 +248,40 @@ func TestE2E_HeadByNumberMatchesSubscriptionHash(t *testing.T) {
 		}
 		prev = h
 	}
+}
+
+// TestE2E_OverRangeGetLogsIsClassifiedAndPaginated is the provider cut-over
+// check: an eth_getLogs span above the provider's cap, issued through the
+// production RealEthClient (retry wrapper included), must come back as an
+// error the classifier recognises, and the pagination helper must then halve
+// and complete the same range. Uses the rare ERC-1155 URI topic so accepted
+// windows return little data. E2E_SPAN_OVER_CAP sets the span to try
+// (default 12000, above both Infura's and Chainstack's 10k caps).
+func TestE2E_OverRangeGetLogsIsClassifiedAndPaginated(t *testing.T) {
+	f := newLiveFixture(t)
+	span := uint64(12_000)
+	if v := os.Getenv("E2E_SPAN_OVER_CAP"); v != "" {
+		parsed, err := strconv.ParseUint(v, 10, 64)
+		require.NoError(t, err)
+		span = parsed
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+
+	to := f.head - 10
+	from := to - span
+	query := ethereum.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(from),
+		ToBlock:   new(big.Int).SetUint64(to),
+		Topics:    [][]common.Hash{{helpers.ERC1155URIEventSignature}},
+	}
+	_, err := f.raw.FilterLogs(ctx, query)
+	require.Error(t, err, "a %d-block span must be rejected by the provider", span+1)
+	t.Logf("provider rejection through RealEthClient: %v", err)
+	require.True(t, helpers.IsBlockRangeCapError(err), "classifier must recognise the provider's span-cap rejection: %v", err)
+
+	pager := helpers.NewPaginationHelper(f.raw, adapter.NewClock(), nil)
+	logs, err := pager.FilterLogsWithPagination(ctx, query)
+	require.NoError(t, err, "pagination must halve past the cap and complete")
+	t.Logf("paginated %d blocks: %d URI logs", span+1, len(logs))
 }

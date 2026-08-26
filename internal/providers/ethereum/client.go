@@ -162,8 +162,8 @@ var ErrGuardedHistoryReplay = errors.New("history replay disabled by credit guar
 // response; the durable fix is chunked, resumable scanning at the workflow layer.
 type ClientGuards struct {
 	// GetLogsSpanCap seeds pagination at the provider's known block-span cap
-	// (toBlock-fromBlock; 10000 for Infura, 9999 for Chainstack until its boundary
-	// is verified). See helpers.PaginationGuards.SpanCap.
+	// (toBlock-fromBlock; 10000 for Infura, up to 10100 on Chainstack — both
+	// verified live). See helpers.PaginationGuards.SpanCap.
 	GetLogsSpanCap uint64
 	// GetLogsCallBudget caps FilterLogs calls per pagination walk.
 	// See helpers.PaginationGuards.CallBudget.
