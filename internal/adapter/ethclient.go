@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"net/url"
+	neturl "net/url"
 	"strings"
 	"syscall"
 	"time"
@@ -113,12 +113,23 @@ type RealEthClient struct {
 	url    string
 }
 
-// NewRealEthClient creates a new RealEthClient
+// NewRealEthClient creates a new RealEthClient. The stored URL is reduced to
+// scheme and host: it exists only for log context, and provider URLs carry the
+// API key in the path (Infura, Chainstack), which must never reach the logs.
 func NewRealEthClient(client *ethclient.Client, url string) *RealEthClient {
 	return &RealEthClient{
 		client: client,
-		url:    url,
+		url:    endpointForLogs(url),
 	}
+}
+
+// endpointForLogs strips everything but scheme and host from an RPC URL.
+func endpointForLogs(rawurl string) string {
+	parsed, err := neturl.Parse(rawurl)
+	if err != nil || parsed.Host == "" {
+		return "<redacted>"
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 // isRetryableEthError determines if an Ethereum error should trigger a retry
@@ -129,7 +140,7 @@ func isRetryableEthError(err error) bool {
 	}
 
 	// Check for url.Error (wraps most HTTP client errors)
-	var urlErr *url.Error
+	var urlErr *neturl.Error
 	if errors.As(err, &urlErr) {
 		// Check the underlying error
 		err = urlErr.Err
