@@ -41,8 +41,19 @@ var ErrOriginationNotFound = errors.New("origination not found")
 //
 //go:generate mockgen -source=client.go -destination=../../mocks/ethereum_provider_client.go -package=mocks -mock_names=EthereumClient=MockEthereumProviderClient
 type EthereumClient interface {
-	// SubscribeFilterLogs subscribes to filter logs
-	SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)
+	// SubscribeNewHead subscribes to new block headers. Chain ingestion drives
+	// its block-by-block log fetches from this stream; see FetchIngestionLogs.
+	SubscribeNewHead(ctx context.Context, ch chan<- *adapter.BlockHead) (ethereum.Subscription, error)
+
+	// HeadByNumber returns the canonical head at a height with its node-reported
+	// hash, for reorg reconciliation against subscription heads.
+	HeadByNumber(ctx context.Context, number uint64) (*adapter.BlockHead, error)
+
+	// FetchIngestionLogs returns every log chain ingestion indexes (standard NFT
+	// event signatures plus the registry's custom signatures for this chain) in
+	// the inclusive block range [fromBlock, toBlock], paginated under the
+	// provider's span cap. Logs are returned in ascending (block, log index) order.
+	FetchIngestionLogs(ctx context.Context, fromBlock, toBlock uint64) ([]types.Log, error)
 
 	// GetLatestBlock returns the latest block number
 	GetLatestBlock(ctx context.Context) (uint64, error)
@@ -214,9 +225,118 @@ func NewGuardedClient(chainID domain.Chain, client adapter.EthClient, clock adap
 	return ec, nil
 }
 
-// SubscribeFilterLogs subscribes to filter logs
-func (f *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
-	return f.client.SubscribeFilterLogs(ctx, query, ch)
+// SubscribeNewHead subscribes to new block headers.
+func (f *ethereumClient) SubscribeNewHead(ctx context.Context, ch chan<- *adapter.BlockHead) (ethereum.Subscription, error) {
+	return f.client.SubscribeNewHead(ctx, ch)
+}
+
+// HeadByNumber returns the canonical head at a height (wire hash).
+func (f *ethereumClient) HeadByNumber(ctx context.Context, number uint64) (*adapter.BlockHead, error) {
+	return f.client.HeadByNumber(ctx, number)
+}
+
+// FetchIngestionLogs fetches the indexable logs for [fromBlock, toBlock].
+//
+// Reason: chain ingestion used to hold one eth_subscribe("logs") filter on these
+// same topics. The ERC-721 Transfer signature is shared with ERC-20, so that
+// stream carried ~470 logs/block of which ~1% were NFT-shaped — harmless on a
+// per-block-priced provider, but ruinous on one that bills every pushed
+// notification (Chainstack: 1 RU each, ~100M/month). An HTTP eth_getLogs is
+// billed per call regardless of response size, so fetching each block's logs
+// on demand keeps the exact same filter and drops the metered volume by ~99%.
+// Trade-offs: one eth_getLogs per block in steady state; catch-up ranges are
+// walked by the guarded pagination helper (span cap, call budget, retry).
+// Constraints: the filter must stay identical to what the adapters can parse
+// (see ParseEventLog); narrowing it here silently drops events.
+func (f *ethereumClient) FetchIngestionLogs(ctx context.Context, fromBlock, toBlock uint64) ([]types.Log, error) {
+	logs, err := f.pagination.FilterLogsWithPagination(ctx, ethereum.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(fromBlock),
+		ToBlock:   new(big.Int).SetUint64(toBlock),
+		Topics:    [][]common.Hash{f.ingestionTopics()},
+	})
+	var overflow *helpers.SingleBlockOverflowError
+	if errors.As(err, &overflow) {
+		logs, err = f.fetchAroundDenseBlock(ctx, fromBlock, toBlock, overflow.Block)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Providers return logs in chain order per call and the pagination helper
+	// walks windows ascending, so this is normally a no-op; it makes the
+	// ordering contract explicit instead of provider-dependent.
+	sort.SliceStable(logs, func(i, j int) bool {
+		if logs[i].BlockNumber != logs[j].BlockNumber {
+			return logs[i].BlockNumber < logs[j].BlockNumber
+		}
+		return logs[i].Index < logs[j].Index
+	})
+	return logs, nil
+}
+
+// ingestionTopics is the topic0 set chain ingestion indexes: the standard
+// ERC-721/ERC-1155/EIP-4906 signatures plus the registry's custom signatures.
+func (f *ethereumClient) ingestionTopics() []common.Hash {
+	signatures := helpers.StandardEventSignatures()
+	return append(signatures, f.adapterRegistry.GetCustomEventSignaturesForChain(f.chainID)...)
+}
+
+// fetchAroundDenseBlock serves [fromBlock, toBlock] when block `dense` alone
+// has more matching logs than the provider's eth_getLogs result cap (Infura:
+// 10k; the unrestricted filter includes the ERC-20 Transfer signature, so an
+// airdrop block can reach it). The blocks on either side go through the
+// normal paginated path (recursively, in case another dense block sits there);
+// the dense block itself is read from its receipts, which have no cap.
+func (f *ethereumClient) fetchAroundDenseBlock(ctx context.Context, fromBlock, toBlock, dense uint64) ([]types.Log, error) {
+	var logs []types.Log
+	if dense > fromBlock {
+		left, err := f.FetchIngestionLogs(ctx, fromBlock, dense-1)
+		if err != nil {
+			return nil, err
+		}
+		logs = append(logs, left...)
+	}
+	mid, err := f.denseBlockLogs(ctx, dense)
+	if err != nil {
+		return nil, err
+	}
+	logs = append(logs, mid...)
+	if dense < toBlock {
+		right, err := f.FetchIngestionLogs(ctx, dense+1, toBlock)
+		if err != nil {
+			return nil, err
+		}
+		logs = append(logs, right...)
+	}
+	return logs, nil
+}
+
+// denseBlockLogs applies the ingestion topic filter to a block's receipts —
+// the same selection eth_getLogs would have made, without the result cap.
+func (f *ethereumClient) denseBlockLogs(ctx context.Context, block uint64) ([]types.Log, error) {
+	receipts, err := f.client.BlockReceipts(ctx, new(big.Int).SetUint64(block))
+	if err != nil {
+		return nil, fmt.Errorf("block receipts for dense block %d: %w", block, err)
+	}
+	wanted := map[common.Hash]struct{}{}
+	for _, topic := range f.ingestionTopics() {
+		wanted[topic] = struct{}{}
+	}
+	var logs []types.Log
+	total := 0
+	for _, receipt := range receipts {
+		for _, vLog := range receipt.Logs {
+			total++
+			if len(vLog.Topics) == 0 {
+				continue
+			}
+			if _, ok := wanted[vLog.Topics[0]]; ok {
+				logs = append(logs, *vLog)
+			}
+		}
+	}
+	logger.InfoCtx(ctx, "Dense block served from receipts (eth_getLogs result cap)",
+		zap.Uint64("block", block), zap.Int("receiptLogs", total), zap.Int("matched", len(logs)))
+	return logs, nil
 }
 
 // GetLatestBlock returns the latest block number using the cached provider

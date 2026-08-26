@@ -100,6 +100,20 @@ type EthereumConfig struct {
 	// FullProvenanceDisabled: skip per-token history walks (full provenance and the
 	// ERC-1155 owner event replay); tokens keep minimal provenance until backfilled.
 	FullProvenanceDisabled bool `mapstructure:"full_provenance_disabled"`
+	// MaxCatchupBlocks: the largest gap between the ingestion start block (cursor+1
+	// or start_block) and the chain head that ingestion will fill by fetching logs
+	// on subscribe. A larger gap is a startup error (ErrCatchupTooLarge) rather
+	// than a silent multi-million-block eth_getLogs walk: a cursor that far behind
+	// means an intentional rewind or a stale database, and either wants an
+	// operator decision (see docs/constraints.md on cursor resets). 0 = unbounded.
+	MaxCatchupBlocks uint64 `mapstructure:"max_catchup_blocks"`
+	// ConfirmationBlocks: how many blocks behind the newest head ingestion emits.
+	// This is the reorg strategy: the ingestion runner orders by block number and
+	// never rewinds its cursor, so a block replaced after emission cannot be
+	// repaired; waiting for the chain to build this many blocks on top absorbs
+	// shallow reorgs before anything is emitted, at ~12 s of latency per block.
+	// A reorg deeper than this is logged as an error, not replayed. 0 = emit tip.
+	ConfirmationBlocks uint64 `mapstructure:"confirmation_blocks"`
 }
 
 // TezosConfig holds Tezos-specific configuration
@@ -632,6 +646,13 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 	if cfg.Ethereum.GetLogsCallBudget < 0 {
 		return fmt.Errorf("ethereum.getlogs_call_budget must be >= 0, got %d", cfg.Ethereum.GetLogsCallBudget)
 	}
+	// The catch-up bound is measured on the whole gap to the tip, pending
+	// window included, so a lag at or above the bound could never be satisfied
+	// (every head would fail) — reject the pair at startup.
+	if cfg.Ethereum.MaxCatchupBlocks > 0 && cfg.Ethereum.ConfirmationBlocks >= cfg.Ethereum.MaxCatchupBlocks {
+		return fmt.Errorf("ethereum.confirmation_blocks (%d) must be below ethereum.max_catchup_blocks (%d)",
+			cfg.Ethereum.ConfirmationBlocks, cfg.Ethereum.MaxCatchupBlocks)
+	}
 	// Zero concurrency would stall the owner scan forever (no window ever
 	// fetched), and the unbounded case is what rate-limit discipline is for.
 	if cfg.Ethereum.ScanWindowConcurrency < 1 {
@@ -952,6 +973,12 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("ethereum.scan_window_concurrency", 2)
 	v.SetDefault("ethereum.getlogs_call_budget", 0)
 	v.SetDefault("ethereum.full_provenance_disabled", false)
+	// ~7 days of mainnet blocks: covers any realistic outage while refusing to
+	// walk a stale or reset cursor from genesis at startup.
+	v.SetDefault("ethereum.max_catchup_blocks", 50_000)
+	// Post-merge mainnet reorgs are almost always one block deep; two blocks
+	// (~24 s) absorbs them with margin while keeping events near-real-time.
+	v.SetDefault("ethereum.confirmation_blocks", 2)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("tezos.block_head_ttl", 10)
@@ -1126,6 +1153,8 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.getlogs_call_budget",
 		"ethereum.scan_window_concurrency",
 		"ethereum.full_provenance_disabled",
+		"ethereum.max_catchup_blocks",
+		"ethereum.confirmation_blocks",
 		// Tezos
 		"tezos.api_url",
 		"tezos.websocket_url",

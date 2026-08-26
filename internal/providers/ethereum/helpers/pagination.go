@@ -16,6 +16,21 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
+// SingleBlockOverflowError reports a block whose matching logs exceed the
+// provider's per-query result cap: the walk halved down to one block and the
+// provider still refused it. Callers that can obtain the block's logs another
+// way (block receipts) errors.As on it; everyone else treats it as fatal.
+type SingleBlockOverflowError struct {
+	Block uint64
+	Err   error
+}
+
+func (e *SingleBlockOverflowError) Error() string {
+	return fmt.Sprintf("too many results in single block %d: %v", e.Block, e.Err)
+}
+
+func (e *SingleBlockOverflowError) Unwrap() error { return e.Err }
+
 // ErrCallBudgetExhausted marks a pagination walk aborted by PaginationGuards.CallBudget.
 // Callers can errors.Is on it to distinguish a cost guard from a provider failure.
 var ErrCallBudgetExhausted = errors.New("pagination call budget exhausted")
@@ -367,7 +382,7 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 
 		// Cannot split further - return explicit error
 		if currentFrom.Cmp(currentTo) == 0 {
-			return nil, maxStepSize, fmt.Errorf("too many results in single block %d: %w", currentFrom.Uint64(), err)
+			return nil, maxStepSize, &SingleBlockOverflowError{Block: currentFrom.Uint64(), Err: err}
 		}
 
 		currentStepSize = currentStepSize / 2

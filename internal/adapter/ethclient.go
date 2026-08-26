@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"net/url"
+	neturl "net/url"
 	"strings"
 	"syscall"
 	"time"
@@ -14,8 +14,10 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
@@ -28,6 +30,10 @@ type EthClient interface {
 	// SubscribeFilterLogs subscribes to filter logs
 	SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)
 
+	// SubscribeNewHead subscribes to new block heads (eth_subscribe newHeads),
+	// delivering the node-reported hash — see BlockHead for why not types.Header.
+	SubscribeNewHead(ctx context.Context, ch chan<- *BlockHead) (ethereum.Subscription, error)
+
 	// FilterLogs retrieves logs that match the filter query
 	FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error)
 
@@ -36,6 +42,15 @@ type EthClient interface {
 
 	// HeaderByNumber returns a header by number
 	HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error)
+
+	// HeadByNumber returns the canonical head at a height with the node-reported
+	// hash (eth_getBlockByNumber without transactions); see BlockHead
+	HeadByNumber(ctx context.Context, number uint64) (*BlockHead, error)
+
+	// BlockReceipts returns every receipt of the block at the given number
+	// (eth_getBlockReceipts) — the complete log source for a block whose
+	// matching logs exceed the provider's eth_getLogs result cap
+	BlockReceipts(ctx context.Context, number *big.Int) ([]*types.Receipt, error)
 
 	// CallContract calls a contract function
 	CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
@@ -51,6 +66,22 @@ type EthClient interface {
 
 	// Close closes the connection
 	Close()
+}
+
+// BlockHead is the subset of a newHeads notification that chain ingestion needs.
+//
+// Reason: ethclient.SubscribeNewHead decodes notifications into types.Header,
+// which drops the node-reported "hash". Recomputing it with Header.Hash() does
+// not reproduce it for current mainnet headers — the decoded struct lacks
+// fields newer than this go-ethereum version's RLP encoding (verified live:
+// every local hash differed from eth_getBlockByNumber's while each head's
+// parentHash matched the node hash of its predecessor). Parent-hash continuity
+// therefore has to be checked against the wire hash, so ingestion subscribes
+// through the raw RPC client into this type instead.
+type BlockHead struct {
+	Number     hexutil.Uint64 `json:"number"`
+	Hash       common.Hash    `json:"hash"`
+	ParentHash common.Hash    `json:"parentHash"`
 }
 
 // EthClientDialer defines an interface for dialing Ethereum clients
@@ -82,12 +113,23 @@ type RealEthClient struct {
 	url    string
 }
 
-// NewRealEthClient creates a new RealEthClient
+// NewRealEthClient creates a new RealEthClient. The stored URL is reduced to
+// scheme and host: it exists only for log context, and provider URLs carry the
+// API key in the path (Infura, Chainstack), which must never reach the logs.
 func NewRealEthClient(client *ethclient.Client, url string) *RealEthClient {
 	return &RealEthClient{
 		client: client,
-		url:    url,
+		url:    endpointForLogs(url),
 	}
+}
+
+// endpointForLogs strips everything but scheme and host from an RPC URL.
+func endpointForLogs(rawurl string) string {
+	parsed, err := neturl.Parse(rawurl)
+	if err != nil || parsed.Host == "" {
+		return "<redacted>"
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 // isRetryableEthError determines if an Ethereum error should trigger a retry
@@ -98,7 +140,7 @@ func isRetryableEthError(err error) bool {
 	}
 
 	// Check for url.Error (wraps most HTTP client errors)
-	var urlErr *url.Error
+	var urlErr *neturl.Error
 	if errors.As(err, &urlErr) {
 		// Check the underlying error
 		err = urlErr.Err
@@ -246,6 +288,20 @@ func (c *RealEthClient) SubscribeFilterLogs(ctx context.Context, query ethereum.
 	return sub, err
 }
 
+// SubscribeNewHead subscribes to new block heads with retry logic. Only the
+// subscribe call is retried; a subscription that later fails surfaces through
+// its Err channel and is the caller's to re-establish. It uses the raw RPC
+// client so the notification's own hash reaches the caller (see BlockHead).
+func (c *RealEthClient) SubscribeNewHead(ctx context.Context, ch chan<- *BlockHead) (ethereum.Subscription, error) {
+	var sub ethereum.Subscription
+	err := c.executeWithRetry(ctx, func() error {
+		var err error
+		sub, err = c.client.Client().EthSubscribe(ctx, ch, "newHeads")
+		return err
+	}, "SubscribeNewHead")
+	return sub, err
+}
+
 // FilterLogs retrieves logs that match the filter query with retry logic
 func (c *RealEthClient) FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
 	var logs []types.Log
@@ -277,6 +333,36 @@ func (c *RealEthClient) HeaderByNumber(ctx context.Context, number *big.Int) (*t
 		return err
 	}, "HeaderByNumber")
 	return header, err
+}
+
+// HeadByNumber fetches the canonical head at a height with retry logic. It goes
+// through the raw RPC client for the same reason as SubscribeNewHead: only the
+// wire hash is comparable with subscription hashes.
+func (c *RealEthClient) HeadByNumber(ctx context.Context, number uint64) (*BlockHead, error) {
+	var head *BlockHead
+	err := c.executeWithRetry(ctx, func() error {
+		var result *BlockHead
+		if err := c.client.Client().CallContext(ctx, &result, "eth_getBlockByNumber", hexutil.EncodeUint64(number), false); err != nil {
+			return err
+		}
+		if result == nil {
+			return backoff.Permanent(fmt.Errorf("block %d: %w", number, ethereum.NotFound))
+		}
+		head = result
+		return nil
+	}, "HeadByNumber")
+	return head, err
+}
+
+// BlockReceipts returns the receipts of a block with retry logic
+func (c *RealEthClient) BlockReceipts(ctx context.Context, number *big.Int) ([]*types.Receipt, error) {
+	var receipts []*types.Receipt
+	err := c.executeWithRetry(ctx, func() error {
+		var err error
+		receipts, err = c.client.BlockReceipts(ctx, rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(number.Int64())))
+		return err
+	}, "BlockReceipts")
+	return receipts, err
 }
 
 // CallContract calls a contract function with retry logic

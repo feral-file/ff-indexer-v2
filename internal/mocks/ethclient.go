@@ -17,9 +17,8 @@ import (
 	ethereum "github.com/ethereum/go-ethereum"
 	common "github.com/ethereum/go-ethereum/common"
 	types "github.com/ethereum/go-ethereum/core/types"
-	gomock "go.uber.org/mock/gomock"
-
 	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockEthClient is a mock of EthClient interface.
@@ -59,6 +58,21 @@ func (m *MockEthClient) BlockByNumber(ctx context.Context, number *big.Int) (*ty
 func (mr *MockEthClientMockRecorder) BlockByNumber(ctx, number any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BlockByNumber", reflect.TypeOf((*MockEthClient)(nil).BlockByNumber), ctx, number)
+}
+
+// BlockReceipts mocks base method.
+func (m *MockEthClient) BlockReceipts(ctx context.Context, number *big.Int) ([]*types.Receipt, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BlockReceipts", ctx, number)
+	ret0, _ := ret[0].([]*types.Receipt)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BlockReceipts indicates an expected call of BlockReceipts.
+func (mr *MockEthClientMockRecorder) BlockReceipts(ctx, number any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BlockReceipts", reflect.TypeOf((*MockEthClient)(nil).BlockReceipts), ctx, number)
 }
 
 // CallContract mocks base method.
@@ -118,6 +132,21 @@ func (mr *MockEthClientMockRecorder) FilterLogs(ctx, query any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FilterLogs", reflect.TypeOf((*MockEthClient)(nil).FilterLogs), ctx, query)
 }
 
+// HeadByNumber mocks base method.
+func (m *MockEthClient) HeadByNumber(ctx context.Context, number uint64) (*adapter.BlockHead, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HeadByNumber", ctx, number)
+	ret0, _ := ret[0].(*adapter.BlockHead)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HeadByNumber indicates an expected call of HeadByNumber.
+func (mr *MockEthClientMockRecorder) HeadByNumber(ctx, number any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadByNumber", reflect.TypeOf((*MockEthClient)(nil).HeadByNumber), ctx, number)
+}
+
 // HeaderByNumber mocks base method.
 func (m *MockEthClient) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
 	m.ctrl.T.Helper()
@@ -146,6 +175,21 @@ func (m *MockEthClient) SubscribeFilterLogs(ctx context.Context, query ethereum.
 func (mr *MockEthClientMockRecorder) SubscribeFilterLogs(ctx, query, ch any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeFilterLogs", reflect.TypeOf((*MockEthClient)(nil).SubscribeFilterLogs), ctx, query, ch)
+}
+
+// SubscribeNewHead mocks base method.
+func (m *MockEthClient) SubscribeNewHead(ctx context.Context, ch chan<- *adapter.BlockHead) (ethereum.Subscription, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SubscribeNewHead", ctx, ch)
+	ret0, _ := ret[0].(ethereum.Subscription)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SubscribeNewHead indicates an expected call of SubscribeNewHead.
+func (mr *MockEthClientMockRecorder) SubscribeNewHead(ctx, ch any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeNewHead", reflect.TypeOf((*MockEthClient)(nil).SubscribeNewHead), ctx, ch)
 }
 
 // TransactionReceipt mocks base method.

@@ -55,9 +55,11 @@ func runEthereumIngestion(
 	}
 
 	source, err := ethereum.NewSubscriber(ethereum.Config{
-		WebSocketURL: cfg.Ethereum.WebSocketURL,
-		ChainID:      cfg.Ethereum.ChainID,
-	}, ethereumClient, ethereumClient.ContractAdapterRegistry())
+		WebSocketURL:       cfg.Ethereum.WebSocketURL,
+		ChainID:            cfg.Ethereum.ChainID,
+		MaxCatchupBlocks:   cfg.Ethereum.MaxCatchupBlocks,
+		ConfirmationBlocks: cfg.Ethereum.ConfirmationBlocks,
+	}, ethereumClient)
 	if err != nil {
 		return err
 	}
