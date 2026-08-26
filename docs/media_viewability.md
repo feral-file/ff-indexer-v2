@@ -184,7 +184,8 @@ fixed viewport, waits for the page to settle, screenshots, and classifies:
 - **blank** — near-zero luminance variance. Gates only after
   `failure_gate_threshold` (default 2) consecutive failures, because slow WebGL under
   software GL and intentionally dark works produce false blanks.
-- **stalled** — navigation failure or timeout. Debounced like blank.
+- **stalled** — navigation failure or timeout. Debounced like blank today; the gate
+  revision below removes it from gating (a timeout is not evidence).
 - **rendered_ok** — resets the failure counter; if the URL was render-gated, heals it
   (the probe is the *only* healer of `render_*` rows — see the ownership rule).
 
@@ -499,6 +500,137 @@ Before setting `render_probe.egress_restricted: true` in an environment:
 
 The smoke suite is skipped without the `chromium` tag so ordinary `make check` runs stay
 hermetic.
+
+## Gate revision (2026-08-26): a timeout is not evidence
+
+Status: design; implementation tracked as the numbered tasks at the end of this section.
+Until those land, the L1 behavior described above is what runs (in shadow).
+
+### Why revisit
+
+Two days after ff-indexer-v2#138 widened `timeout_ms` to 90s, the shadow data still
+showed ~1,900 would-gate URLs. The question this section answers: when the prober says
+`stalled` or `blank`, is that a fact about the artwork, or about the prober? The
+prober is prod-01 — a shared-CPU `s-4vcpu-8gb-amd` droplet running four concurrent
+chromium renders under software GL (`media_worker.concurrency: 4`) beside every other
+indexer workload — while a collector's player runs the same page alone on real hardware.
+
+### Method
+
+`tools/probeaudit` re-probes production's would-gate URLs on a developer machine using
+the indexer's **own** renderer and classifier (`probe.NewRenderer`, `probe.Classify`,
+the production fingerprint set and thresholds), under a 2×2 of GL backend
+(swiftshader as prod / hardware) × settle window (15s as prod / 45s). Every cell shares
+one 180s ceiling so the budget is not a variable; elapsed time is recorded instead, which
+says retroactively whether prod's 90s would have sufficed. The
+`swiftshader/settle15` cell is production's exact configuration on unloaded hardware —
+the same bytes, the same classifier, a different machine. Known divergences: no SSRF
+interception (a different network position), macOS chromium, Apple silicon.
+
+Sample: 40 URLs prod recorded `stalled` and 40 prod recorded `blank`, each at or past the
+gate threshold, at most three edition variants per base URL, exported with
+`consecutive_failures` and token counts at export time.
+
+### Findings
+
+**Timeouts (`stalled`).** In prod's exact configuration, 29/40 rendered, 5 stalled,
+4 were no-evidence (gateway 410/404), 2 were blank. Of the 29 renders, **20 finished
+inside the old 45s budget** and 8 inside the new 90s; one needed 149s. The 28 that
+rendered in every cell carried prod counters of **9–13** — prod had re-probed each of
+them nine or more times and timed out every time. The debounce reproduced the artifact,
+not the artwork: on a loaded droplet the same page reliably fails to load in the time it
+takes to load comfortably elsewhere.
+
+**Blanks.** 31/40 rendered in every cell; 5 were blank in every cell; 4 were
+no-evidence. All 31 false blanks carried prod counter **4**. Raising settle to 45s
+rescued **zero** additional URLs, and hardware GL changed **no** verdict in either
+direction — so neither "paints late" nor "needs a GPU" explains prod's blanks. The 5
+honest blanks are exactly what L1 exists for and L0 cannot see: HTTP 200 shells that
+paint nothing (`api.receipts.vv.xyz/signatures/*/wrapped`, a `tokenFrame` for a
+non-existent token), frame variance ≈ 2×10⁻⁵ on every backend.
+
+**A probe defect.** The 3 URLs that stalled in every cell — the "AKG Compass" editions
+under `cdn.feralfileassets.com/previews/053acd9a-…` — are a 965-byte page whose script
+calls `alert('Please try again on your mobile device.')` inside its
+`readystatechange → complete` handler on any desktop user agent. A JavaScript dialog
+blocks the renderer main thread, so the `load` event never fires, `chromedp.Navigate`
+never returns, and the probe burns its whole budget and records `stalled`. The renderer
+installs no `Page.javascriptDialogOpening` handler. Measured: stock renderer → 60s
+timeout, no capture; with dialogs auto-dismissed → rendered in 7.5s. A human viewer
+dismisses that dialog in one click; the probe gates the token.
+
+### Decision
+
+1. **`stalled` stops being a verdict that can gate.** A timeout is "the prober could not
+   finish looking", not "the prober saw it broken" — the same epistemic status as a
+   browser launch failure or a served 410, both of which already record no evidence. The
+   audit puts a number on treating it as evidence: **~90% false** (3 real of 40, and
+   those 3 were the dialog defect). A stall is still recorded (`verdict='stalled'`,
+   `last_error`, `last_checked_at`) because it is useful telemetry, but it never advances
+   `consecutive_failures` and never writes a gate. Cadence: `retry_interval`, as for the
+   other transient outcomes — a stall under load deserves a soon retry, not a week.
+
+   Accepted trade-off: a page that hangs for every viewer (an infinite loader) is no
+   longer gated by L1. That is the L0 conservative-rules contract applied consistently — a
+   false broken hides a real artwork, which is worse than serving a broken one — and the
+   audit found no such page: every all-cell stall was the dialog defect.
+
+2. **The renderer dismisses JavaScript dialogs.** Handle `page.EventJavascriptDialogOpening`
+   by `page.HandleJavaScriptDialog(false)` (cancel: what a viewer who wants the artwork
+   does to a `confirm`/`prompt`; for `alert` accept and cancel are the same) and count
+   dialogs on the `Capture` for observability. A page that alerts is a page that renders
+   after the alert; the frame after dismissal is the evidence.
+
+3. **`blank` keeps gating, but the confirming probe must not reproduce the first probe's
+   conditions.** The threshold-2 debounce failed in production not because two looks are
+   too few but because the second look ran under the same CPU contention as the first
+   (31/31 false blanks reached counter 4). Two changes, both cheap:
+   - a render semaphore (`render_probe.max_concurrent`, default 2) so probes cannot
+     occupy every media-worker slot at once; media processing keeps the rest;
+   - the confirming probe (a row with `consecutive_failures ≥ 1` and a `blank` verdict)
+     renders at `settle_ms × 2`. On idle hardware this changes nothing (measured); under
+     contention it is the difference between "not painted yet" and "painted".
+
+   The `known_bad_fingerprint` path is unchanged: it matches a *known* frame, not the
+   absence of one, and no audited URL hit it falsely.
+
+4. **Enforce criterion.** Re-run this audit on the post-change shadow data before
+   `enforce: true`: a 40-URL sample of would-gate `blank` rows must render on unloaded
+   hardware in prod's configuration for **≤ 10%** of the sample (versus 77.5% today).
+   Timeouts no longer enter the sample because they no longer gate.
+
+### One-time cleanup when task 1 lands
+
+Every `stalled` counter in production was accumulated under the old semantics, and the
+`blank` counters were accumulated without the confirmation conditions. Reset both so the
+watch restarts on data the new rules could have produced:
+
+```sql
+UPDATE media_render_probes
+SET consecutive_failures = 0, next_check_at = now()
+WHERE verdict IN ('stalled', 'blank') AND consecutive_failures > 0;
+```
+
+### Tasks
+
+1. `feat(render-probe): stalled records no evidence` — executor routes render errors
+   through the no-evidence path with the stall recorded, `retry_interval` cadence;
+   tests for counter/gate invariance; taxonomy text above updated.
+2. `feat(probe): dismiss JavaScript dialogs` — renderer listener + `Capture.Dialogs`;
+   chromium-tagged smoke test with an alerting fixture.
+3. `feat(render-probe): confirmation conditions for blank` — `max_concurrent` semaphore,
+   `settle_ms × 2` on the confirming probe; config, sample, and doc updates.
+4. Ops: run the cleanup above after task 1 deploys; re-run `tools/probeaudit` against a
+   fresh would-gate sample after task 3 has been live for one `retry_interval` cycle;
+   record the false-positive rate here before flipping `enforce`.
+
+Reproduce the audit (from a machine with chromium installed):
+
+```
+psql "$DSN" -f tools/probeaudit/export_candidates.sql > candidates.csv   # would-gate rows, ≤3 per base URL
+go run ./tools/probeaudit -in candidates.csv -cause timeout -limit 40 -parallel 2 -out probeaudit-timeout
+go run ./tools/probeaudit -in candidates.csv -cause blank   -limit 40 -parallel 2 -out probeaudit-blank -shots
+```
 
 ## Delta measurement
 
