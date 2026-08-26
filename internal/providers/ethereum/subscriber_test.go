@@ -674,6 +674,46 @@ func TestSubscribeEvents_CatchupTooLargeFails(t *testing.T) {
 	require.Contains(t, err.Error(), "need blocks 1-1000000")
 }
 
+// TestSubscribeEvents_CatchupBoundCoversPendingWindow pins that the bound is
+// measured on the whole gap to the tip, not just the confirmed range: with
+// lag 2 and max 10, a tip 12 blocks past the start is rejected even though
+// only 10 would be emitted now, while a tip 10 past the start is accepted.
+func TestSubscribeEvents_CatchupBoundCoversPendingWindow(t *testing.T) {
+	t.Parallel()
+
+	t.Run("gap of max+lag is rejected", func(t *testing.T) {
+		t.Parallel()
+		ctrl := gomock.NewController(t)
+		chain := &headChain{}
+		mockClient, _, _ := headFixture(t, ctrl, chain.next(111))
+		sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: 10, ConfirmationBlocks: 2}, mockClient)
+		require.NoError(t, err)
+
+		err = sub.SubscribeEvents(context.Background(), 100, func(*domain.BlockchainEvent) error { return nil })
+		require.ErrorIs(t, err, ethprovider.ErrCatchupTooLarge)
+		require.Contains(t, err.Error(), "need blocks 100-111 (12 blocks, max 10)")
+	})
+
+	t.Run("gap of exactly max is accepted", func(t *testing.T) {
+		t.Parallel()
+		ctrl := gomock.NewController(t)
+		chain := &headChain{}
+		mockClient, _, _ := headFixture(t, ctrl, chain.next(109))
+		sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: 10, ConfirmationBlocks: 2}, mockClient)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		boundary := head(107, common.HexToHash("0x107"), common.HexToHash("0x106"))
+		gomock.InOrder(
+			mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(107)).Return(boundary, nil),
+			mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(107)).DoAndReturn(fetchThenCancel(cancel)),
+		)
+		err = sub.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
+		require.ErrorIs(t, err, context.Canceled)
+	})
+}
+
 // TestSubscribeEvents_UnboundedCatchupWhenZero pins that MaxCatchupBlocks=0
 // disables the guard, matching the repo's zero-value-disables-guard convention
 // (the range is still walked in batches).

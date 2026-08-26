@@ -646,6 +646,13 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 	if cfg.Ethereum.GetLogsCallBudget < 0 {
 		return fmt.Errorf("ethereum.getlogs_call_budget must be >= 0, got %d", cfg.Ethereum.GetLogsCallBudget)
 	}
+	// The catch-up bound is measured on the whole gap to the tip, pending
+	// window included, so a lag at or above the bound could never be satisfied
+	// (every head would fail) — reject the pair at startup.
+	if cfg.Ethereum.MaxCatchupBlocks > 0 && cfg.Ethereum.ConfirmationBlocks >= cfg.Ethereum.MaxCatchupBlocks {
+		return fmt.Errorf("ethereum.confirmation_blocks (%d) must be below ethereum.max_catchup_blocks (%d)",
+			cfg.Ethereum.ConfirmationBlocks, cfg.Ethereum.MaxCatchupBlocks)
+	}
 	// Zero concurrency would stall the owner scan forever (no window ever
 	// fetched), and the unbounded case is what rate-limit discipline is for.
 	if cfg.Ethereum.ScanWindowConcurrency < 1 {

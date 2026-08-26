@@ -194,6 +194,14 @@ func (s *ethSubscriber) planRange(ctx context.Context, st *streamState, batch []
 			return 0, 0, false, err
 		}
 	}
+	// The catch-up bound covers the whole gap to the tip, pending window
+	// included: measuring only the confirmed range would let a gap of
+	// max+lag through, and a large lag would defer an oversized gap past the
+	// bound one block at a time.
+	if s.cfg.MaxCatchupBlocks > 0 && st.tip >= st.next && st.tip-st.next+1 > s.cfg.MaxCatchupBlocks {
+		return 0, 0, false, fmt.Errorf("%w: need blocks %d-%d (%d blocks, max %d); reset the block cursor deliberately or raise ethereum.max_catchup_blocks",
+			ErrCatchupTooLarge, st.next, st.tip, st.tip-st.next+1, s.cfg.MaxCatchupBlocks)
+	}
 	if st.tip < s.cfg.ConfirmationBlocks {
 		return 0, 0, false, nil
 	}
@@ -337,13 +345,10 @@ func (st *streamState) advance(to uint64) {
 
 // ingestRange fetches and emits every indexable log in [from, to] in bounded
 // batches so a long catch-up streams through memory instead of materializing
-// the whole range (see catchupBatchBlocks).
+// the whole range (see catchupBatchBlocks). The catch-up bound was already
+// enforced on the whole gap by planRange.
 func (s *ethSubscriber) ingestRange(ctx context.Context, from, to uint64, handler blockchain.EventHandler) error {
 	span := to - from + 1
-	if s.cfg.MaxCatchupBlocks > 0 && span > s.cfg.MaxCatchupBlocks {
-		return fmt.Errorf("%w: need blocks %d-%d (%d blocks, max %d); reset the block cursor deliberately or raise ethereum.max_catchup_blocks",
-			ErrCatchupTooLarge, from, to, span, s.cfg.MaxCatchupBlocks)
-	}
 	if span > 1 {
 		logger.InfoCtx(ctx, "Ethereum ingestion catching up to head",
 			zap.Uint64("fromBlock", from), zap.Uint64("toBlock", to), zap.Uint64("blocks", span))

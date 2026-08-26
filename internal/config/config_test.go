@@ -858,6 +858,28 @@ func TestLoadAppConfig_GuardEnvVarsReachConfig(t *testing.T) {
 	require.Equal(t, uint64(5), cfg.Ethereum.ConfirmationBlocks)
 }
 
+// TestLoadAppConfig_ConfirmationLagMustFitCatchupBound pins the startup
+// rejection of a lag that the catch-up bound could never satisfy.
+func TestLoadAppConfig_ConfirmationLagMustFitCatchupBound(t *testing.T) {
+	t.Setenv("FF_INDEXER_DATABASE_HOST", "localhost")
+	t.Setenv("FF_INDEXER_DATABASE_DBNAME", "ff")
+	t.Setenv("FF_INDEXER_JOBS_TOKEN_QUEUE", "token_index")
+	t.Setenv("FF_INDEXER_ETHEREUM_RPC_URL", "http://rpc.invalid")
+	t.Setenv("FF_INDEXER_ETHEREUM_WEBSOCKET_URL", "ws://rpc.invalid")
+	t.Setenv("FF_INDEXER_TEZOS_API_URL", "http://tzkt.invalid")
+	t.Setenv("FF_INDEXER_TEZOS_WEBSOCKET_URL", "ws://tzkt.invalid")
+	t.Setenv("FF_INDEXER_ETHEREUM_MAX_CATCHUP_BLOCKS", "10")
+	t.Setenv("FF_INDEXER_ETHEREUM_CONFIRMATION_BLOCKS", "10")
+
+	_, err := LoadAppConfig("", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "confirmation_blocks (10) must be below ethereum.max_catchup_blocks (10)")
+
+	t.Setenv("FF_INDEXER_ETHEREUM_MAX_CATCHUP_BLOCKS", "0") // unbounded: any lag is fine
+	_, err = LoadAppConfig("", "")
+	require.NoError(t, err)
+}
+
 // TestLoadAppConfig_MaxCatchupBlocksDefault pins the catch-up bound's default:
 // the binary must refuse an unbounded history walk out of the box, because a
 // fresh deploy with a stale cursor is exactly the case the bound exists for.
