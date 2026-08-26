@@ -218,6 +218,21 @@ func TestExecuteRenderProbe_stalledRecordsNoEvidence(t *testing.T) {
 		require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
 	})
 
+	t.Run("a store failure recording the stall fails the job", func(t *testing.T) {
+		// Infrastructure, not evidence: the queue's retry path re-runs the probe.
+		m, exec := setupRenderProbe(t, renderProbeTestConfig)
+		url := "https://example.com/hangs-store-down.html"
+
+		m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+		m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
+		m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
+		m.store.EXPECT().UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).Return(errors.New("store down"))
+
+		err := exec.ExecuteRenderProbe(context.Background(), url)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "store down")
+	})
+
 	t.Run("a stall after a stall is durable and moves to the no-evidence cadence", func(t *testing.T) {
 		m, exec := setupRenderProbe(t, renderProbeTestConfig)
 		url := "https://example.com/always-hangs.html"
