@@ -589,6 +589,45 @@ func TestSubscribeEvents_ReplacementBelowTipResetsConfirmationDepth(t *testing.T
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+// TestSubscribeEvents_StaleHeadWalkReplacementResetsDepth pins the stale-return
+// path: queued stale A103/A104 raise the tip to 104, then B103 (on unknown
+// B102) is rejected because canonical C102 differs — but the walk replaced
+// retained A102 with C102, so everything above 102 is dropped and the tip
+// falls to 102. Nothing may be emitted until C102's own descendants confirm.
+func TestSubscribeEvents_StaleHeadWalkReplacementResetsDepth(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	a100, a101, a102 := chain.next(100), chain.next(101), chain.next(102)
+	a103, a104 := chain.next(103), chain.next(104)
+	mockClient, push, _ := headFixture(t, ctrl, a100, a101, a102)
+	subscriber := newLaggedSubscriber(t, mockClient, 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b103 := head(103, common.HexToHash("0xb103"), common.HexToHash("0xb102"))
+	c102 := head(102, common.HexToHash("0xc102"), a101.Hash)
+	c103 := head(103, common.HexToHash("0xc103"), c102.Hash)
+	gomock.InOrder(
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{a103, a104, b103})),
+		// B103's parent matches neither A102 nor canonical C102: stale — but
+		// A102 was replaced by C102, so A103/A104 are dropped and tip = 102.
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(102)).DoAndReturn(
+			func(context.Context, uint64) (*adapter.BlockHead, error) {
+				push(c103)
+				return c102, nil
+			}),
+		// With the stale A104 tip this would have been [101,102]; C103 confirms 101 only.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(101), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
+	)
+
+	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 // TestSubscribeEvents_TipOnlyDeepReorgStopsAtLastEmitted pins the bound of the
 // walk: it reaches the last emitted height (100), finds it replaced (the deep
 // reorg signal), and does not walk further or replay anything.

@@ -247,31 +247,40 @@ func (s *ethSubscriber) record(ctx context.Context, st *streamState, h *adapter.
 	if err != nil {
 		return err
 	}
+	if replaced {
+		// The walk swapped retained heads for canonical ones from n-1 down, so
+		// every height at or below n-1 was just re-verified while anything
+		// retained above it descended from the old branch. Drop those and
+		// lower the tip whether or not the incoming head itself survives, so
+		// the lag is never satisfied by stale descendants.
+		st.truncateAbove(n - 1)
+	}
 	if stale {
 		logger.DebugCtx(ctx, "Ignoring stale ethereum head (parent is not canonical)",
 			zap.Uint64("height", n), zap.String("hash", h.Hash.Hex()), zap.String("parent", h.ParentHash.Hex()))
 		return nil
 	}
 	if seen && prev.Hash != h.Hash {
-		replaced = true
 		logger.InfoCtx(ctx, "Ethereum shallow reorg absorbed within confirmation lag",
 			zap.Uint64("height", n), zap.String("old", prev.Hash.Hex()), zap.String("new", h.Hash.Hex()))
+		st.truncateAbove(n)
 	}
 	st.heads[n] = h
-	if replaced {
-		// Anything retained above a replaced height descended from the old
-		// branch: drop it and measure the confirmation depth from the
-		// replacement, so the lag is never satisfied by stale descendants.
-		for m := range st.heads {
-			if m > n {
-				delete(st.heads, m)
-			}
-		}
-		st.tip = n
-	} else if n > st.tip {
+	if n > st.tip {
 		st.tip = n
 	}
 	return nil
+}
+
+// truncateAbove forgets every retained head above height and makes height the
+// tip: the confirmation depth restarts from the replacement branch.
+func (st *streamState) truncateAbove(height uint64) {
+	for m := range st.heads {
+		if m > height {
+			delete(st.heads, m)
+		}
+	}
+	st.tip = height
 }
 
 // reconcile handles a head whose parent disagrees with the retained head at the
@@ -290,8 +299,9 @@ func (s *ethSubscriber) record(ctx context.Context, st *streamState, h *adapter.
 // disagrees with the new head's ancestry — the new head is the stale one and
 // must not be retained — and replaced=true when any retained head was swapped
 // for the canonical one (the caller then drops retained descendants of the
-// old branch). Not covered: a deep reorg that spans a process restart — the
-// retained heads live in memory and the cursor stores no hash.
+// old branch, whether or not the incoming head survives). Not covered: a deep
+// reorg that spans a process restart — the retained heads live in memory and
+// the cursor stores no hash.
 func (s *ethSubscriber) reconcile(ctx context.Context, st *streamState, h *adapter.BlockHead) (stale, replaced bool, err error) {
 	n := uint64(h.Number)
 	if n == 0 {
