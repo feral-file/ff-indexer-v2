@@ -847,6 +847,7 @@ func TestLoadAppConfig_GuardEnvVarsReachConfig(t *testing.T) {
 	t.Setenv("FF_INDEXER_ETHEREUM_GETLOGS_CALL_BUDGET", "3000")
 	t.Setenv("FF_INDEXER_ETHEREUM_FULL_PROVENANCE_DISABLED", "true")
 	t.Setenv("FF_INDEXER_ETHEREUM_MAX_CATCHUP_BLOCKS", "1234")
+	t.Setenv("FF_INDEXER_ETHEREUM_CONFIRMATION_BLOCKS", "5")
 
 	cfg, err := LoadAppConfig("", "")
 	require.NoError(t, err)
@@ -854,6 +855,7 @@ func TestLoadAppConfig_GuardEnvVarsReachConfig(t *testing.T) {
 	require.Equal(t, 3000, cfg.Ethereum.GetLogsCallBudget)
 	require.True(t, cfg.Ethereum.FullProvenanceDisabled)
 	require.Equal(t, uint64(1234), cfg.Ethereum.MaxCatchupBlocks)
+	require.Equal(t, uint64(5), cfg.Ethereum.ConfirmationBlocks)
 }
 
 // TestLoadAppConfig_MaxCatchupBlocksDefault pins the catch-up bound's default:
@@ -871,6 +873,7 @@ func TestLoadAppConfig_MaxCatchupBlocksDefault(t *testing.T) {
 	cfg, err := LoadAppConfig("", "")
 	require.NoError(t, err)
 	require.Equal(t, uint64(50_000), cfg.Ethereum.MaxCatchupBlocks)
+	require.Equal(t, uint64(2), cfg.Ethereum.ConfirmationBlocks, "tip must not be emitted unconfirmed by default")
 }
 
 // TestLoadAppConfig_ScanWindowConcurrency pins the owner-scan parallelism knob:

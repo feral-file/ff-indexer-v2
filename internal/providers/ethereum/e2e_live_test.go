@@ -132,7 +132,7 @@ func TestE2E_FetchMatchesFormerSubscriptionFilter(t *testing.T) {
 func TestE2E_LiveSubscriberOrderedStream(t *testing.T) {
 	f := newLiveFixture(t)
 	sub, err := ethprovider.NewSubscriber(ethprovider.Config{
-		ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: 100,
+		ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: 100, ConfirmationBlocks: 1,
 	}, f.client)
 	require.NoError(t, err)
 
@@ -149,7 +149,7 @@ func TestE2E_LiveSubscriberOrderedStream(t *testing.T) {
 		}
 		seen[key] = struct{}{}
 		events = append(events, e)
-		// Stop once two heads beyond the catch-up boundary have produced events.
+		// Stop once two confirmed blocks beyond the start head have produced events.
 		if e.BlockNumber >= f.head+2 {
 			cancel()
 		}
@@ -173,6 +173,9 @@ func TestE2E_LiveSubscriberOrderedStream(t *testing.T) {
 		require.Equal(t, domain.ChainEthereumMainnet, e.Chain)
 	}
 	last := events[len(events)-1].BlockNumber
+	tipNow, err := f.client.GetLatestBlock(context.Background())
+	require.NoError(t, err)
+	require.LessOrEqual(t, last, tipNow-1, "with a 1-block lag nothing at the newest head may be emitted")
 	t.Logf("fromBlock=%d head-at-start=%d events=%d blocks %d..%d (%d live blocks beyond start head)",
 		fromBlock, f.head, len(events), events[0].BlockNumber, last, last-f.head)
 }

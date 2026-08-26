@@ -107,6 +107,13 @@ type EthereumConfig struct {
 	// means an intentional rewind or a stale database, and either wants an
 	// operator decision (see docs/constraints.md on cursor resets). 0 = unbounded.
 	MaxCatchupBlocks uint64 `mapstructure:"max_catchup_blocks"`
+	// ConfirmationBlocks: how many blocks behind the newest head ingestion emits.
+	// This is the reorg strategy: the ingestion runner orders by block number and
+	// never rewinds its cursor, so a block replaced after emission cannot be
+	// repaired; waiting for the chain to build this many blocks on top absorbs
+	// shallow reorgs before anything is emitted, at ~12 s of latency per block.
+	// A reorg deeper than this is logged as an error, not replayed. 0 = emit tip.
+	ConfirmationBlocks uint64 `mapstructure:"confirmation_blocks"`
 }
 
 // TezosConfig holds Tezos-specific configuration
@@ -962,6 +969,9 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// ~7 days of mainnet blocks: covers any realistic outage while refusing to
 	// walk a stale or reset cursor from genesis at startup.
 	v.SetDefault("ethereum.max_catchup_blocks", 50_000)
+	// Post-merge mainnet reorgs are almost always one block deep; two blocks
+	// (~24 s) absorbs them with margin while keeping events near-real-time.
+	v.SetDefault("ethereum.confirmation_blocks", 2)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("tezos.block_head_ttl", 10)
@@ -1137,6 +1147,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.scan_window_concurrency",
 		"ethereum.full_provenance_disabled",
 		"ethereum.max_catchup_blocks",
+		"ethereum.confirmation_blocks",
 		// Tezos
 		"tezos.api_url",
 		"tezos.websocket_url",

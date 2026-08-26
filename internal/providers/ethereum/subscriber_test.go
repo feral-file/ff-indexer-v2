@@ -236,109 +236,110 @@ func TestSubscribeEvents_CoalescesQueuedHeads(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-// TestSubscribeEvents_RefetchesOnLowerHead pins reorg handling for a
-// replacement header delivered on its own: a head below the next expected
-// block re-fetches from that head and resumes after it.
-func TestSubscribeEvents_RefetchesOnLowerHead(t *testing.T) {
-	t.Parallel()
-
-	ctrl := gomock.NewController(t)
-	chain := &headChain{}
-	mockClient, push, _ := headFixture(t, ctrl, chain.next(100))
-	subscriber := newTestSubscriber(t, mockClient, 0)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start below the reorg height: a replacement head under the start block
-	// is ignored by design (see TestSubscribeEvents_FutureStartBlockIsHardLowerBound).
-	gomock.InOrder(
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(95), uint64(100)).
-			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.fork(99)})),
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(99), uint64(99)).
-			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.next(100)})),
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).DoAndReturn(fetchThenCancel(cancel)),
-	)
-
-	err := subscriber.SubscribeEvents(ctx, 95, func(*domain.BlockchainEvent) error { return nil })
-	require.ErrorIs(t, err, context.Canceled)
+// newLaggedSubscriber is newTestSubscriber with a confirmation lag.
+func newLaggedSubscriber(t *testing.T, client ethprovider.EthereumClient, confirmations uint64) blockchain.EventSource {
+	t.Helper()
+	sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, ConfirmationBlocks: confirmations}, client)
+	require.NoError(t, err)
+	return sub
 }
 
-// TestSubscribeEvents_CoalescedReorgKeepsLowestHeight pins that coalescing a
-// replacement header at an already-emitted height with a newer head re-fetches
-// from the replaced height, not just the newest head — otherwise the canonical
-// block's events would never be fetched.
-func TestSubscribeEvents_CoalescedReorgKeepsLowestHeight(t *testing.T) {
+// TestSubscribeEvents_EmitsOnlyConfirmedBlocks pins the confirmation lag: with
+// K=2, heads 100..102 confirm only block 100; head 103 confirms 101. Nothing at
+// or above head-K is ever fetched.
+func TestSubscribeEvents_EmitsOnlyConfirmedBlocks(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
 	chain := &headChain{}
-	mockClient, push, _ := headFixture(t, ctrl, chain.next(100))
-	subscriber := newTestSubscriber(t, mockClient, 0)
+	mockClient, push, _ := headFixture(t, ctrl, chain.next(100), chain.next(101), chain.next(102))
+	subscriber := newLaggedSubscriber(t, mockClient, 2)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	replacement100 := chain.fork(100)
 	gomock.InOrder(
 		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).
-			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{replacement100, chain.next(101)})),
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.next(103)})),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(101), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
 	)
 
 	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-// TestSubscribeEvents_ParentMismatchRefetchesOverlap pins reorg handling when
-// no replacement header is delivered: a head that continues numerically but
-// whose parent is not the last emitted head re-fetches reorgOverlap blocks.
-func TestSubscribeEvents_ParentMismatchRefetchesOverlap(t *testing.T) {
+// TestSubscribeEvents_ShallowReorgWithinLagIsAbsorbed pins the reorg strategy:
+// a replacement head above the emitted range (inside the lag) changes nothing
+// already emitted and triggers no re-fetch; emission simply continues on the
+// new canonical chain once it is confirmed.
+func TestSubscribeEvents_ShallowReorgWithinLagIsAbsorbed(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
 	chain := &headChain{}
-	mockClient, push, _ := headFixture(t, ctrl, chain.next(100))
-	subscriber := newTestSubscriber(t, mockClient, 0)
+	mockClient, push, _ := headFixture(t, ctrl, chain.next(100), chain.next(101), chain.next(102))
+	subscriber := newLaggedSubscriber(t, mockClient, 2)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	gomock.InOrder(
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(95), uint64(100)).
-			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.fork(101)})),
-		// next=101, overlap 2 → 99..101
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(99), uint64(101)).
-			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.next(102)})),
-		// continuity restored: back to single-block fetches
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(102), uint64(102)).DoAndReturn(fetchThenCancel(cancel)),
+		// 100 emitted; then 102 is replaced (fork) and 103 builds on the fork.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.fork(102), chain.next(103)})),
+		// tip 103 confirms 101 only — no re-fetch of 100, 102 not yet emitted.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(101), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
 	)
 
-	err := subscriber.SubscribeEvents(ctx, 95, func(*domain.BlockchainEvent) error { return nil })
+	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestSubscribeEvents_DeepReorgIsReportedNotReplayed pins that a replacement
+// of an already-emitted height is never re-fetched: the number-ordered runner
+// cannot take it (it would flush the open block and reject the replacement),
+// so the subscriber reports it and continues from the next unemitted height.
+func TestSubscribeEvents_DeepReorgIsReportedNotReplayed(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	mockClient, push, _ := headFixture(t, ctrl, chain.next(100))
+	subscriber := newTestSubscriber(t, mockClient, 0) // no lag: 100 is emitted immediately
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	gomock.InOrder(
+		// 100 emitted; then 100 itself is replaced and 101 builds on the fork.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.fork(100), chain.next(101)})),
+		// Only 101 is fetched; the replaced 100 is reported, not replayed.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(101), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
+	)
+
+	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
 	require.ErrorIs(t, err, context.Canceled)
 }
 
 // TestSubscribeEvents_FutureStartBlockIsHardLowerBound pins that a start block
-// ahead of the chain is honored literally: heads below it are ignored, the
-// first fetch starts exactly there, and no reorg re-fetch dips under it.
+// ahead of the chain is honored literally: heads below it are ignored (not
+// treated as replaced emitted blocks), and fetching starts exactly there.
 func TestSubscribeEvents_FutureStartBlockIsHardLowerBound(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
 	chain := &headChain{}
-	// Heads 400 and 401 sit below the bound and must contribute nothing to the
-	// range; 500 (queued behind them) is where fetching starts.
 	mockClient, push, _ := headFixture(t, ctrl, chain.next(400), chain.next(401), chain.next(500))
 	subscriber := newTestSubscriber(t, mockClient, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// A forked 501 wants a 2-block overlap (499..501); the bound clamps it to 500.
 	gomock.InOrder(
 		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(500), uint64(500)).
-			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.fork(501)})),
-		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(500), uint64(501)).DoAndReturn(fetchThenCancel(cancel)),
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.fork(499), chain.next(501)})),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(501), uint64(501)).DoAndReturn(fetchThenCancel(cancel)),
 	)
 
 	err := subscriber.SubscribeEvents(ctx, 500, func(*domain.BlockchainEvent) error { return nil })
