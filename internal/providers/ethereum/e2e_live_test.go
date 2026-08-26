@@ -179,3 +179,72 @@ func TestE2E_LiveSubscriberOrderedStream(t *testing.T) {
 	t.Logf("fromBlock=%d head-at-start=%d events=%d blocks %d..%d (%d live blocks beyond start head)",
 		fromBlock, f.head, len(events), events[0].BlockNumber, last, last-f.head)
 }
+
+// TestE2E_ReceiptsFallbackMatchesGetLogs pins, on the real provider, that the
+// dense-block fallback source (eth_getBlockReceipts filtered to the ingestion
+// topics) yields exactly the logs eth_getLogs returns for the same block —
+// so serving a block from receipts changes nothing but the result cap.
+func TestE2E_ReceiptsFallbackMatchesGetLogs(t *testing.T) {
+	f := newLiveFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	block := f.head - 3
+	viaLogs, err := f.client.FetchIngestionLogs(ctx, block, block)
+	require.NoError(t, err)
+
+	receipts, err := f.raw.BlockReceipts(ctx, new(big.Int).SetUint64(block))
+	require.NoError(t, err)
+	require.NotEmpty(t, receipts, "eth_getBlockReceipts must be supported by the provider")
+	wanted := map[common.Hash]struct{}{}
+	for _, topic := range append(helpers.StandardEventSignatures(),
+		f.client.ContractAdapterRegistry().GetCustomEventSignaturesForChain(domain.ChainEthereumMainnet)...) {
+		wanted[topic] = struct{}{}
+	}
+	var viaReceipts []types.Log
+	for _, r := range receipts {
+		for _, l := range r.Logs {
+			if len(l.Topics) > 0 {
+				if _, ok := wanted[l.Topics[0]]; ok {
+					viaReceipts = append(viaReceipts, *l)
+				}
+			}
+		}
+	}
+	require.Equal(t, keysOf(viaLogs), keysOf(viaReceipts), "receipts filtered to the ingestion topics must equal eth_getLogs for the block")
+	t.Logf("block %d: %d matching logs via both paths (%d receipts)", block, len(viaLogs), len(receipts))
+}
+
+// TestE2E_HeadByNumberMatchesSubscriptionHash pins that the hash the
+// reconciliation walk fetches by number is the same wire hash the newHeads
+// subscription delivers — the comparison reconcile relies on.
+func TestE2E_HeadByNumberMatchesSubscriptionHash(t *testing.T) {
+	f := newLiveFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	heads := make(chan *adapter.BlockHead, 8)
+	sub, err := f.client.SubscribeNewHead(ctx, heads)
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+
+	var prev *adapter.BlockHead
+	for i := 0; i < 2; i++ {
+		var h *adapter.BlockHead
+		select {
+		case h = <-heads:
+		case err := <-sub.Err():
+			require.NoError(t, err)
+		case <-ctx.Done():
+			t.Fatal("no head within timeout")
+		}
+		byNumber, err := f.client.HeadByNumber(ctx, uint64(h.Number))
+		require.NoError(t, err)
+		require.Equal(t, h.Hash, byNumber.Hash, "wire hash by number must equal the subscription's hash at %d", uint64(h.Number))
+		require.Equal(t, h.ParentHash, byNumber.ParentHash)
+		if prev != nil && uint64(h.Number) == uint64(prev.Number)+1 {
+			require.Equal(t, prev.Hash, h.ParentHash, "consecutive heads must chain by wire hash")
+		}
+		prev = h
+	}
+}
