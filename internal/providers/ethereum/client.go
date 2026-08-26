@@ -240,14 +240,15 @@ func (f *ethereumClient) SubscribeNewHead(ctx context.Context, ch chan<- *adapte
 // Constraints: the filter must stay identical to what the adapters can parse
 // (see ParseEventLog); narrowing it here silently drops events.
 func (f *ethereumClient) FetchIngestionLogs(ctx context.Context, fromBlock, toBlock uint64) ([]types.Log, error) {
-	signatures := helpers.StandardEventSignatures()
-	signatures = append(signatures, f.adapterRegistry.GetCustomEventSignaturesForChain(f.chainID)...)
-
 	logs, err := f.pagination.FilterLogsWithPagination(ctx, ethereum.FilterQuery{
 		FromBlock: new(big.Int).SetUint64(fromBlock),
 		ToBlock:   new(big.Int).SetUint64(toBlock),
-		Topics:    [][]common.Hash{signatures},
+		Topics:    [][]common.Hash{f.ingestionTopics()},
 	})
+	var overflow *helpers.SingleBlockOverflowError
+	if errors.As(err, &overflow) {
+		logs, err = f.fetchAroundDenseBlock(ctx, fromBlock, toBlock, overflow.Block)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -260,6 +261,72 @@ func (f *ethereumClient) FetchIngestionLogs(ctx context.Context, fromBlock, toBl
 		}
 		return logs[i].Index < logs[j].Index
 	})
+	return logs, nil
+}
+
+// ingestionTopics is the topic0 set chain ingestion indexes: the standard
+// ERC-721/ERC-1155/EIP-4906 signatures plus the registry's custom signatures.
+func (f *ethereumClient) ingestionTopics() []common.Hash {
+	signatures := helpers.StandardEventSignatures()
+	return append(signatures, f.adapterRegistry.GetCustomEventSignaturesForChain(f.chainID)...)
+}
+
+// fetchAroundDenseBlock serves [fromBlock, toBlock] when block `dense` alone
+// has more matching logs than the provider's eth_getLogs result cap (Infura:
+// 10k; the unrestricted filter includes the ERC-20 Transfer signature, so an
+// airdrop block can reach it). The blocks on either side go through the
+// normal paginated path (recursively, in case another dense block sits there);
+// the dense block itself is read from its receipts, which have no cap.
+func (f *ethereumClient) fetchAroundDenseBlock(ctx context.Context, fromBlock, toBlock, dense uint64) ([]types.Log, error) {
+	var logs []types.Log
+	if dense > fromBlock {
+		left, err := f.FetchIngestionLogs(ctx, fromBlock, dense-1)
+		if err != nil {
+			return nil, err
+		}
+		logs = append(logs, left...)
+	}
+	mid, err := f.denseBlockLogs(ctx, dense)
+	if err != nil {
+		return nil, err
+	}
+	logs = append(logs, mid...)
+	if dense < toBlock {
+		right, err := f.FetchIngestionLogs(ctx, dense+1, toBlock)
+		if err != nil {
+			return nil, err
+		}
+		logs = append(logs, right...)
+	}
+	return logs, nil
+}
+
+// denseBlockLogs applies the ingestion topic filter to a block's receipts —
+// the same selection eth_getLogs would have made, without the result cap.
+func (f *ethereumClient) denseBlockLogs(ctx context.Context, block uint64) ([]types.Log, error) {
+	receipts, err := f.client.BlockReceipts(ctx, new(big.Int).SetUint64(block))
+	if err != nil {
+		return nil, fmt.Errorf("block receipts for dense block %d: %w", block, err)
+	}
+	wanted := map[common.Hash]struct{}{}
+	for _, topic := range f.ingestionTopics() {
+		wanted[topic] = struct{}{}
+	}
+	var logs []types.Log
+	total := 0
+	for _, receipt := range receipts {
+		for _, vLog := range receipt.Logs {
+			total++
+			if len(vLog.Topics) == 0 {
+				continue
+			}
+			if _, ok := wanted[vLog.Topics[0]]; ok {
+				logs = append(logs, *vLog)
+			}
+		}
+	}
+	logger.InfoCtx(ctx, "Dense block served from receipts (eth_getLogs result cap)",
+		zap.Uint64("block", block), zap.Int("receiptLogs", total), zap.Int("matched", len(logs)))
 	return logs, nil
 }
 

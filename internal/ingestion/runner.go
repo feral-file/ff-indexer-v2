@@ -59,7 +59,7 @@ type runner struct {
 	clock     adapter.Clock
 
 	cancel    context.CancelFunc
-	queue     chan *domain.BlockchainEvent
+	queue     chan queueItem
 	closeOnce sync.Once
 	doneCh    chan struct{}
 
@@ -131,7 +131,7 @@ func NewRunner(
 		config:      cfg,
 		clock:       clock,
 		cancel:      cancel,
-		queue:       make(chan *domain.BlockchainEvent, cfg.QueueCapacity),
+		queue:       make(chan queueItem, cfg.QueueCapacity),
 		doneCh:      make(chan struct{}),
 		flushFailed: make(chan struct{}),
 	}
@@ -170,6 +170,11 @@ func (r *runner) Run(ctx context.Context) error {
 	handler := func(event *domain.BlockchainEvent) error {
 		return r.enqueue(runCtx, event)
 	}
+	if reporter, ok := r.source.(blockchain.ProgressReporter); ok {
+		reporter.SetProgressHandler(func(through uint64) error {
+			return r.markScanned(runCtx, through)
+		})
+	}
 
 	subErrCh := make(chan error, 1)
 	go func() {
@@ -199,130 +204,181 @@ func (r *runner) Run(ctx context.Context) error {
 	return err
 }
 
+// queueItem is one entry of the ordered flush queue: an event, or a progress
+// marker from a blockchain.ProgressReporter source vouching that every block
+// through scannedThrough has already been queued ahead of the marker.
+type queueItem struct {
+	event          *domain.BlockchainEvent
+	scannedThrough uint64
+	progress       bool
+}
+
 func (r *runner) enqueue(ctx context.Context, event *domain.BlockchainEvent) error {
+	return r.push(ctx, queueItem{event: event})
+}
+
+// markScanned queues a progress marker; it shares the event queue so it is
+// applied strictly after the events it vouches for.
+func (r *runner) markScanned(ctx context.Context, through uint64) error {
+	return r.push(ctx, queueItem{progress: true, scannedThrough: through})
+}
+
+func (r *runner) push(ctx context.Context, item queueItem) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-r.doneCh:
 		return errors.New("ingestion runner is closed")
-	case r.queue <- event:
+	case r.queue <- item:
 		return nil
 	}
+}
+
+// flushState is the flush loop's state; it lives on one goroutine, so no
+// locking. lastCursor is loaded lazily on the first flush to avoid a
+// constructor-time DB read.
+type flushState struct {
+	current     *blockBuffer
+	flushTimerC <-chan time.Time
+	lastCursor  uint64
+	cursorReady bool
 }
 
 func (r *runner) runFlushLoop(ctx context.Context) {
 	defer close(r.doneCh)
 
-	var current *blockBuffer
-	var flushTimerC <-chan time.Time
-	var err error
-
-	// Track last flushed cursor for monotonic guard
-	// Initialize lazily on first flush to avoid constructor-time DB read
-	chainID := string(r.config.ChainID)
-	var lastCursor uint64
-	cursorInitialized := false
-
+	st := &flushState{}
 	for {
+		var err error
 		select {
 		case <-ctx.Done():
 			// Don't flush partial block — cursor stays at last complete block.
 			// Buffered events for the open height are lost in-process; chain-
-			// dependent whether anything replays after restart (Tezos: often not).
-			// See docs/architecture.md "Accepted durability gaps".
+			// dependent whether anything replays after restart (Tezos: often not;
+			// Ethereum re-fetches from the cursor). See docs/architecture.md
+			// "Accepted durability gaps".
 			return
 
-		case <-flushTimerC:
+		case <-st.flushTimerC:
 			// Timeout fired - flush current block even though next block hasn't arrived.
 			// This handles sparse event streams but risks losing late-arriving events
 			// from the same block if a crash occurs before they are processed.
-			if current != nil {
-				// Lazy-initialize cursor on first flush
-				if !cursorInitialized {
-					lastCursor, err = r.store.GetBlockCursor(ctx, chainID)
-					if err != nil {
-						logger.ErrorCtx(ctx, errors.New("failed to get initial cursor"),
-							zap.String("chain", chainID), zap.Error(err))
-						r.flushErr = fmt.Errorf("failed to get initial cursor: %w", err)
-						close(r.flushFailed)
-						return
-					}
-					cursorInitialized = true
-				}
+			err = r.flushCurrent(ctx, st)
 
-				newCursor, err := r.flushBlock(ctx, current, lastCursor)
-				if err != nil {
-					logger.ErrorCtx(ctx, errors.New("blockchain block flush failed"),
-						zap.String("chain", string(r.config.ChainID)),
-						zap.Uint64("block", current.blockNumber),
-						zap.Error(err))
-					r.flushErr = err
-					close(r.flushFailed)
-					return
-				}
-				lastCursor = newCursor
-				current = nil
-				flushTimerC = nil
-			}
-
-		case event := <-r.queue:
-			// New block? Flush previous block first
-			if current != nil && event.BlockNumber != current.blockNumber {
-				// Lazy-initialize cursor on first flush
-				if !cursorInitialized {
-					lastCursor, err = r.store.GetBlockCursor(ctx, chainID)
-					if err != nil {
-						logger.ErrorCtx(ctx, errors.New("failed to get initial cursor"),
-							zap.String("chain", chainID), zap.Error(err))
-						r.flushErr = fmt.Errorf("failed to get initial cursor: %w", err)
-						close(r.flushFailed)
-						return
-					}
-					cursorInitialized = true
-				}
-
-				newCursor, err := r.flushBlock(ctx, current, lastCursor)
-				if err != nil {
-					// Cursor didn't advance, so the block will replay on restart.
-					// Surface the error to Run via flushFailed and exit the loop.
-					// All errors from flushBlock are fatal (filter reads, cursor
-					// writes, job enqueues) - we rely on service-level retry for
-					// transient failures.
-					logger.ErrorCtx(ctx, errors.New("blockchain block flush failed"),
-						zap.String("chain", string(r.config.ChainID)),
-						zap.Uint64("block", current.blockNumber),
-						zap.Error(err))
-					r.flushErr = err
-					close(r.flushFailed)
-					return
-				}
-				lastCursor = newCursor
-				current = nil
-				flushTimerC = nil
-			}
-
-			// Start or append to current block
-			if current == nil {
-				current = &blockBuffer{
-					blockNumber: event.BlockNumber,
-					events:      []*domain.BlockchainEvent{event},
-					firstSeen:   r.clock.Now(),
-				}
-				// Start flush timer for new block
-				if r.config.BlockFlushTimeout > 0 {
-					flushTimerC = r.clock.After(r.config.BlockFlushTimeout)
-				}
+		case item := <-r.queue:
+			if item.progress {
+				err = r.applyProgress(ctx, st, item.scannedThrough)
 			} else {
-				current.events = append(current.events, event)
-				// Reset timer - creates new timer, old one expires naturally.
-				// Trade-off: temporary timer accumulation (bounded by BlockFlushTimeout
-				// duration) for simpler lifecycle management without goroutine leaks.
-				if r.config.BlockFlushTimeout > 0 {
-					flushTimerC = r.clock.After(r.config.BlockFlushTimeout)
-				}
+				err = r.acceptEvent(ctx, st, item.event)
 			}
 		}
+		if err != nil {
+			// Cursor didn't advance, so the block will replay on restart.
+			// Surface the error to Run via flushFailed and exit the loop.
+			// All errors here are fatal (filter reads, cursor writes, job
+			// enqueues) - we rely on service-level retry for transient failures.
+			r.flushErr = err
+			close(r.flushFailed)
+			return
+		}
 	}
+}
+
+// ensureCursor loads the durable cursor once, before the first flush.
+func (r *runner) ensureCursor(ctx context.Context, st *flushState) error {
+	if st.cursorReady {
+		return nil
+	}
+	chainID := string(r.config.ChainID)
+	cursor, err := r.store.GetBlockCursor(ctx, chainID)
+	if err != nil {
+		logger.ErrorCtx(ctx, errors.New("failed to get initial cursor"),
+			zap.String("chain", chainID), zap.Error(err))
+		return fmt.Errorf("failed to get initial cursor: %w", err)
+	}
+	st.lastCursor, st.cursorReady = cursor, true
+	return nil
+}
+
+// flushCurrent flushes the open block, if any, and clears it.
+func (r *runner) flushCurrent(ctx context.Context, st *flushState) error {
+	if st.current == nil {
+		return nil
+	}
+	if err := r.ensureCursor(ctx, st); err != nil {
+		return err
+	}
+	newCursor, err := r.flushBlock(ctx, st.current, st.lastCursor)
+	if err != nil {
+		logger.ErrorCtx(ctx, errors.New("blockchain block flush failed"),
+			zap.String("chain", string(r.config.ChainID)),
+			zap.Uint64("block", st.current.blockNumber),
+			zap.Error(err))
+		return err
+	}
+	st.lastCursor = newCursor
+	st.current = nil
+	st.flushTimerC = nil
+	return nil
+}
+
+// acceptEvent buffers an event, flushing the previous block first when the
+// event opens a new one.
+func (r *runner) acceptEvent(ctx context.Context, st *flushState, event *domain.BlockchainEvent) error {
+	if st.current != nil && event.BlockNumber != st.current.blockNumber {
+		if err := r.flushCurrent(ctx, st); err != nil {
+			return err
+		}
+	}
+	if st.current == nil {
+		st.current = &blockBuffer{
+			blockNumber: event.BlockNumber,
+			events:      []*domain.BlockchainEvent{event},
+			firstSeen:   r.clock.Now(),
+		}
+	} else {
+		st.current.events = append(st.current.events, event)
+	}
+	// (Re)arm the flush timer. Trade-off: temporary timer accumulation
+	// (bounded by BlockFlushTimeout duration) for simpler lifecycle management
+	// without goroutine leaks.
+	if r.config.BlockFlushTimeout > 0 {
+		st.flushTimerC = r.clock.After(r.config.BlockFlushTimeout)
+	}
+	return nil
+}
+
+// applyProgress handles a progress marker: the source vouches that every block
+// through `through` is fully queued ahead of it, so the open block (if it is at
+// or below that height) is complete and flushes now instead of waiting for the
+// next event-bearing block, and the cursor advances to `through` even when the
+// range carried no events at all.
+//
+// Reason: with the cursor only ever set by event-bearing flushes, a resume
+// re-scans every empty block since the last event and, past the catch-up
+// bound, fails on ranges it had already scanned. The marker makes "scanned"
+// durable. The monotonic guard still applies: a marker below the cursor is a
+// no-op.
+func (r *runner) applyProgress(ctx context.Context, st *flushState, through uint64) error {
+	if st.current != nil && st.current.blockNumber <= through {
+		if err := r.flushCurrent(ctx, st); err != nil {
+			return err
+		}
+	}
+	if err := r.ensureCursor(ctx, st); err != nil {
+		return err
+	}
+	if through <= st.lastCursor {
+		return nil
+	}
+	chainID := string(r.config.ChainID)
+	if err := r.store.SetBlockCursor(ctx, chainID, through); err != nil {
+		return fmt.Errorf("failed to persist scanned-range cursor: %w", err)
+	}
+	st.lastCursor = through
+	logger.DebugCtx(ctx, "Advanced block cursor through scanned range",
+		zap.String("chain", chainID), zap.Uint64("through", through))
+	return nil
 }
 
 // flushBlock resolves and enqueues jobs for every event in the block, then

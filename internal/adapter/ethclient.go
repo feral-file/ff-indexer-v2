@@ -17,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
@@ -41,6 +42,11 @@ type EthClient interface {
 
 	// HeaderByNumber returns a header by number
 	HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error)
+
+	// BlockReceipts returns every receipt of the block at the given number
+	// (eth_getBlockReceipts) — the complete log source for a block whose
+	// matching logs exceed the provider's eth_getLogs result cap
+	BlockReceipts(ctx context.Context, number *big.Int) ([]*types.Receipt, error)
 
 	// CallContract calls a contract function
 	CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
@@ -312,6 +318,17 @@ func (c *RealEthClient) HeaderByNumber(ctx context.Context, number *big.Int) (*t
 		return err
 	}, "HeaderByNumber")
 	return header, err
+}
+
+// BlockReceipts returns the receipts of a block with retry logic
+func (c *RealEthClient) BlockReceipts(ctx context.Context, number *big.Int) ([]*types.Receipt, error) {
+	var receipts []*types.Receipt
+	err := c.executeWithRetry(ctx, func() error {
+		var err error
+		receipts, err = c.client.BlockReceipts(ctx, rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(number.Int64())))
+		return err
+	}, "BlockReceipts")
+	return receipts, err
 }
 
 // CallContract calls a contract function with retry logic

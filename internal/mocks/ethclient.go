@@ -60,6 +60,21 @@ func (mr *MockEthClientMockRecorder) BlockByNumber(ctx, number any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BlockByNumber", reflect.TypeOf((*MockEthClient)(nil).BlockByNumber), ctx, number)
 }
 
+// BlockReceipts mocks base method.
+func (m *MockEthClient) BlockReceipts(ctx context.Context, number *big.Int) ([]*types.Receipt, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BlockReceipts", ctx, number)
+	ret0, _ := ret[0].([]*types.Receipt)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BlockReceipts indicates an expected call of BlockReceipts.
+func (mr *MockEthClientMockRecorder) BlockReceipts(ctx, number any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BlockReceipts", reflect.TypeOf((*MockEthClient)(nil).BlockReceipts), ctx, number)
+}
+
 // CallContract mocks base method.
 func (m *MockEthClient) CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
 	m.ctrl.T.Helper()

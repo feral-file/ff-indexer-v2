@@ -13,10 +13,45 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	blockchain "github.com/feral-file/ff-indexer-v2/internal/blockchain"
+	gomock "go.uber.org/mock/gomock"
 )
+
+// MockProgressReporter is a mock of ProgressReporter interface.
+type MockProgressReporter struct {
+	ctrl     *gomock.Controller
+	recorder *MockProgressReporterMockRecorder
+	isgomock struct{}
+}
+
+// MockProgressReporterMockRecorder is the mock recorder for MockProgressReporter.
+type MockProgressReporterMockRecorder struct {
+	mock *MockProgressReporter
+}
+
+// NewMockProgressReporter creates a new mock instance.
+func NewMockProgressReporter(ctrl *gomock.Controller) *MockProgressReporter {
+	mock := &MockProgressReporter{ctrl: ctrl}
+	mock.recorder = &MockProgressReporterMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockProgressReporter) EXPECT() *MockProgressReporterMockRecorder {
+	return m.recorder
+}
+
+// SetProgressHandler mocks base method.
+func (m *MockProgressReporter) SetProgressHandler(handler blockchain.RangeProgressHandler) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetProgressHandler", handler)
+}
+
+// SetProgressHandler indicates an expected call of SetProgressHandler.
+func (mr *MockProgressReporterMockRecorder) SetProgressHandler(handler any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetProgressHandler", reflect.TypeOf((*MockProgressReporter)(nil).SetProgressHandler), handler)
+}
 
 // MockBlockchainEventSource is a mock of EventSource interface.
 type MockBlockchainEventSource struct {

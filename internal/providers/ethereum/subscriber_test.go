@@ -346,6 +346,47 @@ func TestSubscribeEvents_FutureStartBlockIsHardLowerBound(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+// TestSubscribeEvents_ReportsScannedRangeAfterEvents pins the progress
+// contract: after each emitted range the subscriber reports its upper bound,
+// strictly after the range's events were handled, and a rejected report stops
+// the subscription.
+func TestSubscribeEvents_ReportsScannedRangeAfterEvents(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	mockClient, push, _ := headFixture(t, ctrl, chain.next(105))
+	subscriber := newTestSubscriber(t, mockClient, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	log103 := transferLog(103, 0)
+	gomock.InOrder(
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(105)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{chain.next(106)}, log103)),
+		mockClient.EXPECT().ParseEventLog(gomock.Any(), log103).Return(eventFor(log103), nil),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(106), uint64(106)).Return(nil, nil),
+	)
+
+	var trace []string
+	reportErr := errors.New("runner closed")
+	subscriber.(blockchain.ProgressReporter).SetProgressHandler(func(through uint64) error {
+		trace = append(trace, fmt.Sprintf("scanned:%d", through))
+		if through == 106 {
+			return reportErr
+		}
+		return nil
+	})
+
+	err := subscriber.SubscribeEvents(ctx, 100, func(e *domain.BlockchainEvent) error {
+		trace = append(trace, fmt.Sprintf("event:%d", e.BlockNumber))
+		return nil
+	})
+	require.ErrorIs(t, err, reportErr)
+	require.Equal(t, []string{"event:103", "scanned:105", "scanned:106"}, trace)
+}
+
 // TestSubscribeEvents_CatchupTooLargeFails pins the cost guard: a gap wider
 // than MaxCatchupBlocks is a fatal, named error before any logs are fetched.
 func TestSubscribeEvents_CatchupTooLargeFails(t *testing.T) {

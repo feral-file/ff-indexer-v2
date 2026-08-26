@@ -55,9 +55,17 @@ type Config struct {
 }
 
 type ethSubscriber struct {
-	client  EthereumClient
-	chainID domain.Chain
-	cfg     Config
+	client   EthereumClient
+	chainID  domain.Chain
+	cfg      Config
+	progress blockchain.RangeProgressHandler
+}
+
+// SetProgressHandler implements blockchain.ProgressReporter: after every
+// emitted range the subscriber reports its upper bound so the runner can flush
+// the open block and persist the cursor even through event-less ranges.
+func (s *ethSubscriber) SetProgressHandler(handler blockchain.RangeProgressHandler) {
+	s.progress = handler
 }
 
 // NewSubscriber creates a new Ethereum event subscriber.
@@ -139,6 +147,11 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 				return err
 			}
 			state.advance(to)
+			if s.progress != nil {
+				if err := s.progress(to); err != nil {
+					return fmt.Errorf("report scanned range through %d: %w", to, err)
+				}
+			}
 		}
 	}
 }
