@@ -442,6 +442,75 @@ func TestSubscribeEvents_StaleTipDoesNotShortenLag(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+// TestSubscribeEvents_ReorgAfterSingleHeadCatchupReachesBoundary pins the
+// initial-gap case: the first head (A105, lag 2) emits 100..103 with no
+// received head at 103, so the boundary hash is fetched and retained; a reorg
+// announced only by B106 then bridges the unreceived 104 and reaches 103,
+// where the replaced emitted block is reported — and emission continues from
+// 104 by number, never replaying 103.
+func TestSubscribeEvents_ReorgAfterSingleHeadCatchupReachesBoundary(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	a105 := chain.next(105)
+	mockClient, push, _ := headFixture(t, ctrl, a105)
+	subscriber := newLaggedSubscriber(t, mockClient, 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	a103 := head(103, common.HexToHash("0xa103"), common.HexToHash("0xa102"))
+	b103 := head(103, common.HexToHash("0xb103"), common.HexToHash("0xa102"))
+	b104 := head(104, common.HexToHash("0xb104"), b103.Hash)
+	b105 := head(105, common.HexToHash("0xb105"), b104.Hash)
+	b106 := chain.orphanTip(106, b105.Hash)
+	gomock.InOrder(
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(103)).Return(a103, nil), // emitted boundary retained
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(103)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{b106})),
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(105)).Return(b105, nil), // retained A105 replaced
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(104)).Return(b104, nil), // bridged (never received)
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(103)).Return(b103, nil), // emitted boundary replaced: reported
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(104), uint64(104)).DoAndReturn(fetchThenCancel(cancel)),
+	)
+
+	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestSubscribeEvents_ReorgAboveBoundaryAfterCatchupIsAbsorbed is the shallow
+// counterpart: the bridged walk rejoins the retained chain at the boundary,
+// so nothing is reported and emission simply continues.
+func TestSubscribeEvents_ReorgAboveBoundaryAfterCatchupIsAbsorbed(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	mockClient, push, _ := headFixture(t, ctrl, chain.next(105))
+	subscriber := newLaggedSubscriber(t, mockClient, 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	a103 := head(103, common.HexToHash("0xa103"), common.HexToHash("0xa102"))
+	b104 := head(104, common.HexToHash("0xb104"), a103.Hash) // rejoins at the boundary
+	b105 := head(105, common.HexToHash("0xb105"), b104.Hash)
+	b106 := chain.orphanTip(106, b105.Hash)
+	gomock.InOrder(
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(103)).Return(a103, nil),
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(103)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{b106})),
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(105)).Return(b105, nil),
+		mockClient.EXPECT().HeadByNumber(gomock.Any(), uint64(104)).Return(b104, nil),
+		// 103 retained == b104's parent: rejoin, no fetch of 103.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(104), uint64(104)).DoAndReturn(fetchThenCancel(cancel)),
+	)
+
+	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 // TestSubscribeEvents_TipOnlyDeepReorgStopsAtLastEmitted pins the bound of the
 // walk: it reaches the last emitted height (100), finds it replaced (the deep
 // reorg signal), and does not walk further or replay anything.

@@ -198,6 +198,16 @@ func (s *ethSubscriber) planRange(ctx context.Context, st *streamState, batch []
 	if to < st.next {
 		return 0, 0, false, nil
 	}
+	// The emitted boundary must carry a canonical hash for later reconciliation
+	// to compare against. Received heads cover it in steady state; after a
+	// (re)subscribe the first head can sit above it, so fetch it once.
+	if _, ok := st.heads[to]; !ok {
+		boundary, err := s.client.HeadByNumber(ctx, to)
+		if err != nil {
+			return 0, 0, false, fmt.Errorf("fetch emitted boundary head %d: %w", to, err)
+		}
+		st.heads[to] = boundary
+	}
 	return st.next, to, true, nil
 }
 
@@ -246,14 +256,16 @@ func (s *ethSubscriber) record(ctx context.Context, st *streamState, h *adapter.
 // previous height: the chain reorganized somewhere below it, and a provider
 // may announce that only through this later tip. It walks canonical heads by
 // number (wire hashes) down from the parent until the retained chain matches
-// again, replacing stale retained heads — at most ConfirmationBlocks+1 fetches,
-// and only on a known mismatch: with nothing retained at a height (first head,
-// coalescing gap, or a restart) there is nothing to reconcile, and the walk
-// stops. Reaching the last emitted height with a different hash is a reorg
-// deeper than the lag: reported, never replayed (see planRange).
+// again, replacing stale retained heads and bridging heights no head was
+// received for (they are fetched and retained so the walk can continue to the
+// emitted boundary, which planRange guarantees is retained). Reaching an
+// emitted height with a different hash is a reorg deeper than the lag:
+// reported, never replayed (see planRange). Fetches happen only on a known
+// mismatch and are bounded by the retained window (the confirmation lag plus
+// any coalesced heads).
 //
-// It returns stale=true when the node says the retained chain is canonical
-// where the new head's ancestry disagrees — the new head is the stale one and
+// It returns stale=true when the node says the retained or canonical chain
+// disagrees with the new head's ancestry — the new head is the stale one and
 // must not be retained. Not covered: a deep reorg that spans a process
 // restart — the retained heads live in memory and the cursor stores no hash.
 func (s *ethSubscriber) reconcile(ctx context.Context, st *streamState, h *adapter.BlockHead) (stale bool, err error) {
@@ -261,22 +273,31 @@ func (s *ethSubscriber) reconcile(ctx context.Context, st *streamState, h *adapt
 	if n == 0 {
 		return false, nil
 	}
+	// Bridging unreceived heights is only meaningful once an emitted boundary
+	// is retained to walk down to; before the first emission there is nothing
+	// a reorg could have orphaned, so unretained heights end the walk.
+	_, bridge := st.heads[st.next-1]
 	expected := h.ParentHash
 	for k := n - 1; ; k-- {
 		retained, ok := st.heads[k]
-		if !ok || retained.Hash == expected {
-			return false, nil // nothing retained to compare against, or the chains rejoin
+		if ok && retained.Hash == expected {
+			return false, nil // the chains rejoin here
+		}
+		if !ok && (!bridge || k < st.next) {
+			return false, nil // nothing retained to reconcile against
 		}
 		canonical, err := s.client.HeadByNumber(ctx, k)
 		if err != nil {
 			return false, fmt.Errorf("reconcile reorg at height %d: %w", k, err)
 		}
-		if retained.Hash == canonical.Hash {
-			return true, nil // the retained chain is canonical; the new head is stale
-		}
-		if k < st.next {
+		switch {
+		case !ok && canonical.Hash != expected:
+			return true, nil // the new head's ancestry is not canonical: stale
+		case ok && retained.Hash == canonical.Hash:
+			return true, nil // the retained chain is canonical: the new head is stale
+		case ok && k < st.next:
 			st.reportDeepReorg(ctx, k, canonical.Hash)
-		} else {
+		case ok:
 			logger.InfoCtx(ctx, "Ethereum shallow reorg absorbed within confirmation lag",
 				zap.Uint64("height", k), zap.String("old", retained.Hash.Hex()), zap.String("new", canonical.Hash.Hex()))
 		}
