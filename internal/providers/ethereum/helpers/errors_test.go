@@ -30,8 +30,18 @@ func TestIsTooManyResultsError(t *testing.T) {
 		},
 		{"block range too wide", errors.New("block range is too wide"), true},
 		{"range too large", errors.New("range too large"), true},
+		// Chainstack's span cap, as reported by users (its docs print no message).
+		{
+			"chainstack range cap wrapped by retry layer",
+			fmt.Errorf("ethereum operation FilterLogs failed after retries: permanent error: Block range limit exceeded. See more details at https://docs.chainstack.com/docs/limits#evm-range-limits"),
+			true,
+		},
+		// drpc result cap, observed live.
+		{"drpc result cap", errors.New("query returns too many logs, narrow your filter: 20000"), true},
+		{"max results phrasing", errors.New("query exceeds max results 20000, retry with the range 23879634-23879696"), true},
 		{"unrelated error", errors.New("execution reverted"), false},
 		{"connection error", errors.New("connection refused"), false},
+		{"invalid params without a range hint", errors.New("invalid argument 0: json: cannot unmarshal"), false},
 	}
 
 	for _, tc := range cases {
@@ -58,7 +68,12 @@ func TestIsBlockRangeCapError(t *testing.T) {
 		},
 		{"block range too wide", errors.New("block range is too wide"), true},
 		{"range too large", errors.New("range too large"), true},
+		{"chainstack range cap", errors.New("Block range limit exceeded. See more details at https://docs.chainstack.com/docs/limits#evm-range-limits"), true},
+		{"uppercase phrasing is matched", errors.New("RANGE TOO LARGE"), true},
+		{"max block range phrasing", errors.New("query exceeds max block range 100000"), true},
+		{"limited-to phrasing", errors.New("eth_getLogs is limited to 1024 block range. Please check the parameter requirements"), true},
 		// Result-count limits are data-dependent, not a fixed span cap.
+		{"drpc result cap", errors.New("query returns too many logs, narrow your filter: 20000"), false},
 		{"alchemy result cap", errors.New("query returned more than 10000 results"), false},
 		{"generic too many results", errors.New("too many results"), false},
 		{"unrelated error", errors.New("execution reverted"), false},

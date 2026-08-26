@@ -117,15 +117,30 @@ export FF_INDEXER_DATABASE_USER=postgres
 export FF_INDEXER_DATABASE_PASSWORD=postgres
 export FF_INDEXER_DATABASE_DBNAME=ff_indexer
 
-# Ethereum
-export FF_INDEXER_ETHEREUM_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY
-export FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://mainnet.infura.io/ws/v3/YOUR_KEY
+# Ethereum (Infura or Chainstack; both URLs must point at the same provider)
+export FF_INDEXER_ETHEREUM_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY            # Chainstack: https://ethereum-mainnet.core.chainstack.com/YOUR_KEY
+export FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://mainnet.infura.io/ws/v3/YOUR_KEY     # Chainstack: wss://ethereum-mainnet.core.chainstack.com/YOUR_KEY
 export FF_INDEXER_ETHEREUM_CHAIN_ID=eip155:1
 
 # Job queue (names for token_index / media_index workers)
 export FF_INDEXER_JOBS_TOKEN_QUEUE=token_index
 export FF_INDEXER_JOBS_MEDIA_QUEUE=media_index
 ```
+
+### Ethereum RPC provider notes
+
+The Ethereum code path is provider-agnostic, but two providers are known and their limits differ in ways that matter for configuration:
+
+| | Infura (Team) | Chainstack (Growth) |
+|---|---|---|
+| Billing | credits, **daily** quota, hard 402 stop | request units, **monthly** quota, $15/1M overage |
+| `eth_getLogs` | 255 credits; span cap `toBlock-fromBlock ≤ 10000` (verified live) | 1 RU, **2 RU when `fromBlock` is ≥127 blocks behind the tip** (every history walk); span cap documented as "10,000 blocks" — inclusive/exclusive **not verified**, so set `FF_INDEXER_ETHEREUM_GETLOGS_SPAN_CAP=9999` until a soak confirms `10000` |
+| WebSocket | `eth_subscribe logs` billed 300 credits/block | **every pushed notification is 1 RU** — the reason chain ingestion is head-driven pull (`newHeads` + per-block `eth_getLogs`), see `docs/architecture.md` |
+| Rate limit | 40k credits/s | 250 requests/s (Growth); peak concurrent `eth_getLogs` ≈ `token_worker.concurrency × scan_window_concurrency × 3` |
+| Archive state | included | included on paid plans, **but the node must be deployed in Archive mode** — `GetContractDeployer` binary-searches `eth_getCode` at historical blocks and a Full node answers `missing trie node` |
+| Over-range error | `range N exceeds limit of 10000` | `Block range limit exceeded. See more details at https://docs.chainstack.com/docs/limits#evm-range-limits` (`-32602`) |
+
+Both phrasings (and drpc's `query returns too many logs`) are recognised by `helpers.IsBlockRangeCapError` / `IsTooManyResultsError`, which is what lets pagination halve instead of aborting a walk. When adding a provider, run a full-history owner scan against it first and add any new limit message there, with a test.
 
 ## Running Locally
 
