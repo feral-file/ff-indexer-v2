@@ -556,6 +556,39 @@ func TestSubscribeEvents_QueuedDoubleReorgRejectsStaleHead(t *testing.T) {
 	require.Equal(t, []uint64{100, 101}, reported, "no progress between the stale head and the canonical confirmation")
 }
 
+// TestSubscribeEvents_ReplacementBelowTipResetsConfirmationDepth pins that
+// accepting a replacement below the tip drops the stale descendants and
+// measures the lag from the replacement branch: queued A103, A104, B101, B102,
+// B103 (lag 2) must confirm only 101 — from B103 — never 101..102 from the
+// stale A104.
+func TestSubscribeEvents_ReplacementBelowTipResetsConfirmationDepth(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	chain := &headChain{}
+	a100, a101, a102 := chain.next(100), chain.next(101), chain.next(102)
+	a103, a104 := chain.next(103), chain.next(104)
+	mockClient, push, _ := headFixture(t, ctrl, a100, a101, a102)
+	subscriber := newLaggedSubscriber(t, mockClient, 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b101 := head(101, common.HexToHash("0xb101"), a100.Hash) // replaces A101 on the emitted 100
+	b102 := head(102, common.HexToHash("0xb102"), b101.Hash)
+	b103 := head(103, common.HexToHash("0xb103"), b102.Hash)
+	gomock.InOrder(
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(100), uint64(100)).
+			DoAndReturn(fetchThenPush(push, []*adapter.BlockHead{a103, a104, b101, b102, b103})),
+		// With A104 still counted as tip this would be [101,102]; the
+		// replacement branch's tip B103 confirms 101 only.
+		mockClient.EXPECT().FetchIngestionLogs(gomock.Any(), uint64(101), uint64(101)).DoAndReturn(fetchThenCancel(cancel)),
+	)
+
+	err := subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error { return nil })
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 // TestSubscribeEvents_TipOnlyDeepReorgStopsAtLastEmitted pins the bound of the
 // walk: it reaches the last emitted height (100), finds it replaced (the deep
 // reorg signal), and does not walk further or replay anything.
