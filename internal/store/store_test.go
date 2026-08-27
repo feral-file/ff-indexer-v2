@@ -6083,8 +6083,11 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 		require.NotNil(t, row)
 		assert.True(t, row.HealthGated, "an observation write must not clear a live gate")
-		assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict, "observation fields still update")
-		assert.Equal(t, 3, row.ConsecutiveFailures)
+		// The stale stall must not relabel the gate either: a token inheriting the gate
+		// with no sibling health row derives its reason from this verdict, and
+		// render_stalled is legacy-only since #142.
+		assert.Equal(t, schema.RenderProbeVerdictBlank, row.Verdict, "a gated row keeps its gate-acquiring verdict under a stale stall")
+		assert.Equal(t, 3, row.ConsecutiveFailures, "other observation fields still update")
 
 		// The stale-success shape: a routine +168h schedule from a render that started
 		// before the gate was acquired must not postpone the gate's healing probe.

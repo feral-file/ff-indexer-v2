@@ -270,9 +270,10 @@ the second look ran under the first look's conditions: in the same 2026-08-25 au
 every one at counter 4, while raising the settle alone rescued none of them on idle
 hardware — the artifact is contention, so the fix is to remove it for the look that
 decides. The cost is queue round-trips, never occupied slots; media processing is
-unaffected. Every ungated non-zero counter accumulated before this contract was reset by
-migration 028 — including `blank` rows, whose counts could contain earlier stalls — so a
-legacy stall can never serve as a blank's first strike. 028 runs exactly once with the
+unaffected. Every non-zero counter accumulated before this contract was reset by
+migration 028 — `blank` rows, whose counts could contain earlier stalls, and gated rows,
+whose counts survive release — so a legacy stall can never serve as a blank's first
+strike. 028 runs exactly once with the
 indexer stopped (see the migration header and DEVELOPMENT.md): a probe in flight across
 the reset writes its old counter back, and after cutover a non-zero counter is genuine
 blank evidence a re-run would erase. The 5 honest blanks in

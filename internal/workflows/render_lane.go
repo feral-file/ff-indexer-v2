@@ -13,10 +13,16 @@ const laneBusyRetryDelay = 30 * time.Second
 
 // laneDeferredHold is how long the lane keeps refusing new first looks after turning a
 // confirmation away, so in-flight first looks drain and the confirmation gets in on its
-// retry. Twice the retry delay covers the retry itself plus one polling interval; after
-// that the confirmation is presumed gone (its job failed or was canceled) and first
-// looks resume, or a lost confirmation would idle the lane forever.
-const laneDeferredHold = 2 * laneBusyRetryDelay
+// retry. The executor cannot see the queue, so it cannot know whether that job is still
+// pending; the hold is instead sized so no LIVE pending confirmation can be outlived by
+// it. The confirmation refreshes the stamp on every turned-away retry (laneBusyRetryDelay
+// apart), and the only thing that can keep it from retrying is every worker slot being
+// held by first looks still in their pre-admission phase — two store reads and one DNS
+// resolution through net.DefaultResolver under the job context, bounded at seconds. Ten
+// retry delays is an order of magnitude beyond that (#142 bot round 8). Past it the
+// confirmation is presumed gone (job failed or canceled) and first looks resume; the
+// cost of a lost confirmation is at most this long of cheap first-look reschedules.
+const laneDeferredHold = 10 * laneBusyRetryDelay
 
 // renderLane admits renders without ever blocking a worker slot: first looks share it,
 // a confirmation needs it to itself, and a render that cannot enter is turned away for

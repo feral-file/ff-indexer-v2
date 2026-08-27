@@ -14,9 +14,12 @@
 -- what its count is made of. Affected rows restart from a first look; the deciding look
 -- then runs under the confirmation conditions (#142). One extra render per row.
 --
--- Scope: ungated rows only. A gated row's counter is irrelevant to healing (a
--- successful render releases regardless) and shadow mode holds no gates, so touching
--- them would change nothing.
+-- Scope: every non-zero counter, gated rows included. A gated row's counter is
+-- irrelevant while the gate is held (its next probe is a confirmation regardless, and
+-- the gate persists until a successful render releases it), but release — including
+-- the shadow-mode sweeper's release of every gate — keeps the counter, so a released
+-- legacy gate would carry stall-inflated evidence into its next blank. Zeroing it
+-- changes nothing while gated and makes the release a clean restart.
 --
 -- ROLLOUT — exact-once, with the indexer STOPPED (see DEVELOPMENT.md):
 --   1. stop the indexer (every media/probe worker, old or new, including in-flight
@@ -26,8 +29,8 @@
 --   3. start the #142 image.
 -- It is pure data; no code depends on it, so it is not covered by the default
 -- "migrations before code" rule. NOT re-runnable after cutover: once the new executor
--- is live, an ungated non-zero counter is a genuine first blank awaiting its
--- confirmation, and running this again would erase that evidence.
+-- is live, a non-zero counter is a genuine first blank awaiting its confirmation, and
+-- running this again would erase that evidence.
 --
 -- LOCKING: a single UPDATE over the affected rows (thousands, not millions); row locks
 -- only, no DDL on a populated table beyond a comment. The stop above is for
@@ -37,8 +40,7 @@ BEGIN;
 
 UPDATE media_render_probes
 SET consecutive_failures = 0
-WHERE health_gated = false
-  AND consecutive_failures > 0;
+WHERE consecutive_failures > 0;
 
 COMMENT ON COLUMN media_render_probes.consecutive_failures IS
     'Consecutive blank frames (debounce state; gates at render_probe.failure_gate_threshold). '

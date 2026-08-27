@@ -666,9 +666,9 @@ func TestExecuteRenderProbe_laneAdmissionUsesAdmissionTime(t *testing.T) {
 	require.NoError(t, <-firstDone)
 }
 
-// laneDeferredHoldForTest mirrors workflows.laneDeferredHold (2 x the 30s retry); the
+// laneDeferredHoldForTest mirrors workflows.laneDeferredHold (10 x the 30s retry); the
 // constant is unexported and the value is part of the pinned contract.
-const laneDeferredHoldForTest = time.Minute
+const laneDeferredHoldForTest = 5 * time.Minute
 
 // TestExecuteRenderProbe_confirmationRendersAlone pins the lane: a confirmation cannot
 // join in-flight first looks and a first look cannot join an in-flight confirmation —
