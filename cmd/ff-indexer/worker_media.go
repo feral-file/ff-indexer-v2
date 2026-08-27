@@ -202,6 +202,7 @@ func registerWorkerMedia(
 				NoEvidenceRecheckInterval: wcfg.RenderProbe.NoEvidenceRecheckInterval,
 				Enforce:                   wcfg.RenderProbe.Enforce,
 				ImageSettleMs:             wcfg.RenderProbe.ImageSettleMs,
+				ConfirmSettleMs:           wcfg.RenderProbe.ConfirmSettleMs,
 				Fingerprints:              fingerprints,
 			},
 		)

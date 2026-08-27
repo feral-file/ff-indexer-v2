@@ -229,6 +229,24 @@ missing column — jobs error instead of deferring.
 Running the backfill while the guard is still enabled is harmless but useless:
 every job re-skips and re-marks; re-run the file after the guard is off.
 
+**Migration 028 (render-probe counter reset) — exact-once, with the indexer stopped:**
+
+`028.sql` zeroes every `media_render_probes.consecutive_failures` accumulated
+while render timeouts still counted toward the gate (pre ff-indexer-v2#142). It is
+pure data with no code dependency, so the default ordering does not apply; what does
+apply is that a probe in flight across the UPDATE writes its pre-reset counter back
+afterwards, whichever executor version runs it, and the new executor would then read a
+legacy stall count as blank evidence. Sequence:
+
+1. Stop the indexer — every media/probe worker, old or new, including in-flight
+   `RenderMediaProbe` jobs (no worker may be running during step 2)
+2. Run `028.sql` once; confirm it reports `COMMIT`
+3. Start the #142 image
+
+Do **not** re-run the file after cutover: with the new executor live, a non-zero
+counter is a genuine first blank awaiting its confirmation, and a second run would
+erase that evidence.
+
 **Migration 017 (token_events uniqueness) - REQUIRED:**
 
 This migration adds the `token_events_ownership_unique` partial index that application code depends on for idempotent ownership event insertion.

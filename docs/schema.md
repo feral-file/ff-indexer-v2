@@ -256,7 +256,7 @@ L1 render-probe observations, one row per media URL (keyed like `token_media_hea
 | engine_version | TEXT | Browser identity (User-Agent) at capture time |
 | viewport | TEXT | Capture viewport as "WxH" |
 | verdict | render_probe_verdict | rendered_ok, blank, stalled, known_bad_fingerprint |
-| consecutive_failures | INT | Consecutive blank/stalled probes (debounce state; fingerprint gates immediately) |
+| consecutive_failures | INT | Consecutive blank probes (debounce state; fingerprint gates immediately; a stall carries it unchanged) |
 | health_gated | BOOLEAN | Durable marker that this probe holds a render_% gate on the URL's health rows; cleared only after a successful release |
 | last_error | TEXT | Render failure detail (NULL on rendered_ok) |
 | captured_at | TIMESTAMPTZ | Last successful screenshot time (NULL when never captured) |
@@ -270,7 +270,7 @@ L1 render-probe observations, one row per media URL (keyed like `token_media_hea
 **Purpose**:
 - Catches media that passes byte-level (L0) validation but paints nothing in a browser: gateway error pages served as valid HTML, blank canvases, pages that never finish loading
 - Holds the URL-level record of an active gate (`health_gated`), so a token that newly references an already-gated URL inherits it instead of entering the sweep as `unknown`
-- Debounces transient failures: `blank`/`stalled` gate only after `render_probe.failure_gate_threshold` consecutive probes, while a `known_bad_fingerprint` match gates immediately
+- Debounces transient failures: `blank` gates only after `render_probe.failure_gate_threshold` consecutive probes, while a `known_bad_fingerprint` match gates immediately; `stalled` is recorded but never counts (no evidence — see [media_viewability.md](media_viewability.md))
 - Captures `baseline_phash` for future drift detection; nothing compares against it yet (feral-file#3485)
 
 **Note**: Rows are keyed by URL, not by token, because a render verdict is a property of the URL — one probe serves every token referencing it. Probe rows outlive the `token_media_health` rows that reference the same URL: those are deleted when the last token moves away, while the verdict (and any gate it holds) must survive.
@@ -716,7 +716,7 @@ Audit log of webhook delivery attempts with status tracking and response details
 Added in migration 023. What headless chromium painted for a media URL; see [media_viewability.md](media_viewability.md).
 - `rendered_ok` - A non-degenerate frame was captured
 - `blank` - The captured frame is near-uniform (no visible output); gates only after `render_probe.failure_gate_threshold` consecutive probes
-- `stalled` - The page failed to load or screenshot within the timeout; same debounce as `blank`
+- `stalled` - The page failed to load or screenshot within the timeout; recorded for telemetry, carries the counter and gate unchanged, never gates (migration 028 reset every legacy counter, once, with the indexer stopped)
 - `known_bad_fingerprint` - The frame matched a configured known-bad pHash (gateway error page, directory listing, placeholder); gates immediately
 
 ### moderation_source

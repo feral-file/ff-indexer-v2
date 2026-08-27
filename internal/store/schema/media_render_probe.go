@@ -31,7 +31,9 @@ func (v RenderProbeVerdict) String() string {
 const (
 	// RenderFailureBlank gates after consecutive blank frames.
 	RenderFailureBlank = "render_blank"
-	// RenderFailureStalled gates after consecutive load failures/timeouts.
+	// RenderFailureStalled is legacy: written when stalls still counted toward the gate
+	// (before #142). The probe no longer writes it; rows carrying it are healed by the
+	// probe like any other render_ reason, so it stays defined until the last one heals.
 	RenderFailureStalled = "render_stalled"
 	// RenderFailureKnownBad gates immediately on a known-bad fingerprint match.
 	RenderFailureKnownBad = "render_known_bad"
@@ -68,8 +70,9 @@ type MediaRenderProbe struct {
 	// Verdict is the classification of the last probe
 	Verdict RenderProbeVerdict `gorm:"column:verdict;not null;type:render_probe_verdict"`
 
-	// ConsecutiveFailures counts successive blank/stalled probes (debounce state;
-	// known_bad_fingerprint gates immediately and does not use this counter)
+	// ConsecutiveFailures counts successive blank probes (debounce state;
+	// known_bad_fingerprint gates immediately and does not use this counter; a stall
+	// carries it forward unchanged)
 	ConsecutiveFailures int `gorm:"column:consecutive_failures;not null;default:0"`
 
 	// HealthGated records whether this probe currently holds a render_% gate on the

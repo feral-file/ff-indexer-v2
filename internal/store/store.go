@@ -506,7 +506,8 @@ type Store interface {
 
 	// GetURLsDueForRenderProbe returns L0-healthy HTML/animation/image URLs due for an
 	// L1 render probe, in three priority tiers: urgent re-probes (active gates and
-	// pending blank/stalled debounces), then never-probed coverage, then routine
+	// pending blank debounces, keyed on a non-zero counter), then never-probed
+	// coverage, then routine
 	// rechecks of rendered_ok URLs
 	GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]string, error)
 	// IsStaticImageRenderClass reports whether every render-eligible signal for the URL

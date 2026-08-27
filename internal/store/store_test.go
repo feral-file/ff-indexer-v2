@@ -5915,6 +5915,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		probedDueURL := "https://example.com/render/probed-due.html"
 		probedFutureURL := "https://example.com/render/probed-future.html"
 		retryDueURL := "https://example.com/render/retry-due.html"
+		stalledDueURL := "https://example.com/render/stalled-due.html"
 
 		mintTokenWithMedia(t, &htmlURL, nil)
 		mintTokenWithMedia(t, &imageURL, nil)
@@ -5924,6 +5925,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		mintTokenWithMedia(t, &probedDueURL, nil)
 		mintTokenWithMedia(t, &probedFutureURL, nil)
 		mintTokenWithMedia(t, &retryDueURL, nil)
+		mintTokenWithMedia(t, &stalledDueURL, nil)
 
 		markHealthy(t, htmlURL, "text/html")
 		markHealthy(t, imageURL, "image/png")
@@ -5932,6 +5934,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		markHealthy(t, probedDueURL, "text/html")
 		markHealthy(t, probedFutureURL, "text/html")
 		markHealthy(t, retryDueURL, "text/html")
+		markHealthy(t, stalledDueURL, "text/html")
 		errMsg := "HTTP 404"
 		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, brokenURL, MediaHealthUpdate{
 			Status:    schema.MediaHealthStatusBroken,
@@ -5953,6 +5956,12 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
 			MediaURL: retryDueURL, Verdict: schema.RenderProbeVerdictBlank,
 			ConsecutiveFailures: 1, CapturedAt: &past, NextCheckAt: past,
+		}))
+		// A stall retry: due, but a stall carries no evidence and left the counter at
+		// zero, so this is not a pending second look and must not outrank coverage.
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: stalledDueURL, Verdict: schema.RenderProbeVerdictStalled,
+			ConsecutiveFailures: 0, NextCheckAt: past,
 		}))
 
 		urls, err := store.GetURLsDueForRenderProbe(ctx, 50)
@@ -5980,6 +5989,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			return -1
 		}
 		assert.Less(t, idx(retryDueURL), idx(htmlURL), "pending debounce retry before never-probed coverage")
+		assert.Less(t, idx(htmlURL), idx(stalledDueURL), "a stall retry at counter zero is not urgent: coverage first")
 		assert.Less(t, idx(htmlURL), idx(probedDueURL), "never-probed before routine rendered_ok recheck")
 		assert.Less(t, idx(animationURL), idx(imageURL), "animation class before image class")
 		assert.Less(t, idx(htmlURL), idx(imageURL), "HTML class before image class")
@@ -6073,8 +6083,11 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 		require.NotNil(t, row)
 		assert.True(t, row.HealthGated, "an observation write must not clear a live gate")
-		assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict, "observation fields still update")
-		assert.Equal(t, 3, row.ConsecutiveFailures)
+		// The stale stall must not relabel the gate either: a token inheriting the gate
+		// with no sibling health row derives its reason from this verdict, and
+		// render_stalled is legacy-only since #142.
+		assert.Equal(t, schema.RenderProbeVerdictBlank, row.Verdict, "a gated row keeps its gate-acquiring verdict under a stale stall")
+		assert.Equal(t, 3, row.ConsecutiveFailures, "other observation fields still update")
 
 		// The stale-success shape: a routine +168h schedule from a render that started
 		// before the gate was acquired must not postpone the gate's healing probe.

@@ -3236,6 +3236,8 @@ func renderFailureReasonFor(verdict schema.RenderProbeVerdict) *string {
 	case schema.RenderProbeVerdictKnownBadFingerprint:
 		reason = schema.RenderFailureKnownBad
 	case schema.RenderProbeVerdictStalled:
+		// Legacy only: since #142 a stall never acquires a gate and a gated row keeps
+		// its acquiring verdict through a stall, so this arm serves rows gated before.
 		reason = schema.RenderFailureStalled
 	}
 	return &reason
@@ -3358,7 +3360,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 // meaningful probe there; a screenshot of an MP4 proves nothing).
 //
 // Ordering is three priority tiers — urgent re-probes (active gates and pending
-// blank/stalled debounces), then never-probed coverage, then routine rechecks — and the
+// blank debounces), then never-probed coverage, then routine rechecks — and the
 // tier split is load-bearing, not cosmetic. The render corpus is far larger than render
 // capacity (~356k eligible URLs at rollout against a handful of probes per minute), so
 // whatever ranks last waits weeks. Ranking re-probes last starves heals (a gated URL's
@@ -3432,9 +3434,13 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		-- when the never-probed backlog is weeks long, as it is at initial rollout):
 		--   0. Urgent re-probes: active gates (the probe is a gated URL's ONLY healer, so
 		--      queueing heals behind a 350k-URL seeding pass hides recovered tokens for
-		--      weeks) and pending blank/stalled debounces (starving the second look makes
+		--      weeks) and pending blank debounces (starving the second look makes
 		--      every accumulated first-failure gate in one burst when seeding drains,
-		--      instead of spread out at the designed retry cadence).
+		--      instead of spread out at the designed retry cadence). Keyed on the
+		--      counter, not the verdict: a stall never advances the counter (no
+		--      evidence), so a stalled row at zero is a retry, not a second look, and
+		--      must not jump the coverage queue — while a blank debounce whose latest
+		--      attempt stalled keeps its non-zero counter and stays urgent.
 		--   1. Never-probed coverage.
 		--   2. Routine rechecks of rendered_ok URLs. Ranked LAST deliberately: as seeded
 		--      URLs come due again (RecheckInterval), putting any re-probe above coverage
@@ -3443,7 +3449,7 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		--      thing on this list to postpone.
 		ORDER BY CASE
 		           WHEN p.media_url_hash IS NOT NULL
-		                AND (p.health_gated = true OR p.verdict IN ('blank', 'stalled')) THEN 0
+		                AND (p.health_gated = true OR p.consecutive_failures > 0) THEN 0
 		           WHEN p.media_url_hash IS NULL THEN 1
 		           ELSE 2
 		         END ASC,
@@ -3680,16 +3686,28 @@ func (s *pgStore) UpsertMediaRenderProbe(ctx context.Context, probe schema.Media
 		}
 		var current struct {
 			HealthGated bool
+			Verdict     schema.RenderProbeVerdict
 			NextCheckAt time.Time
 		}
 		err := tx.Model(&schema.MediaRenderProbe{}).
-			Select("health_gated, next_check_at").
+			Select("health_gated, verdict, next_check_at").
 			Where("media_url_hash = ?", urlHash).
 			First(&current).Error
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("failed to read current gate marker: %w", err)
 		}
 		probe.HealthGated = current.HealthGated // false when no row exists
+		// A gated row also keeps the verdict that acquired its gate under a stale stall.
+		// The executor already preserves it when its own snapshot was gated, but a
+		// snapshot taken before a concurrent execution acquired the gate arrives here
+		// labeled stalled, and a token that later inherits the gate with no sibling
+		// health row derives its reason from this verdict (activeRenderGate) — as
+		// render_stalled, a reason the probe no longer issues (#142 bot round 8). The
+		// stall itself still lands in last_error. Only the stalled label is overridden:
+		// a stale blank or fingerprint verdict is a real observation.
+		if current.HealthGated && probe.Verdict == schema.RenderProbeVerdictStalled {
+			probe.Verdict = current.Verdict
+		}
 		// A gated row also keeps its urgent schedule — but only while that schedule is
 		// still outstanding. The stale-success shape: an executor snapshots an ungated
 		// row, renders for many seconds, and meanwhile a recovered/concurrent execution
