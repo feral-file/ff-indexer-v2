@@ -559,21 +559,22 @@ const stallErrorPrefix = "render stalled: "
 
 // wasRenderStall reports whether the previous attempt was an actual render stall.
 //
-// Reason: the stalled verdict alone cannot say — carriedRow gives a first-ever
-// no-evidence attempt (served 410, SSRF refusal) the same label, and treating that as a
-// prior stall would send a URL's FIRST real timeout straight to the week-long cadence
-// (#142 bot round 4). The discriminator lives in last_error because a new enum value
-// would cost a migration for one cadence decision. Pre-#142 stall rows lack the prefix
-// and so read as no prior stall: they get one RetryInterval look before backing off.
+// Reason: the verdict cannot say — carriedRow gives a first-ever no-evidence attempt
+// (served 410, SSRF refusal) the stalled label, and a gated row keeps its gate's verdict
+// through a stall (recordStalled) — and treating either as a prior stall, or missing
+// one, would send a URL's FIRST real timeout straight to the week-long cadence or never
+// back a persistent one off (#142 bot round 4). The discriminator lives in last_error
+// because a new enum value would cost a migration for one cadence decision. Pre-#142
+// stall rows lack the prefix and so read as no prior stall: they get one RetryInterval
+// look before backing off.
 func wasRenderStall(prev *schema.MediaRenderProbe) bool {
-	return prev != nil && prev.Verdict == schema.RenderProbeVerdictStalled &&
-		prev.LastError != nil && strings.HasPrefix(*prev.LastError, stallErrorPrefix)
+	return prev != nil && prev.LastError != nil && strings.HasPrefix(*prev.LastError, stallErrorPrefix)
 }
 
-// recordStalled persists a load failure or timeout as the stalled verdict under the
-// no-evidence contract: the label and error are recorded for telemetry, but the failure
-// counter, gate marker, and last capture are carried forward untouched, so a stall can
-// neither gate nor march a URL toward the threshold.
+// recordStalled persists a load failure or timeout as the stalled verdict (on an ungated
+// row) under the no-evidence contract: the label and error are recorded for telemetry,
+// but the failure counter, gate marker, and last capture are carried forward untouched,
+// so a stall can neither gate nor march a URL toward the threshold.
 //
 // Reason: a timeout is a fact about the prober's budget and load, not about the page —
 // see ExecuteRenderProbe. Cadence: a first stall retries on RetryInterval, because a
@@ -589,7 +590,14 @@ func (e *renderProbeExecutor) recordStalled(ctx context.Context, url, errMsg str
 		interval = e.noEvidenceInterval(wasGated)
 	}
 	row := carriedRow(url, stallErrorPrefix+errMsg, prev, now.Add(interval))
-	row.Verdict = schema.RenderProbeVerdictStalled
+	// A gated row keeps the verdict that acquired its gate: a token that later inherits
+	// the gate with no sibling health row derives its failure reason from that verdict
+	// (store.activeRenderGate), and a stall must not relabel a blank or fingerprint gate
+	// as render_stalled — a reason the probe no longer issues (#142 bot round 6). The
+	// stall itself is on the row in last_error, prefixed.
+	if !row.HealthGated {
+		row.Verdict = schema.RenderProbeVerdictStalled
+	}
 	if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
 		return fmt.Errorf("failed to upsert render probe: %w", err)
 	}

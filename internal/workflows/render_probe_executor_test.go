@@ -528,7 +528,7 @@ func TestExecuteRenderProbe_healthWritesAreRenderProbeWrites(t *testing.T) {
 // a fingerprint gate (count 1) followed by a stall that lands below a threshold of 3.
 // The health row is gated from the first probe, so a later success must still heal it —
 // otherwise L0, which never re-checks render_% rows, leaves it broken forever.
-func TestExecuteRenderProbe_gateSurvivesVerdictChange(t *testing.T) {
+func TestExecuteRenderProbe_gateSurvivesStall(t *testing.T) {
 	cfg := renderProbeTestConfig
 	cfg.FailureGateThreshold = 3
 	m, exec := setupRenderProbe(t, cfg)
@@ -544,14 +544,18 @@ func TestExecuteRenderProbe_gateSurvivesVerdictChange(t *testing.T) {
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
 
-	// The stall changes the label but carries the counter and the marker forward: the
-	// gate must persist through the verdict change or the health row could never heal.
+	// The stall carries the counter and the marker forward, and on a gated row it also
+	// keeps the verdict that acquired the gate: a token inheriting the gate later derives
+	// its failure reason from that verdict, and a stall must not relabel a fingerprint
+	// gate as render_stalled. The stall itself is recorded in last_error.
 	m.store.EXPECT().
 		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
-			assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict)
+			assert.Equal(t, schema.RenderProbeVerdictKnownBadFingerprint, row.Verdict, "a gated row keeps its gate's verdict")
+			require.NotNil(t, row.LastError)
+			assert.True(t, strings.HasPrefix(*row.LastError, "render stalled: "))
 			assert.Equal(t, 1, row.ConsecutiveFailures)
-			assert.True(t, row.HealthGated, "an existing gate must survive a verdict change")
+			assert.True(t, row.HealthGated, "an existing gate must survive a stall")
 			assert.Equal(t, m.now.Add(cfg.RetryInterval), row.NextCheckAt,
 				"a gated row's first stall retries soon: the probe is its only healer")
 			return nil

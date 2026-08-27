@@ -751,6 +751,16 @@ func validateRenderProbeConfig(c *RenderProbeConfig, mediaEnabled bool, mediaQue
 	// The same headroom rule for the confirmation settle: it replaces settle_ms on the
 	// probes that decide gate state, so a confirmation that cannot fit the budget would
 	// stall every second look — and a stall never heals a gated row.
+	// A confirmation settle below the normal one inverts the safeguard: the deciding look
+	// would give the page LESS time than the first look did, so a work that paints late
+	// in the normal window gates on its confirmation. (<= 0 is valid: it keeps the class
+	// settle.)
+	if c.ConfirmSettleMs > 0 && c.ConfirmSettleMs < effSettle {
+		invalid = append(invalid, fmt.Sprintf(
+			"render_probe.confirm_settle_ms (%dms) must not be shorter than settle_ms (effective %dms): "+
+				"the confirming look must give the page at least the first look's time",
+			c.ConfirmSettleMs, effSettle))
+	}
 	if c.ConfirmSettleMs > 0 && effTimeout < c.ConfirmSettleMs+probe.MinRenderHeadroomMs {
 		invalid = append(invalid, fmt.Sprintf(
 			"render_probe.timeout_ms (effective %dms) must exceed confirm_settle_ms (%dms) by at least %dms: "+

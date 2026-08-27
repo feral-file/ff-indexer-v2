@@ -600,6 +600,9 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 			// state, so it needs the same budget headroom or every second look stalls.
 			{"confirm settle without timeout headroom", func(c *RenderProbeConfig) { c.ConfirmSettleMs = probe.DefaultTimeoutMs },
 				"must exceed confirm_settle_ms"},
+			// The deciding look must not give the page less time than the first look did.
+			{"confirm settle shorter than the normal settle", func(c *RenderProbeConfig) { c.ConfirmSettleMs = 1000 },
+				"must not be shorter than settle_ms"},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {

@@ -3236,6 +3236,8 @@ func renderFailureReasonFor(verdict schema.RenderProbeVerdict) *string {
 	case schema.RenderProbeVerdictKnownBadFingerprint:
 		reason = schema.RenderFailureKnownBad
 	case schema.RenderProbeVerdictStalled:
+		// Legacy only: since #142 a stall never acquires a gate and a gated row keeps
+		// its acquiring verdict through a stall, so this arm serves rows gated before.
 		reason = schema.RenderFailureStalled
 	}
 	return &reason

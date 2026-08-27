@@ -209,9 +209,12 @@ production marching healthy URLs toward the gate threshold when it was still cou
   treated as durable and moves to `no_evidence_recheck_interval` (`broken_recheck_interval`
   for a gated row), or ~1,300 persistently stalling URLs on an hourly retry would
   out-spend the daily render budget. The probe no longer writes `render_stalled`; rows
-  gated with it earlier keep the reason until their healing render, and the render-due
-  query's urgent tier keys on a non-zero counter rather than the verdict, so a stall
-  retry does not jump the coverage queue.
+  gated with it earlier keep the reason until their healing render. A gated row keeps
+  the verdict that acquired its gate through a stall (the stall is in `last_error`,
+  prefixed `render stalled: `), because a token inheriting the gate with no sibling
+  health row derives its reason from that verdict. The render-due query's urgent tier
+  keys on a non-zero counter rather than the verdict, so a stall retry does not jump the
+  coverage queue.
 
 - **Browser launch failure** (`probe.ErrBrowserUnavailable`: fork/exec exhaustion,
   chromium startup crash, DevTools socket timeout) is a worker-host failure. The job is
