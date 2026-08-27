@@ -18,15 +18,20 @@
 -- successful render releases regardless) and shadow mode holds no gates, so touching
 -- them would change nothing.
 --
--- ORDERING — unlike the default "migrations before code": run this AFTER the #142 image
--- is live (or with the media worker stopped). It is pure data; no code depends on it.
--- Run before the new image, a still-running pre-#142 worker keeps writing stall counts
--- into the window between the reset and the restart, and the new executor cannot tell
--- those from blank debounce state. Run after, nothing writes stall counts any more, so
--- the reset is final. Re-runnable: a second application is a no-op.
+-- ROLLOUT — exact-once, with the indexer STOPPED (see DEVELOPMENT.md):
+--   1. stop the indexer (every media/probe worker, old or new, including in-flight
+--      RenderMediaProbe jobs — a probe that read a counter before this UPDATE writes it
+--      back afterwards, whichever executor version it runs);
+--   2. run this file once and confirm COMMIT;
+--   3. start the #142 image.
+-- It is pure data; no code depends on it, so it is not covered by the default
+-- "migrations before code" rule. NOT re-runnable after cutover: once the new executor
+-- is live, an ungated non-zero counter is a genuine first blank awaiting its
+-- confirmation, and running this again would erase that evidence.
 --
 -- LOCKING: a single UPDATE over the affected rows (thousands, not millions); row locks
--- only, no DDL on a populated table beyond a comment. Safe under traffic.
+-- only, no DDL on a populated table beyond a comment. The stop above is for
+-- correctness, not for locking.
 
 BEGIN;
 

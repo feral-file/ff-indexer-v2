@@ -269,9 +269,10 @@ hardware — the artifact is contention, so the fix is to remove it for the look
 decides. The cost is queue round-trips, never occupied slots; media processing is
 unaffected. Every ungated non-zero counter accumulated before this contract was reset by
 migration 028 — including `blank` rows, whose counts could contain earlier stalls — so a
-legacy stall can never serve as a blank's first strike. Run 028 *after* the new image is
-live (see the migration header): a pre-#142 worker still running would repopulate stall
-counts into the window. The 5 honest blanks in
+legacy stall can never serve as a blank's first strike. 028 runs exactly once with the
+indexer stopped (see the migration header and DEVELOPMENT.md): a probe in flight across
+the reset writes its old counter back, and after cutover a non-zero counter is genuine
+blank evidence a re-run would erase. The 5 honest blanks in
 that sample (HTTP 200 shells that paint nothing) were blank on every backend — exactly
 the class L1 exists for and L0 cannot see.
 

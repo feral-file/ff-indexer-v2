@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -552,6 +553,23 @@ func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg 
 	return nil
 }
 
+// stallErrorPrefix marks a last_error written by an actual render stall, as opposed to
+// the no-evidence attempts that also wear the stalled label on first-ever rows.
+const stallErrorPrefix = "render stalled: "
+
+// wasRenderStall reports whether the previous attempt was an actual render stall.
+//
+// Reason: the stalled verdict alone cannot say — carriedRow gives a first-ever
+// no-evidence attempt (served 410, SSRF refusal) the same label, and treating that as a
+// prior stall would send a URL's FIRST real timeout straight to the week-long cadence
+// (#142 bot round 4). The discriminator lives in last_error because a new enum value
+// would cost a migration for one cadence decision. Pre-#142 stall rows lack the prefix
+// and so read as no prior stall: they get one RetryInterval look before backing off.
+func wasRenderStall(prev *schema.MediaRenderProbe) bool {
+	return prev != nil && prev.Verdict == schema.RenderProbeVerdictStalled &&
+		prev.LastError != nil && strings.HasPrefix(*prev.LastError, stallErrorPrefix)
+}
+
 // recordStalled persists a load failure or timeout as the stalled verdict under the
 // no-evidence contract: the label and error are recorded for telemetry, but the failure
 // counter, gate marker, and last capture are carried forward untouched, so a stall can
@@ -559,18 +577,18 @@ func (e *renderProbeExecutor) recordNoEvidence(ctx context.Context, url, errMsg 
 //
 // Reason: a timeout is a fact about the prober's budget and load, not about the page —
 // see ExecuteRenderProbe. Cadence: a first stall retries on RetryInterval, because a
-// stall under load is the transient case worth a soon second look; a stall following a
-// stall is treated as durable and moves to noEvidenceInterval, or ~1,300 persistently
-// stalling URLs on an hourly retry would out-spend the whole daily render budget and
-// starve coverage of never-probed URLs. Trade-offs: a page that recovers after two
-// stalls waits the slow cadence for L1 to notice — it is not hidden meanwhile, since
-// stalls never gate.
+// stall under load is the transient case worth a soon second look; a stall following an
+// actual stall (wasRenderStall) is treated as durable and moves to noEvidenceInterval,
+// or ~1,300 persistently stalling URLs on an hourly retry would out-spend the whole
+// daily render budget and starve coverage of never-probed URLs. Trade-offs: a page that
+// recovers after two stalls waits the slow cadence for L1 to notice — it is not hidden
+// meanwhile, since stalls never gate.
 func (e *renderProbeExecutor) recordStalled(ctx context.Context, url, errMsg string, prev *schema.MediaRenderProbe, wasGated bool, now time.Time) error {
 	interval := e.cfg.RetryInterval
-	if prev != nil && prev.Verdict == schema.RenderProbeVerdictStalled {
+	if wasRenderStall(prev) {
 		interval = e.noEvidenceInterval(wasGated)
 	}
-	row := carriedRow(url, errMsg, prev, now.Add(interval))
+	row := carriedRow(url, stallErrorPrefix+errMsg, prev, now.Add(interval))
 	row.Verdict = schema.RenderProbeVerdictStalled
 	if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
 		return fmt.Errorf("failed to upsert render probe: %w", err)

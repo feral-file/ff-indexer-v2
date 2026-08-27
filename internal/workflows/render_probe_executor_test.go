@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 	"testing"
 	"time"
 
@@ -233,14 +234,42 @@ func TestExecuteRenderProbe_stalledRecordsNoEvidence(t *testing.T) {
 		assert.Contains(t, err.Error(), "store down")
 	})
 
-	t.Run("a stall after a stall is durable and moves to the no-evidence cadence", func(t *testing.T) {
+	t.Run("a stall after a no-evidence attempt is still a first stall", func(t *testing.T) {
+		// A first-ever 410 wears the stalled label (carriedRow); it must not make the
+		// URL's first real timeout look like a repeat and cost it the week-long cadence.
 		m, exec := setupRenderProbe(t, renderProbeTestConfig)
-		url := "https://example.com/always-hangs.html"
+		url := "https://example.com/blocked-then-slow.html"
+		noEvidence := "main document returned HTTP 410; frame not classified"
 
 		m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 		m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
-			MediaURL: url,
-			Verdict:  schema.RenderProbeVerdictStalled,
+			MediaURL:  url,
+			Verdict:   schema.RenderProbeVerdictStalled,
+			LastError: &noEvidence,
+		}, nil)
+		m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
+		m.store.EXPECT().
+			UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+				assert.Equal(t, m.now.Add(renderProbeTestConfig.RetryInterval), row.NextCheckAt)
+				require.NotNil(t, row.LastError)
+				assert.True(t, strings.HasPrefix(*row.LastError, "render stalled: "), "an actual stall is marked so the next one can tell")
+				return nil
+			})
+
+		require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+	})
+
+	t.Run("a stall after a stall is durable and moves to the no-evidence cadence", func(t *testing.T) {
+		m, exec := setupRenderProbe(t, renderProbeTestConfig)
+		url := "https://example.com/always-hangs.html"
+		priorStall := "render stalled: render probe failed for " + url + ": context deadline exceeded"
+
+		m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+		m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+			MediaURL:  url,
+			Verdict:   schema.RenderProbeVerdictStalled,
+			LastError: &priorStall,
 		}, nil)
 		m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
 		m.store.EXPECT().

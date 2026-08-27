@@ -716,7 +716,7 @@ Audit log of webhook delivery attempts with status tracking and response details
 Added in migration 023. What headless chromium painted for a media URL; see [media_viewability.md](media_viewability.md).
 - `rendered_ok` - A non-degenerate frame was captured
 - `blank` - The captured frame is near-uniform (no visible output); gates only after `render_probe.failure_gate_threshold` consecutive probes
-- `stalled` - The page failed to load or screenshot within the timeout; recorded for telemetry, carries the counter and gate unchanged, never gates (migration 028 reset every legacy ungated counter; run it after the #142 image)
+- `stalled` - The page failed to load or screenshot within the timeout; recorded for telemetry, carries the counter and gate unchanged, never gates (migration 028 reset every legacy ungated counter, once, with the indexer stopped)
 - `known_bad_fingerprint` - The frame matched a configured known-bad pHash (gateway error page, directory listing, placeholder); gates immediately
 
 ### moderation_source
