@@ -3700,7 +3700,7 @@ func (s *pgStore) UpsertMediaRenderProbe(ctx context.Context, probe schema.Media
 		// A gated row also keeps the verdict that acquired its gate under a stale stall.
 		// The executor already preserves it when its own snapshot was gated, but a
 		// snapshot taken before a concurrent execution acquired the gate arrives here
-		// labelled stalled, and a token that later inherits the gate with no sibling
+		// labeled stalled, and a token that later inherits the gate with no sibling
 		// health row derives its reason from this verdict (activeRenderGate) — as
 		// render_stalled, a reason the probe no longer issues (#142 bot round 8). The
 		// stall itself still lands in last_error. Only the stalled label is overridden:
