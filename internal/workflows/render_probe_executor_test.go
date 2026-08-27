@@ -45,6 +45,9 @@ type renderProbeMocks struct {
 	jobQueue *mocks.MockJobQueue
 	clock    *mocks.MockClock
 	now      time.Time
+	// skew is added to every clock reading; tests that model a slow phase inside one
+	// probe set it from a mock callback so later readings in the same call move on.
+	skew *time.Duration
 }
 
 func setupRenderProbe(t *testing.T, cfg workflows.RenderProbeExecutorConfig) (renderProbeMocks, workflows.RenderProbeExecutor) {
@@ -58,8 +61,9 @@ func setupRenderProbe(t *testing.T, cfg workflows.RenderProbeExecutorConfig) (re
 		jobQueue: mocks.NewMockJobQueue(ctrl),
 		clock:    mocks.NewMockClock(ctrl),
 		now:      time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC),
+		skew:     new(time.Duration),
 	}
-	m.clock.EXPECT().Now().Return(m.now).AnyTimes()
+	m.clock.EXPECT().Now().DoAndReturn(func() time.Time { return m.now.Add(*m.skew) }).AnyTimes()
 
 	exec := workflows.NewRenderProbeExecutor(m.store, m.renderer, m.ssrf, m.jobQueue, "token_index", m.clock, cfg)
 	return m, exec
@@ -613,6 +617,58 @@ func TestExecuteRenderProbe_confirmationSettle(t *testing.T) {
 		})
 	}
 }
+
+// TestExecuteRenderProbe_laneAdmissionUsesAdmissionTime pins where the lane's clock is
+// read: at admission, not at the top of the probe. The probe-row read and SSRF/DNS
+// validation sit between the two, and a hold stamped before a slow pre-admission phase
+// can already be expired when it is taken, so a first look arriving right after enters
+// ahead of the confirmation the hold was reserving the lane for.
+func TestExecuteRenderProbe_laneAdmissionUsesAdmissionTime(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	first := "https://example.com/first-look.html"
+	confirm := "https://example.com/confirm.html"
+	slow := 2 * laneDeferredHoldForTest // pre-admission phase longer than the hold
+
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), first).Return(nil, nil).AnyTimes()
+	// The confirmation's probe-row read is the slow phase: the clock moves on after it.
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), confirm).
+		DoAndReturn(func(context.Context, string) (*schema.MediaRenderProbe, error) {
+			*m.skew = slow
+			return &schema.MediaRenderProbe{MediaURL: confirm, Verdict: schema.RenderProbeVerdictBlank, ConsecutiveFailures: 1}, nil
+		})
+	m.store.EXPECT().UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), first, 0).
+		DoAndReturn(func(context.Context, string, int) (*probe.Capture, error) {
+			started <- struct{}{}
+			<-release
+			return contentFrame(), nil
+		})
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- exec.ExecuteRenderProbe(context.Background(), first) }()
+	<-started
+
+	// Turned away behind the first look; the retry is measured from admission (after
+	// the slow phase), not from the stale top-of-probe reading.
+	var re *jobs.RescheduleError
+	require.ErrorAs(t, exec.ExecuteRenderProbe(context.Background(), confirm), &re)
+	assert.Equal(t, m.now.Add(slow).Add(30*time.Second).UTC(), re.At)
+
+	// A first look arriving a moment later, while the first render is still in flight,
+	// must find the hold active — with a stale stamp it would have expired already.
+	*m.skew = slow + time.Second
+	require.ErrorAs(t, exec.ExecuteRenderProbe(context.Background(), first), &re, "the hold reserved the lane for the confirmation")
+
+	close(release)
+	require.NoError(t, <-firstDone)
+}
+
+// laneDeferredHoldForTest mirrors workflows.laneDeferredHold (2 x the 30s retry); the
+// constant is unexported and the value is part of the pinned contract.
+const laneDeferredHoldForTest = time.Minute
 
 // TestExecuteRenderProbe_confirmationRendersAlone pins the lane: a confirmation cannot
 // join in-flight first looks and a first look cannot join an in-flight confirmation —

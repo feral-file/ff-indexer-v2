@@ -203,7 +203,13 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		return err
 	}
 
-	capture, renderErr := e.render(ctx, url, settleMs, confirming, now)
+	// The lane's hold and the busy retry are both measured from admission, not from
+	// `now` at the top: the probe-row read and SSRF validation (a DNS round-trip) sit in
+	// between, and a hold stamped before them can already be expired by the time it is
+	// taken, letting a first look slip in ahead of the confirmation it was reserving
+	// the lane for (#142 bot round 7).
+	admitAt := e.clock.Now()
+	capture, renderErr := e.render(ctx, url, settleMs, confirming, admitAt)
 	if renderErr != nil {
 		// The lane is busy: nothing rendered, nothing is known, no state is written. The
 		// job comes back after laneBusyRetryDelay and the slot runs other work meanwhile.
@@ -212,7 +218,7 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 				zap.String("url", url),
 				zap.Bool("confirming", confirming),
 			)
-			return fmt.Errorf("%w; rescheduling: %w", renderErr, jobs.ErrReschedule(now.Add(laneBusyRetryDelay)))
+			return fmt.Errorf("%w; rescheduling: %w", renderErr, jobs.ErrReschedule(admitAt.Add(laneBusyRetryDelay)))
 		}
 		// Job cancellation / worker shutdown says nothing about the artwork: leave all
 		// probe state untouched so the URL stays due and the next run judges it. The job
