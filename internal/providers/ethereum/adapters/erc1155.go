@@ -253,23 +253,28 @@ func (a *ERC1155Adapter) GetTokensByOwner(
 }
 
 // ParseEvent parses standard ERC-1155 events.
+//
+// Shape checks run BEFORE the block-timestamp lookup and drop the log instead
+// of failing, mirroring the ERC-721 adapter: the whole-chain topic0 filter lets
+// any contract emit a log under these signatures, and a fatal parse error
+// replays from the durable cursor and crash-loops ingestion (measured on the
+// ERC-721 side, 2026-08-27). The former ordering also let a failing
+// BlockProvider turn a log that was going to be dropped into that same crash.
 func (a *ERC1155Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	if len(vLog.Topics) == 0 {
 		return nil, fmt.Errorf("event log has no topics")
 	}
 
-	base, err := helpers.BaseEventFromLog(ctx, a.chainID, vLog, a.blockProvider)
-	if err != nil {
-		return nil, err
-	}
-
 	switch vLog.Topics[0] {
 	case helpers.ERC1155TransferSingleEventSignature:
-		if len(vLog.Topics) != 4 {
-			return nil, fmt.Errorf("invalid ERC1155 TransferSingle event: expected 4 topics, got %d", len(vLog.Topics))
+		if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
+			skipMalformedStandardLog(ctx, "TransferSingle", vLog)
+			return nil, nil
 		}
-		if len(vLog.Data) < 64 {
-			return nil, fmt.Errorf("invalid ERC1155 TransferSingle event: insufficient data")
+
+		base, err := helpers.BaseEventFromLog(ctx, a.chainID, vLog, a.blockProvider)
+		if err != nil {
+			return nil, err
 		}
 
 		event := base
@@ -289,8 +294,15 @@ func (a *ERC1155Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domai
 		return nil, nil
 	case helpers.ERC1155URIEventSignature:
 		if len(vLog.Topics) != 2 {
-			return nil, fmt.Errorf("invalid URI event: expected 2 topics, got %d", len(vLog.Topics))
+			skipMalformedStandardLog(ctx, "URI", vLog)
+			return nil, nil
 		}
+
+		base, err := helpers.BaseEventFromLog(ctx, a.chainID, vLog, a.blockProvider)
+		if err != nil {
+			return nil, err
+		}
+
 		event := base
 		event.Standard = domain.StandardERC1155
 		event.TokenNumber = new(big.Int).SetBytes(vLog.Topics[1].Bytes()).String()
@@ -300,6 +312,22 @@ func (a *ERC1155Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domai
 	default:
 		return nil, ErrUnknownEvent
 	}
+}
+
+// skipMalformedStandardLog records a log dropped because its shape does not
+// match the standard event its topic0 claims. Warn level: unlike pre-standard
+// Transfer shapes (continuous, debug-logged in the ERC-721 adapter), a foreign
+// log under an ERC-1155 signature is rare enough to stay visible. Dropping it
+// loses one event from a contract that is not emitting the standard anyway;
+// failing on it would crash-loop ingestion from the durable cursor.
+func skipMalformedStandardLog(ctx context.Context, eventName string, vLog types.Log) {
+	logger.WarnCtx(ctx, "Skipping malformed standard-signature log",
+		zap.String("event", eventName),
+		zap.String("contract", vLog.Address.Hex()),
+		zap.Uint64("block", vLog.BlockNumber),
+		zap.Uint("logIndex", vLog.Index),
+		zap.Int("topics", len(vLog.Topics)),
+		zap.Int("dataLen", len(vLog.Data)))
 }
 
 var _ ContractAdapter = (*ERC1155Adapter)(nil)
