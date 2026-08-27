@@ -348,6 +348,7 @@ For substantive changes, run `make check` per [`AGENTS.md`](../AGENTS.md).
 | `ErrUnknownEvent` | Override adapter: topic not in config | Try next path in `ParseEvent` |
 | `ErrUnconfiguredContract` | Known custom topic, unconfigured address | Debug log, skip |
 | `ErrUnexpectedEvent` | Unknown topic (filter drift) | Error log, tolerate |
+| *(no error)* | Standard-signature log whose shape does not match the standard (ERC-20 3-topic Transfer, pre-standard 1-topic Transfer à la CryptoKitties, malformed TransferSingle/URI) | Skipped `(nil, nil)` before the timestamp lookup — debug for the continuous Transfer shapes, warn for the rare ERC-1155 ones. Never fatal: the whole-chain topic0 filter lets any contract emit these, and a fatal parse replays from the durable cursor and crash-loops ingestion (2026-08-27 incident) |
 
 Debug logs on routing include `adapter_type` (concrete Go type). Startup logs override counts per chain and **current-state-only** warnings.
 

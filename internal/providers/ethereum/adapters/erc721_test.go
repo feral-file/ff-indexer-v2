@@ -95,18 +95,48 @@ func TestERC721ParseEvent_ERC20TransferSkippedBeforeTimestampLookup(t *testing.T
 	require.Nil(t, parsed)
 }
 
-func TestERC721ParseEvent_TransferWithUnusableTopicCount(t *testing.T) {
+// TestERC721ParseEvent_NonStandardTransferSkippedBeforeTimestampLookup pins
+// that any non-4-topic Transfer shape is dropped, not failed, and before the
+// block-timestamp lookup. The 1-topic case is the CryptoKitties shape
+// (pre-standard Transfer with no indexed parameters, all values in data) that
+// crash-looped production ingestion on 2026-08-27 when it was a fatal error:
+// the log replayed from the durable cursor on every restart.
+func TestERC721ParseEvent_NonStandardTransferSkippedBeforeTimestampLookup(t *testing.T) {
 	t.Parallel()
 
-	vLog := transferLog([]common.Hash{
-		helpers.TransferEventSignature,
-		common.BytesToHash(common.HexToAddress("0x1111111111111111111111111111111111111111").Bytes()),
-	})
+	cases := []struct {
+		name   string
+		topics []common.Hash
+		data   []byte
+	}{
+		{"one topic (CryptoKitties shape)", []common.Hash{helpers.TransferEventSignature},
+			make([]byte, 96)}, // from, to, tokenId all in data
+		{"two topics", []common.Hash{
+			helpers.TransferEventSignature,
+			common.BytesToHash(common.HexToAddress("0x1111111111111111111111111111111111111111").Bytes()),
+		}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	parsed, err := newERC721TestAdapter().ParseEvent(context.Background(), vLog)
-	require.Error(t, err)
-	require.Nil(t, parsed)
-	require.Contains(t, err.Error(), "expected 3 or 4 topics, got 2")
+			ctrl := gomock.NewController(t)
+			blockProvider := mocks.NewMockBlockProvider(ctrl)
+			blockProvider.EXPECT().
+				GetBlockTimestamp(gomock.Any(), gomock.Any()).
+				Return(time.Time{}, errors.New("block provider unavailable")).
+				AnyTimes()
+
+			vLog := transferLog(tc.topics)
+			vLog.Data = tc.data
+			vLog.BlockTimestamp = 0 // force the provider path if a lookup were attempted
+
+			adapter := adapters.NewERC721Adapter(nil, nil, blockProvider, domain.ChainEthereumMainnet)
+			parsed, err := adapter.ParseEvent(context.Background(), vLog)
+			require.NoError(t, err, "a foreign Transfer shape must be dropped, never failed: a fatal error replays from the durable cursor and crash-loops ingestion")
+			require.Nil(t, parsed)
+		})
+	}
 }
 
 func TestERC721ParseEvent_UnknownSignature(t *testing.T) {

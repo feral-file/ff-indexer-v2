@@ -278,19 +278,23 @@ func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain
 
 // parseTransfer parses an ERC-721 Transfer log.
 //
-// ERC20 transfers are identified and skipped BEFORE the timestamp lookup to
-// prevent irrelevant ERC20 activity from tearing down the subscription when
-// lookups fail. ERC20 Transfer(address,address,uint256) has 3 topics; ERC721
-// Transfer(address,address,uint256) has 4 topics (indexed tokenId).
+// Every non-4-topic shape is identified and skipped BEFORE the timestamp
+// lookup, and skipped rather than failed. The whole-chain topic0 filter
+// delivers every log whose first topic is the Transfer signature, and that
+// signature is shared far beyond ERC-721: ERC-20 declares the same event with
+// two indexed parameters (3 topics), and pre-standard NFT contracts declared it
+// with none — CryptoKitties emits topic0-only Transfers with all three values
+// in data. Returning an error for such a log crash-looped production ingestion
+// on 2026-08-27: block 25845883 log 727 (CryptoKitties, 1 topic) replayed from
+// the durable cursor on every restart, taking the API down with it. Debug, not
+// warn, because active legacy contracts emit these shapes continuously.
 func (a *ERC721Adapter) parseTransfer(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
-	if len(vLog.Topics) == 3 {
-		logger.DebugCtx(ctx, "Skipping ERC20 transfer event (pre-parse)",
-			zap.String("contract", vLog.Address.Hex()),
-			zap.String("txHash", vLog.TxHash.Hex()))
-		return nil, nil
-	}
 	if len(vLog.Topics) != 4 {
-		return nil, fmt.Errorf("invalid Transfer event: expected 3 or 4 topics, got %d", len(vLog.Topics))
+		logger.DebugCtx(ctx, "Skipping non-ERC721 Transfer log (pre-parse)",
+			zap.String("contract", vLog.Address.Hex()),
+			zap.String("txHash", vLog.TxHash.Hex()),
+			zap.Int("topics", len(vLog.Topics)))
+		return nil, nil
 	}
 
 	base, err := helpers.BaseEventFromLog(ctx, a.chainID, vLog, a.blockProvider)
