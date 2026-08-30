@@ -80,6 +80,20 @@ ethereum:
   # docs/architecture.md "Accepted durability gaps". Set >> expected lag.
   # Unit: duration (e.g., "30s", "1m"). Zero = disabled.
   block_flush_timeout: 36s
+  # Log warehouse (ff-eth-logs): when set, the historical part of every
+  # eth_getLogs — owner scans, provenance, replays, ingestion catch-up — is
+  # served by the self-hosted warehouse in one query and only the blocks above
+  # its head go to the vendor. Any warehouse failure falls through to the
+  # vendor for that query (WARN-logged); the credit guards still bound it.
+  # Empty = every eth_getLogs stays on the vendor. http(s) only, private network.
+  log_warehouse_url: ""
+  # One attempt per warehouse request, no retry; on expiry the query falls
+  # through to the vendor.
+  log_warehouse_timeout: 120s
+  # Owner-scan window size over the blocks the warehouse covers (above its
+  # head windows stay at getlogs_span_cap + 1). Fewer, larger windows = fewer
+  # warehouse queries per scan but a costlier vendor walk on a fall-through.
+  log_warehouse_scan_window_blocks: 1000000
 
 tezos:
   api_url: https://api.tzkt.io

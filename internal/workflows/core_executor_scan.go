@@ -58,6 +58,11 @@ func (e *coreExecutor) CreateEthereumScanSession(ctx context.Context, address st
 	return scanSessionInfoFromSchema(session), nil
 }
 
+// EthereumLogWarehouseHead exposes the client's warehouse head to the workflow.
+func (e *coreExecutor) EthereumLogWarehouseHead(ctx context.Context) (uint64, bool) {
+	return e.ethClient.LogWarehouseHead(ctx)
+}
+
 // FetchEthereumOwnerWindow fetches one window of merged owner logs from the
 // chain and returns them as staged rows WITHOUT touching the checkpoint.
 //

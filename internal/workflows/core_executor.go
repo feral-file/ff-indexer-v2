@@ -94,6 +94,10 @@ type CoreExecutor interface {
 	// FetchEthereumOwnerWindow fetches one window of merged owner logs as staged rows
 	// without touching the checkpoint; safe to call concurrently for distinct windows
 	FetchEthereumOwnerWindow(ctx context.Context, address string, fromBlock, toBlock uint64) ([]schema.AddressScanLog, error)
+	// EthereumLogWarehouseHead returns the log warehouse head and true when a
+	// warehouse is configured and answers; (0, false) otherwise. The owner scan
+	// sizes its windows by it (docs/address_scan_sessions.md, "Window size").
+	EthereumLogWarehouseHead(ctx context.Context) (uint64, bool)
 	// PersistEthereumScanWindow commits one fetched window's rows with the cursor
 	// advance in one transaction; MUST be called in ascending window order
 	PersistEthereumScanWindow(ctx context.Context, sessionID int64, rows []schema.AddressScanLog, fromBlock, toBlock uint64) error

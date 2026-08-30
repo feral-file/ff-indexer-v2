@@ -71,6 +71,19 @@ exactly one accepted call per query). When no cap is configured (self-hosted nod
 a 1M-block window keeps checkpoints frequent while the pagination helper's adaptive
 halving handles any too-many-results rejections inside the window.
 
+With a log warehouse configured (`ethereum.log_warehouse_url`, see
+`docs/architecture.md` "Ethereum log warehouse routing"), the scan reads the
+warehouse head once at window-planning time and splits the range: the covered part
+`[cursor, head]` is cut into `ethereum.log_warehouse_scan_window_blocks` windows
+(default 1M — a full mainnet scan is ~26 windows, each one warehouse query per
+merged owner query), the residual above the head keeps the cap-sized vendor windows.
+The trade-off in the window size is fall-through cost: a warehouse window that
+falls through to the vendor mid-scan is walked at the span cap inside that window
+(~100 calls per query at 1M), still checkpointed per window. If the head is
+unavailable at planning time the partition is the plain cap-sized one; every
+window's fetch re-checks the head on its own, so a stale plan never yields a wrong
+result.
+
 ### Window concurrency
 
 The scan is purely RPC-latency-bound: each window is one provider round-trip

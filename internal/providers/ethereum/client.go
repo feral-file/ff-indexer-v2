@@ -125,6 +125,11 @@ type EthereumClient interface {
 		toBlock uint64,
 	) ([]types.Log, error)
 
+	// LogWarehouseHead returns the log warehouse head and true when a warehouse
+	// is configured and answers, so callers can plan history work around the
+	// split point; (0, false) otherwise. See ClientGuards.LogWarehouse.
+	LogWarehouseHead(ctx context.Context) (uint64, bool)
+
 	// DiscoverOwnedTokensFromLogs turns a complete owner-scan log pool into the
 	// owned-token list: adapter receipt repairs, deduplication, then the unified
 	// cross-standard ownership replay. Logs must cover the whole scanned range.
@@ -174,6 +179,13 @@ type ClientGuards struct {
 	// walks per token). Pair it with the workflow-level gate that skips
 	// IndexTokenProvenances for EVM tokens; history backfills when the guard lifts.
 	FullProvenanceDisabled bool
+	// LogWarehouse routes the historical part of every eth_getLogs walk to the
+	// self-hosted log warehouse (ff-eth-logs) instead of the vendor; nil keeps
+	// everything on the vendor. It is listed with the guards because it is the
+	// durable answer to the cost they bound: with it, the walks they meter only
+	// cover the few blocks above the warehouse head, or a warehouse outage.
+	// See helpers.PaginationGuards.LogWarehouse for the fall-through policy.
+	LogWarehouse adapter.LogWarehouse
 }
 
 // ethereumClient implements EthereumClient. It wires RPC, pagination, block metadata,
@@ -207,8 +219,9 @@ func NewGuardedClient(chainID domain.Chain, client adapter.EthClient, clock adap
 		guards:        guards,
 	}
 	ec.pagination = helpers.NewGuardedPaginationHelper(client, clock, blockProvider, helpers.PaginationGuards{
-		SpanCap:    guards.GetLogsSpanCap,
-		CallBudget: guards.GetLogsCallBudget,
+		SpanCap:      guards.GetLogsSpanCap,
+		CallBudget:   guards.GetLogsCallBudget,
+		LogWarehouse: guards.LogWarehouse,
 	})
 
 	registry, err := contractregistry.NewAdapterRegistry(

@@ -103,7 +103,7 @@ Async work is stored in PostgreSQL in the **`jobs`** table (see [`docs/schema.md
 - Go 1.25.0+
 - Docker and Docker Compose
 - PostgreSQL 18+
-- Access to Ethereum RPC endpoints
+- Access to Ethereum RPC endpoints (optionally a [ff-eth-logs](https://github.com/feral-file/ff-eth-logs) warehouse for historical `eth_getLogs`, see `docs/architecture.md`)
 
 ## License
 

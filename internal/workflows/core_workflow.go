@@ -102,6 +102,14 @@ type CoreWorkflowsConfig struct {
 	// 0 falls back to a 1M-block window for uncapped providers, where the
 	// pagination helper's adaptive halving handles dense windows internally.
 	EthereumScanWindowBlocks uint64
+	// EthereumWarehouseScanWindowBlocks is the window size over the part of the
+	// scan range the log warehouse covers ([cursor, warehouse head]), used only
+	// when a warehouse is configured and answers at scan start; the residual
+	// above the head keeps EthereumScanWindowBlocks. Larger windows mean fewer
+	// warehouse queries per scan (one per merged owner query per window) but a
+	// costlier vendor walk if a window falls through mid-scan. 0 disables the
+	// split and keeps EthereumScanWindowBlocks everywhere.
+	EthereumWarehouseScanWindowBlocks uint64
 	// EthereumScanWindowConcurrency bounds how many scan windows are fetched
 	// concurrently (ethereum.scan_window_concurrency). Fetch is parallel; the
 	// checkpoint commit stays strictly in cursor order. <= 0 falls back to 1.
