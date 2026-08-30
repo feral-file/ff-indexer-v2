@@ -199,7 +199,10 @@ func isRetryableEthError(err error) bool {
 		"connection refused",
 		"connection reset",
 		"connection timed out",
-		"query canceled", //nolint:misspell
+		// Both spellings: providers differ, and a cancellation that misses the
+		// retry list becomes a permanent failure that aborts the whole walk.
+		"query cancelled", //nolint:misspell
+		"query canceled",
 		"i/o timeout",
 		"broken pipe",
 		"rate limit",

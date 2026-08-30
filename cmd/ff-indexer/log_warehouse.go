@@ -15,10 +15,12 @@ import (
 
 // dialLogWarehouse connects to the Ethereum log warehouse when
 // ethereum.log_warehouse_url is set and returns nil when it is not (every
-// eth_getLogs stays on the vendor). It verifies the warehouse's chain once:
-// a mismatch is a startup error, an unreachable warehouse is a warning — the
-// routing client falls through to the vendor until it answers, so a warehouse
-// restart must never keep the indexer from starting.
+// eth_getLogs stays on the vendor). The returned client is gated: nothing is
+// routed through it until it has proven its chain id and capabilities
+// (adapter.VerifiedLogWarehouse). That verification is attempted here so a
+// permanent problem — wrong chain, a build missing a required log shape — is
+// a startup error; a warehouse that merely does not answer yet is a warning,
+// and the gate re-verifies on the first request it does answer.
 //
 // Both the ingestion process and the worker core dial their own client, like
 // they do for the vendor; the warehouse connection is a stateless HTTP client,
@@ -27,15 +29,20 @@ func dialLogWarehouse(ctx context.Context, cfg config.EthereumConfig) (adapter.L
 	if cfg.LogWarehouseURL == "" {
 		return nil, nil
 	}
-	warehouse, err := adapter.NewLogWarehouseDialer().Dial(ctx, cfg.LogWarehouseURL, cfg.LogWarehouseTimeout)
+	reqs, err := ethereum.LogWarehouseRequirements(cfg.ChainID)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := adapter.NewLogWarehouseDialer().Dial(ctx, cfg.LogWarehouseURL, cfg.LogWarehouseTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("dial log warehouse: %w", err)
 	}
+	warehouse := adapter.NewVerifiedLogWarehouse(raw, reqs)
 	endpoint := adapter.EndpointForLogs(cfg.LogWarehouseURL)
-	err = ethereum.CheckLogWarehouseChain(ctx, warehouse, cfg.ChainID)
+	err = warehouse.Verify(ctx)
 	switch {
-	case errors.Is(err, ethereum.ErrLogWarehouseUnreachable):
-		logger.WarnCtx(ctx, "Log warehouse unreachable at startup; eth_getLogs falls through to the vendor until it answers",
+	case errors.Is(err, adapter.ErrLogWarehouseUnverified):
+		logger.WarnCtx(ctx, "Log warehouse not answering at startup; eth_getLogs falls through to the vendor until it verifies",
 			zap.String("endpoint", endpoint), zap.Error(err))
 	case err != nil:
 		warehouse.Close()

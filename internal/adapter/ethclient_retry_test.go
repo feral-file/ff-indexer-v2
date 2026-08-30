@@ -31,6 +31,10 @@ func TestIsRetryableEthError_TransientProviderFailures(t *testing.T) {
 		{"provider 500 on a well-formed query", errors.New("Internal error")},
 		{"connection reset by peer", errors.New("read tcp: connection reset by peer")},
 		{"rate limited", errors.New("429 Too Many Requests")},
+		// Both spellings are live provider phrasings; dropping either turns a
+		// transient cancellation into an aborted walk (bot finding on #144).
+		{"query cancelled (British spelling)", errors.New("query cancelled")}, //nolint:misspell
+		{"query canceled (US spelling)", errors.New("query canceled")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

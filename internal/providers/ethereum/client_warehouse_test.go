@@ -3,7 +3,6 @@ package ethereum_test
 import (
 	"context"
 	"errors"
-	"math/big"
 	"testing"
 
 	goeth "github.com/ethereum/go-ethereum"
@@ -18,40 +17,43 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
 )
 
-// TestCheckLogWarehouseChain pins the startup contract: a matching chain
-// passes, another chain is a fatal mismatch, an unreachable warehouse is the
-// distinct non-fatal sentinel, and a non-eip155 chain can never match.
-func TestCheckLogWarehouseChain(t *testing.T) {
+// TestLogWarehouseRequirements pins what a warehouse must prove per chain:
+// mainnet needs the chain id AND the CryptoPunks internal-Transfer probe (the
+// owner scan's corrupted-PunkBought repair depends on that 3-topic log, which
+// an "ERC-20-shaped Transfers are dropped" warehouse build would omit
+// silently); a testnet needs only its chain id; a non-eip155 chain is refused.
+func TestLogWarehouseRequirements(t *testing.T) {
 	t.Parallel()
 
-	t.Run("matching chain passes", func(t *testing.T) {
+	t.Run("mainnet probes the CryptoPunks internal Transfer", func(t *testing.T) {
 		t.Parallel()
-		wh := mocks.NewMockLogWarehouse(gomock.NewController(t))
-		wh.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil)
-		require.NoError(t, ethereum.CheckLogWarehouseChain(context.Background(), wh, domain.ChainEthereumMainnet))
+		reqs, err := ethereum.LogWarehouseRequirements(domain.ChainEthereumMainnet)
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), reqs.ChainID)
+		require.Len(t, reqs.Probes, 1)
+		probe := reqs.Probes[0]
+		punks := common.HexToAddress("0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb")
+		require.Equal(t, []common.Address{punks}, probe.Query.Addresses)
+		require.Equal(t, [][]common.Hash{{helpers.TransferEventSignature}}, probe.Query.Topics)
+		require.Equal(t, probe.Query.FromBlock, probe.Query.ToBlock, "a single-block probe")
+		require.Equal(t, int64(3_919_706), probe.Query.FromBlock.Int64())
+
+		require.False(t, probe.Accept(nil), "no logs: the shape is missing")
+		require.False(t, probe.Accept([]types.Log{{Address: punks, Topics: make([]common.Hash, 4)}}), "a 4-topic Transfer is not the internal one")
+		require.False(t, probe.Accept([]types.Log{{Address: common.HexToAddress("0x1"), Topics: make([]common.Hash, 3)}}), "another emitter does not count")
+		require.True(t, probe.Accept([]types.Log{{Address: punks, Topics: make([]common.Hash, 3)}}))
 	})
-	t.Run("other chain is a mismatch", func(t *testing.T) {
+	t.Run("testnet needs only the chain id", func(t *testing.T) {
 		t.Parallel()
-		wh := mocks.NewMockLogWarehouse(gomock.NewController(t))
-		wh.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(11155111), nil)
-		err := ethereum.CheckLogWarehouseChain(context.Background(), wh, domain.ChainEthereumMainnet)
-		require.ErrorIs(t, err, ethereum.ErrLogWarehouseChainMismatch)
-		require.ErrorContains(t, err, "11155111")
-		require.ErrorContains(t, err, "eip155:1")
+		reqs, err := ethereum.LogWarehouseRequirements(domain.ChainEthereumSepolia)
+		require.NoError(t, err)
+		require.Equal(t, uint64(11155111), reqs.ChainID)
+		require.Empty(t, reqs.Probes)
 	})
-	t.Run("unreachable is the non-fatal sentinel", func(t *testing.T) {
+	t.Run("non-eip155 chain is refused", func(t *testing.T) {
 		t.Parallel()
-		wh := mocks.NewMockLogWarehouse(gomock.NewController(t))
-		wh.EXPECT().ChainID(gomock.Any()).Return(nil, errors.New("connection refused"))
-		err := ethereum.CheckLogWarehouseChain(context.Background(), wh, domain.ChainEthereumMainnet)
-		require.ErrorIs(t, err, ethereum.ErrLogWarehouseUnreachable)
-		require.NotErrorIs(t, err, ethereum.ErrLogWarehouseChainMismatch)
-	})
-	t.Run("non-eip155 chain never matches", func(t *testing.T) {
-		t.Parallel()
-		wh := mocks.NewMockLogWarehouse(gomock.NewController(t))
-		err := ethereum.CheckLogWarehouseChain(context.Background(), wh, domain.ChainTezosMainnet)
-		require.ErrorIs(t, err, ethereum.ErrLogWarehouseChainMismatch)
+		_, err := ethereum.LogWarehouseRequirements(domain.ChainTezosMainnet)
+		require.Error(t, err)
 	})
 }
 

@@ -1,0 +1,137 @@
+package adapter_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math/big"
+	"testing"
+
+	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
+
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+)
+
+// threeTopicProbe is a probe that accepts a served set containing a 3-topic log.
+func threeTopicProbe() adapter.LogWarehouseProbe {
+	return adapter.LogWarehouseProbe{
+		Name:  "three-topic shape",
+		Query: ethereum.FilterQuery{FromBlock: big.NewInt(7), ToBlock: big.NewInt(7)},
+		Accept: func(logs []types.Log) bool {
+			for _, l := range logs {
+				if len(l.Topics) == 3 {
+					return true
+				}
+			}
+			return false
+		},
+	}
+}
+
+func mainnetReqs(probes ...adapter.LogWarehouseProbe) adapter.LogWarehouseRequirements {
+	return adapter.LogWarehouseRequirements{ChainID: 1, Probes: probes}
+}
+
+// TestVerifiedLogWarehouse_RoutesOnlyAfterVerification pins the gate: the
+// first request verifies (chain id + probe, once), later requests pass
+// straight through, and the probe is never re-run.
+func TestVerifiedLogWarehouse_RoutesOnlyAfterVerification(t *testing.T) {
+	t.Parallel()
+	inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
+	inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil).Times(1)
+	inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+			require.Equal(t, int64(7), q.FromBlock.Int64(), "the probe query is sent as-is")
+			return []types.Log{{Topics: make([]common.Hash, 3)}}, nil
+		}).Times(1)
+	inner.EXPECT().Head(gomock.Any()).Return(uint64(100), nil).Times(2)
+
+	w := adapter.NewVerifiedLogWarehouse(inner, mainnetReqs(threeTopicProbe()))
+	head, err := w.Head(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, uint64(100), head)
+	_, err = w.Head(context.Background())
+	require.NoError(t, err, "second call must not re-verify (strict Times(1) on ChainID/probe)")
+}
+
+// TestVerifiedLogWarehouse_PermanentRefusals pins that a chain mismatch, a
+// probe answered without the shape, and a probe refused as out of scope each
+// disable routing for good: every later request fails without touching the
+// inner warehouse again.
+func TestVerifiedLogWarehouse_PermanentRefusals(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		setup func(m *mocks.MockLogWarehouse)
+		want  error
+	}{
+		{"chain mismatch", func(m *mocks.MockLogWarehouse) {
+			m.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(11155111), nil).Times(1)
+		}, adapter.ErrLogWarehouseChainMismatch},
+		{"probe without the shape", func(m *mocks.MockLogWarehouse) {
+			m.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil).Times(1)
+			m.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return([]types.Log{{Topics: make([]common.Hash, 4)}}, nil).Times(1)
+		}, adapter.ErrLogWarehouseProbeFailed},
+		{"probe out of scope", func(m *mocks.MockLogWarehouse) {
+			m.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil).Times(1)
+			m.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
+				Return(nil, fmt.Errorf("%w: blocks 7-7 extend below the warehouse coverage start 25000000", adapter.ErrOutOfScope)).Times(1)
+		}, adapter.ErrLogWarehouseProbeFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
+			tc.setup(inner)
+			w := adapter.NewVerifiedLogWarehouse(inner, mainnetReqs(threeTopicProbe()))
+
+			require.ErrorIs(t, w.Verify(context.Background()), tc.want)
+			_, err := w.Head(context.Background())
+			require.ErrorIs(t, err, tc.want, "sticky: no request may reach the inner warehouse")
+			_, err = w.FilterLogs(context.Background(), ethereum.FilterQuery{})
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
+// TestVerifiedLogWarehouse_UnreachableRetriesNextCall pins the transient
+// path: a warehouse that does not answer stays unverified (nothing is
+// routed), and the next request verifies again and succeeds.
+func TestVerifiedLogWarehouse_UnreachableRetriesNextCall(t *testing.T) {
+	t.Parallel()
+	inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
+	gomock.InOrder(
+		inner.EXPECT().ChainID(gomock.Any()).Return(nil, errors.New("connection refused")),
+		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),
+		inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return(nil, errors.New("connection reset")),
+		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),
+		inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return([]types.Log{{Topics: make([]common.Hash, 3)}}, nil),
+		inner.EXPECT().Head(gomock.Any()).Return(uint64(5), nil),
+	)
+	w := adapter.NewVerifiedLogWarehouse(inner, mainnetReqs(threeTopicProbe()))
+
+	_, err := w.Head(context.Background())
+	require.ErrorIs(t, err, adapter.ErrLogWarehouseUnverified, "chain id unanswered: not routed")
+	_, err = w.Head(context.Background())
+	require.ErrorIs(t, err, adapter.ErrLogWarehouseUnverified, "probe unanswered: still not routed")
+	head, err := w.Head(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, uint64(5), head)
+}
+
+// TestVerifiedLogWarehouse_NoProbesNeedsOnlyChainID pins that a chain without
+// probes (a testnet) is trusted on the chain id alone.
+func TestVerifiedLogWarehouse_NoProbesNeedsOnlyChainID(t *testing.T) {
+	t.Parallel()
+	inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
+	inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(11155111), nil).Times(1)
+	inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return(nil, nil).Times(1)
+	w := adapter.NewVerifiedLogWarehouse(inner, adapter.LogWarehouseRequirements{ChainID: 11155111})
+	_, err := w.FilterLogs(context.Background(), ethereum.FilterQuery{})
+	require.NoError(t, err)
+}

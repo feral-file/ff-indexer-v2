@@ -151,11 +151,11 @@ Both phrasings (and drpc's `query returns too many logs`) are recognised by `hel
 
 | Key | Default | Meaning |
 |---|---|---|
-| `ethereum.log_warehouse_url` | `""` (off) | http(s) endpoint of the warehouse; validated at load, chain id checked at startup (mismatch is fatal, unreachable is a WARN) |
+| `ethereum.log_warehouse_url` | `""` (off) | http(s) endpoint of the warehouse; validated at load, chain id and capability probe checked at startup (mismatch / failed probe is fatal, unreachable is a WARN and re-verified on first use) |
 | `ethereum.log_warehouse_timeout` | `120s` | per-request deadline, one attempt, no retry — on expiry the query falls through to the vendor |
 | `ethereum.log_warehouse_scan_window_blocks` | `1000000` | owner-scan window over the warehouse-covered range (above the head: `getlogs_span_cap + 1`) |
 
-Locally, `make quickstart` in the ff-eth-logs repo starts a **tail-only** warehouse on `http://localhost:8545` (it serves only the blocks it has followed since it started), which is enough to see the split and the fall-through in the logs: `Log range served by the warehouse` (debug) and `Log warehouse unavailable for range, falling through to the vendor` (warn). Sizing note for the warehouse side: each owner-scan window issues the three merged owner queries at once, so the warehouse sees up to `token_worker.concurrency × scan_window_concurrency × 3` concurrent queries against its PostgreSQL pool.
+Locally, `make quickstart` in the ff-eth-logs repo starts a **tail-only** warehouse on `http://localhost:8545` (it serves only the blocks it has followed since it started). The indexer **refuses** such a warehouse: on mainnet it probes block 3,919,706 for the CryptoPunks internal `Transfer` before routing anything (`docs/architecture.md`, "Nothing is routed through an unverified warehouse"), and a warehouse whose coverage starts above that block fails the probe at startup. To exercise routing locally, load the backfill first (`make backfill` in ff-eth-logs). The routing itself is visible in the logs: `Log warehouse verified` (info), `Log range served by the warehouse` (debug), `Log warehouse unavailable for range, falling through to the vendor` (warn). Sizing note for the warehouse side: each owner-scan window issues the three merged owner queries at once, so the warehouse sees up to `token_worker.concurrency × scan_window_concurrency × 3` concurrent queries against its PostgreSQL pool.
 
 ## Running Locally
 
