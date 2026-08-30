@@ -89,6 +89,7 @@ type VerifiedLogWarehouse struct {
 
 	mu          sync.Mutex
 	verified    bool
+	generation  uint64 // incremented on every successful verification
 	disabled    error
 	inFlight    bool
 	lastFailure error
@@ -116,44 +117,54 @@ func NewVerifiedLogWarehouse(inner LogWarehouse, reqs LogWarehouseRequirements, 
 // ErrLogWarehouseProbeFailed (wrapped) when it answered wrongly; the latter
 // two are remembered and returned by every later call.
 func (w *VerifiedLogWarehouse) Verify(ctx context.Context) error {
-	if err, decided := w.begin(); decided {
-		return err
+	_, err := w.verify(ctx)
+	return err
+}
+
+// verify is Verify plus the generation the caller is routed under: observe
+// demotes only for a failure from that generation, so a request that was
+// already in flight when the warehouse was demoted and re-verified cannot
+// knock the recovered warehouse back down.
+func (w *VerifiedLogWarehouse) verify(ctx context.Context) (uint64, error) {
+	if gen, err, decided := w.begin(); decided {
+		return gen, err
 	}
 	err := w.check(ctx)
-	w.finish(ctx, err)
-	return err
+	return w.finish(ctx, err), err
 }
 
 // begin decides under the lock whether this caller runs a verification:
 // decided=true means the answer is already known (verified, disabled, in
-// flight elsewhere, or inside the retry cooldown) and err is that answer.
-func (w *VerifiedLogWarehouse) begin() (error, bool) { //nolint:revive // error-first pair reads best at the call site
+// flight elsewhere, or inside the retry cooldown) and err is that answer; gen
+// is the current verification generation.
+func (w *VerifiedLogWarehouse) begin() (uint64, error, bool) { //nolint:revive // error-before-bool reads best at the call site
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	switch {
 	case w.verified:
-		return nil, true
+		return w.generation, nil, true
 	case w.disabled != nil:
-		return w.disabled, true
+		return w.generation, w.disabled, true
 	case w.inFlight:
-		return fmt.Errorf("%w: verification in progress", ErrLogWarehouseUnverified), true
+		return w.generation, fmt.Errorf("%w: verification in progress", ErrLogWarehouseUnverified), true
 	case w.lastFailure != nil && w.clock.Now().Before(w.nextAttempt):
-		return w.lastFailure, true
+		return w.generation, w.lastFailure, true
 	}
 	w.inFlight = true
-	return nil, false
+	return w.generation, nil, false
 }
 
 // finish records the outcome of a verification attempt under the lock. An
 // attempt that ended because the caller's own context was done says nothing
 // about the warehouse, so it is not cached: the next caller verifies at once.
-func (w *VerifiedLogWarehouse) finish(ctx context.Context, err error) {
+func (w *VerifiedLogWarehouse) finish(ctx context.Context, err error) uint64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.inFlight = false
 	switch {
 	case err == nil:
 		w.verified, w.lastFailure = true, nil
+		w.generation++
 		logger.InfoCtx(ctx, "Log warehouse verified; historical eth_getLogs is routed through it",
 			zap.Uint64("chainId", w.reqs.ChainID), zap.Int("probes", len(w.reqs.Probes)))
 	case errors.Is(err, ErrLogWarehouseChainMismatch), errors.Is(err, ErrLogWarehouseProbeFailed):
@@ -165,6 +176,7 @@ func (w *VerifiedLogWarehouse) finish(ctx context.Context, err error) {
 		w.lastFailure = err
 		w.nextAttempt = w.clock.Now().Add(w.retryInterval)
 	}
+	return w.generation
 }
 
 // observe applies the outage cooldown to a request that failed AFTER
@@ -173,8 +185,11 @@ func (w *VerifiedLogWarehouse) finish(ctx context.Context, err error) {
 // instead of each paying a timeout. Only outages count — an error the
 // warehouse itself answered with (any rpc.Error: the result-cap split signal,
 // a scope refusal) proves it is alive, and a failure caused by the caller's
-// own context says nothing about it.
-func (w *VerifiedLogWarehouse) observe(ctx context.Context, err error) {
+// own context says nothing about it. gen is the generation the request was
+// routed under: a failure from an older generation is stale — the warehouse
+// was demoted and re-verified while the request was in flight — and must not
+// demote the recovered one.
+func (w *VerifiedLogWarehouse) observe(ctx context.Context, gen uint64, err error) {
 	if err == nil || ctx.Err() != nil || IsOutOfScope(err) {
 		return
 	}
@@ -184,7 +199,7 @@ func (w *VerifiedLogWarehouse) observe(ctx context.Context, err error) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if !w.verified {
+	if !w.verified || w.generation != gen {
 		return
 	}
 	w.verified = false
@@ -229,21 +244,23 @@ func (w *VerifiedLogWarehouse) runProbe(ctx context.Context, probe LogWarehouseP
 
 // Head serves the warehouse head once verified.
 func (w *VerifiedLogWarehouse) Head(ctx context.Context) (uint64, error) {
-	if err := w.Verify(ctx); err != nil {
+	gen, err := w.verify(ctx)
+	if err != nil {
 		return 0, err
 	}
 	head, err := w.inner.Head(ctx)
-	w.observe(ctx, err)
+	w.observe(ctx, gen, err)
 	return head, err
 }
 
 // FilterLogs serves a filter once verified.
 func (w *VerifiedLogWarehouse) FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
-	if err := w.Verify(ctx); err != nil {
+	gen, err := w.verify(ctx)
+	if err != nil {
 		return nil, err
 	}
 	logs, err := w.inner.FilterLogs(ctx, query)
-	w.observe(ctx, err)
+	w.observe(ctx, gen, err)
 	return logs, err
 }
 

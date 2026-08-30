@@ -304,3 +304,59 @@ func TestVerifiedLogWarehouse_CallerCancellationIsNotCached(t *testing.T) {
 	require.NoError(t, err, "still verified: the caller's cancellation is not an outage")
 	require.Equal(t, uint64(5), head)
 }
+
+// TestVerifiedLogWarehouse_StaleFailureDoesNotDemoteRecoveredWarehouse pins
+// round-4 F1: a request that passed verification and is blocked in the inner
+// call while the warehouse is demoted, cooled down and re-verified must not,
+// when it finally fails, demote the recovered warehouse again.
+func TestVerifiedLogWarehouse_StaleFailureDoesNotDemoteRecoveredWarehouse(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	inner := mocks.NewMockLogWarehouse(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	base := time.Unix(1_700_000_000, 0)
+	var nowMu sync.Mutex
+	now := base
+	clock.EXPECT().Now().DoAndReturn(func() time.Time { nowMu.Lock(); defer nowMu.Unlock(); return now }).AnyTimes()
+	setNow := func(t time.Time) { nowMu.Lock(); now = t; nowMu.Unlock() }
+
+	staleStarted := make(chan struct{})
+	staleRelease := make(chan struct{})
+	gomock.InOrder(
+		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil), // generation 1
+		inner.EXPECT().Head(gomock.Any()).DoAndReturn(func(context.Context) (uint64, error) { // the stale request, blocked
+			close(staleStarted)
+			<-staleRelease
+			return 0, errors.New("read tcp: connection reset by peer")
+		}),
+		inner.EXPECT().Head(gomock.Any()).Return(uint64(0), errors.New("dial tcp: connection refused")), // demotes generation 1
+		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),                                 // generation 2
+		inner.EXPECT().Head(gomock.Any()).Return(uint64(7), nil),
+		inner.EXPECT().Head(gomock.Any()).Return(uint64(8), nil), // after the stale failure: still verified, no re-verification
+	)
+	w := adapter.NewVerifiedLogWarehouse(inner, adapter.LogWarehouseRequirements{ChainID: 1}, clock, 30*time.Second)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var staleErr error
+	go func() {
+		defer wg.Done()
+		_, staleErr = w.Head(context.Background())
+	}()
+	<-staleStarted
+
+	_, err := w.Head(context.Background())
+	require.ErrorContains(t, err, "connection refused", "the outage demotes generation 1")
+	setNow(base.Add(31 * time.Second))
+	head, err := w.Head(context.Background())
+	require.NoError(t, err, "re-verified as generation 2")
+	require.Equal(t, uint64(7), head)
+
+	close(staleRelease)
+	wg.Wait()
+	require.ErrorContains(t, staleErr, "connection reset")
+
+	head, err = w.Head(context.Background())
+	require.NoError(t, err, "the stale generation-1 failure must not demote the recovered warehouse")
+	require.Equal(t, uint64(8), head)
+}
