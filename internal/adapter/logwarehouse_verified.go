@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -70,50 +71,95 @@ type LogWarehouseRequirements struct {
 // the vendor), a transport error leaves the warehouse unverified so the next
 // request tries again.
 //
-// Constraints: the verification runs under the mutex, so concurrent first
-// requests wait for one verification instead of each probing; once verified,
-// the fast path is a mutex-protected flag read.
+// Constraints — "fall through, never stall" applies to verification too. The
+// RPCs run outside the mutex; a caller that arrives while another goroutine's
+// verification is in flight does not wait for it but fails at once with
+// ErrLogWarehouseUnverified (and falls through to the vendor), and a transient
+// failure is cached for retryInterval so that an outage costs one bounded
+// attempt per interval, not one timeout per concurrent caller. Owner scans
+// issue their merged queries concurrently and ingestion fetches every block,
+// so without both rules an unreachable warehouse would serialize minutes of
+// timeouts in front of a healthy vendor.
 type VerifiedLogWarehouse struct {
-	inner LogWarehouse
-	reqs  LogWarehouseRequirements
+	inner         LogWarehouse
+	reqs          LogWarehouseRequirements
+	clock         Clock
+	retryInterval time.Duration
 
-	mu       sync.Mutex
-	verified bool
-	disabled error
+	mu          sync.Mutex
+	verified    bool
+	disabled    error
+	inFlight    bool
+	lastFailure error
+	nextAttempt time.Time
 }
+
+// DefaultVerifyRetryInterval is how long a transient verification failure is
+// remembered before the next request tries again.
+const DefaultVerifyRetryInterval = 30 * time.Second
 
 // NewVerifiedLogWarehouse wraps inner so that no request is served until reqs
 // are met. Verify may be called eagerly at startup to fail fast on a permanent
-// problem.
-func NewVerifiedLogWarehouse(inner LogWarehouse, reqs LogWarehouseRequirements) *VerifiedLogWarehouse {
-	return &VerifiedLogWarehouse{inner: inner, reqs: reqs}
+// problem. A non-positive retryInterval uses DefaultVerifyRetryInterval.
+func NewVerifiedLogWarehouse(inner LogWarehouse, reqs LogWarehouseRequirements, clock Clock, retryInterval time.Duration) *VerifiedLogWarehouse {
+	if retryInterval <= 0 {
+		retryInterval = DefaultVerifyRetryInterval
+	}
+	return &VerifiedLogWarehouse{inner: inner, reqs: reqs, clock: clock, retryInterval: retryInterval}
 }
 
 // Verify checks the requirements unless already decided. It returns nil once
 // the warehouse is trusted, ErrLogWarehouseUnverified (wrapped) when the
-// warehouse did not answer, and ErrLogWarehouseChainMismatch or
-// ErrLogWarehouseProbeFailed (wrapped) when it answered wrongly — the latter
+// warehouse did not answer — or is being verified by another caller, or
+// failed within the last retryInterval — and ErrLogWarehouseChainMismatch or
+// ErrLogWarehouseProbeFailed (wrapped) when it answered wrongly; the latter
 // two are remembered and returned by every later call.
 func (w *VerifiedLogWarehouse) Verify(ctx context.Context) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.verified {
-		return nil
-	}
-	if w.disabled != nil {
-		return w.disabled
+	if err, decided := w.begin(); decided {
+		return err
 	}
 	err := w.check(ctx)
+	w.finish(ctx, err)
+	return err
+}
+
+// begin decides under the lock whether this caller runs a verification:
+// decided=true means the answer is already known (verified, disabled, in
+// flight elsewhere, or inside the retry cooldown) and err is that answer.
+func (w *VerifiedLogWarehouse) begin() (error, bool) { //nolint:revive // error-first pair reads best at the call site
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	switch {
+	case w.verified:
+		return nil, true
+	case w.disabled != nil:
+		return w.disabled, true
+	case w.inFlight:
+		return fmt.Errorf("%w: verification in progress", ErrLogWarehouseUnverified), true
+	case w.lastFailure != nil && w.clock.Now().Before(w.nextAttempt):
+		return w.lastFailure, true
+	}
+	w.inFlight = true
+	return nil, false
+}
+
+// finish records the outcome of a verification attempt under the lock.
+func (w *VerifiedLogWarehouse) finish(ctx context.Context, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.inFlight = false
 	switch {
 	case err == nil:
-		w.verified = true
+		w.verified, w.lastFailure = true, nil
 		logger.InfoCtx(ctx, "Log warehouse verified; historical eth_getLogs is routed through it",
 			zap.Uint64("chainId", w.reqs.ChainID), zap.Int("probes", len(w.reqs.Probes)))
 	case errors.Is(err, ErrLogWarehouseChainMismatch), errors.Is(err, ErrLogWarehouseProbeFailed):
 		w.disabled = err
 		logger.ErrorCtx(ctx, fmt.Errorf("log warehouse refused; every eth_getLogs falls through to the vendor until restart: %w", err))
+	default:
+		w.lastFailure = err
+		w.nextAttempt = w.clock.Now().Add(w.retryInterval)
 	}
-	return err
 }
 
 // check runs the chain-id comparison and the probes once.

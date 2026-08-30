@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -37,6 +39,12 @@ func mainnetReqs(probes ...adapter.LogWarehouseProbe) adapter.LogWarehouseRequir
 	return adapter.LogWarehouseRequirements{ChainID: 1, Probes: probes}
 }
 
+// newVerified builds the wrapper with a real clock and a retry interval short
+// enough that a test's later calls fall outside the cooldown.
+func newVerified(inner adapter.LogWarehouse, reqs adapter.LogWarehouseRequirements) *adapter.VerifiedLogWarehouse {
+	return adapter.NewVerifiedLogWarehouse(inner, reqs, adapter.NewClock(), time.Nanosecond)
+}
+
 // TestVerifiedLogWarehouse_RoutesOnlyAfterVerification pins the gate: the
 // first request verifies (chain id + probe, once), later requests pass
 // straight through, and the probe is never re-run.
@@ -51,7 +59,7 @@ func TestVerifiedLogWarehouse_RoutesOnlyAfterVerification(t *testing.T) {
 		}).Times(1)
 	inner.EXPECT().Head(gomock.Any()).Return(uint64(100), nil).Times(2)
 
-	w := adapter.NewVerifiedLogWarehouse(inner, mainnetReqs(threeTopicProbe()))
+	w := newVerified(inner, mainnetReqs(threeTopicProbe()))
 	head, err := w.Head(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, uint64(100), head)
@@ -88,7 +96,7 @@ func TestVerifiedLogWarehouse_PermanentRefusals(t *testing.T) {
 			t.Parallel()
 			inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
 			tc.setup(inner)
-			w := adapter.NewVerifiedLogWarehouse(inner, mainnetReqs(threeTopicProbe()))
+			w := newVerified(inner, mainnetReqs(threeTopicProbe()))
 
 			require.ErrorIs(t, w.Verify(context.Background()), tc.want)
 			_, err := w.Head(context.Background())
@@ -113,7 +121,7 @@ func TestVerifiedLogWarehouse_UnreachableRetriesNextCall(t *testing.T) {
 		inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return([]types.Log{{Topics: make([]common.Hash, 3)}}, nil),
 		inner.EXPECT().Head(gomock.Any()).Return(uint64(5), nil),
 	)
-	w := adapter.NewVerifiedLogWarehouse(inner, mainnetReqs(threeTopicProbe()))
+	w := newVerified(inner, mainnetReqs(threeTopicProbe()))
 
 	_, err := w.Head(context.Background())
 	require.ErrorIs(t, err, adapter.ErrLogWarehouseUnverified, "chain id unanswered: not routed")
@@ -131,7 +139,82 @@ func TestVerifiedLogWarehouse_NoProbesNeedsOnlyChainID(t *testing.T) {
 	inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
 	inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(11155111), nil).Times(1)
 	inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return(nil, nil).Times(1)
-	w := adapter.NewVerifiedLogWarehouse(inner, adapter.LogWarehouseRequirements{ChainID: 11155111})
+	w := newVerified(inner, adapter.LogWarehouseRequirements{ChainID: 11155111})
 	_, err := w.FilterLogs(context.Background(), ethereum.FilterQuery{})
 	require.NoError(t, err)
+}
+
+// TestVerifiedLogWarehouse_TransientFailureIsCachedForRetryInterval pins the
+// cooldown: after a transport failure, requests inside the retry interval
+// fail at once without touching the inner warehouse; the first request after
+// the interval verifies again.
+func TestVerifiedLogWarehouse_TransientFailureIsCachedForRetryInterval(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	inner := mocks.NewMockLogWarehouse(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	base := time.Unix(1_700_000_000, 0)
+	now := base
+	clock.EXPECT().Now().DoAndReturn(func() time.Time { return now }).AnyTimes()
+	gomock.InOrder(
+		inner.EXPECT().ChainID(gomock.Any()).Return(nil, errors.New("connection refused")),
+		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),
+		inner.EXPECT().Head(gomock.Any()).Return(uint64(9), nil),
+	)
+	w := adapter.NewVerifiedLogWarehouse(inner, adapter.LogWarehouseRequirements{ChainID: 1}, clock, 30*time.Second)
+
+	_, err := w.Head(context.Background())
+	require.ErrorIs(t, err, adapter.ErrLogWarehouseUnverified)
+	for range 3 {
+		now = now.Add(5 * time.Second)
+		_, err = w.Head(context.Background())
+		require.ErrorIs(t, err, adapter.ErrLogWarehouseUnverified, "inside the cooldown: cached, no RPC (strict mock)")
+	}
+	now = base.Add(31 * time.Second)
+	head, err := w.Head(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, uint64(9), head)
+}
+
+// TestVerifiedLogWarehouse_ConcurrentCallersDoNotWaitForVerification pins
+// that a caller arriving while another goroutine's verification is blocked on
+// the warehouse fails immediately (so its query falls through to the vendor)
+// instead of queueing behind the timeout-bound RPC.
+func TestVerifiedLogWarehouse_ConcurrentCallersDoNotWaitForVerification(t *testing.T) {
+	t.Parallel()
+	inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
+	started := make(chan struct{})
+	release := make(chan struct{})
+	inner.EXPECT().ChainID(gomock.Any()).DoAndReturn(func(context.Context) (*big.Int, error) {
+		close(started)
+		<-release
+		return big.NewInt(1), nil
+	}).Times(1)
+	inner.EXPECT().Head(gomock.Any()).Return(uint64(3), nil).Times(1)
+	w := newVerified(inner, adapter.LogWarehouseRequirements{ChainID: 1})
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var firstErr error
+	go func() {
+		defer wg.Done()
+		_, firstErr = w.Head(context.Background())
+	}()
+	<-started
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := w.Head(context.Background())
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, adapter.ErrLogWarehouseUnverified, "second caller must not block on the in-flight verification")
+	case <-time.After(2 * time.Second):
+		t.Fatal("second caller blocked behind the in-flight verification")
+	}
+
+	close(release)
+	wg.Wait()
+	require.NoError(t, firstErr)
 }

@@ -37,7 +37,7 @@ func dialLogWarehouse(ctx context.Context, cfg config.EthereumConfig) (adapter.L
 	if err != nil {
 		return nil, fmt.Errorf("dial log warehouse: %w", err)
 	}
-	warehouse := adapter.NewVerifiedLogWarehouse(raw, reqs)
+	warehouse := adapter.NewVerifiedLogWarehouse(raw, reqs, adapter.NewClock(), adapter.DefaultVerifyRetryInterval)
 	endpoint := adapter.EndpointForLogs(cfg.LogWarehouseURL)
 	err = warehouse.Verify(ctx)
 	switch {
