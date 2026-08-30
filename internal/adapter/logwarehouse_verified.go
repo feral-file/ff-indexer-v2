@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rpc"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
@@ -143,7 +144,9 @@ func (w *VerifiedLogWarehouse) begin() (error, bool) { //nolint:revive // error-
 	return nil, false
 }
 
-// finish records the outcome of a verification attempt under the lock.
+// finish records the outcome of a verification attempt under the lock. An
+// attempt that ended because the caller's own context was done says nothing
+// about the warehouse, so it is not cached: the next caller verifies at once.
 func (w *VerifiedLogWarehouse) finish(ctx context.Context, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -156,10 +159,39 @@ func (w *VerifiedLogWarehouse) finish(ctx context.Context, err error) {
 	case errors.Is(err, ErrLogWarehouseChainMismatch), errors.Is(err, ErrLogWarehouseProbeFailed):
 		w.disabled = err
 		logger.ErrorCtx(ctx, fmt.Errorf("log warehouse refused; every eth_getLogs falls through to the vendor until restart: %w", err))
+	case ctx.Err() != nil:
+		// caller-specific; leave lastFailure/nextAttempt untouched
 	default:
 		w.lastFailure = err
 		w.nextAttempt = w.clock.Now().Add(w.retryInterval)
 	}
+}
+
+// observe applies the outage cooldown to a request that failed AFTER
+// verification: a warehouse that stops answering is demoted to unverified with
+// the same retry interval, so the callers that follow fall through at once
+// instead of each paying a timeout. Only outages count — an error the
+// warehouse itself answered with (any rpc.Error: the result-cap split signal,
+// a scope refusal) proves it is alive, and a failure caused by the caller's
+// own context says nothing about it.
+func (w *VerifiedLogWarehouse) observe(ctx context.Context, err error) {
+	if err == nil || ctx.Err() != nil || IsOutOfScope(err) {
+		return
+	}
+	var rpcErr rpc.Error
+	if errors.As(err, &rpcErr) {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.verified {
+		return
+	}
+	w.verified = false
+	w.lastFailure = fmt.Errorf("%w: %w", ErrLogWarehouseUnverified, err)
+	w.nextAttempt = w.clock.Now().Add(w.retryInterval)
+	logger.WarnCtx(ctx, "Log warehouse stopped answering; eth_getLogs falls through to the vendor until it re-verifies",
+		zap.Duration("retryAfter", w.retryInterval), zap.Error(err))
 }
 
 // check runs the chain-id comparison and the probes once.
@@ -200,7 +232,9 @@ func (w *VerifiedLogWarehouse) Head(ctx context.Context) (uint64, error) {
 	if err := w.Verify(ctx); err != nil {
 		return 0, err
 	}
-	return w.inner.Head(ctx)
+	head, err := w.inner.Head(ctx)
+	w.observe(ctx, err)
+	return head, err
 }
 
 // FilterLogs serves a filter once verified.
@@ -208,7 +242,9 @@ func (w *VerifiedLogWarehouse) FilterLogs(ctx context.Context, query ethereum.Fi
 	if err := w.Verify(ctx); err != nil {
 		return nil, err
 	}
-	return w.inner.FilterLogs(ctx, query)
+	logs, err := w.inner.FilterLogs(ctx, query)
+	w.observe(ctx, err)
+	return logs, err
 }
 
 // ChainID passes through: it is the verification input, never gated by it.

@@ -41,7 +41,9 @@ func TestFetchAndPersistEthereumScanWindow_RowsAndCursor(t *testing.T) {
 		TxHash:      common.HexToHash("0xdead"),
 		TxIndex:     3,
 		BlockHash:   common.HexToHash("0xbeef"),
-		Index:       9,
+		// Warehouse-served logs carry the block time; it must survive staging.
+		BlockTimestamp: 1_700_000_000,
+		Index:          9,
 	}
 
 	tm.ethClient.EXPECT().
@@ -61,6 +63,7 @@ func TestFetchAndPersistEthereumScanWindow_RowsAndCursor(t *testing.T) {
 			assert.Equal(t, vLog.Data, row.Data)
 			assert.Equal(t, uint(3), row.TxIndex)
 			assert.Equal(t, vLog.BlockHash.Hex(), row.BlockHash)
+			assert.Equal(t, uint64(1_700_000_000), row.BlockTimestamp, "block timestamp must be staged (migration 029)")
 			return nil
 		})
 
@@ -101,15 +104,16 @@ func TestReplayEthereumScanSession_RoundTripsLogsAndPersistsTokens(t *testing.T)
 	const sessionID int64 = 7
 
 	row := schema.AddressScanLog{
-		SessionID:   sessionID,
-		BlockNumber: 150,
-		TxHash:      common.HexToHash("0xdead").Hex(),
-		LogIndex:    9,
-		Address:     common.HexToAddress("0x1234567890123456789012345678901234567890").Hex(),
-		Topics:      []string{common.HexToHash("0xaaaa").Hex()},
-		Data:        common.LeftPadBytes(big.NewInt(42).Bytes(), 32),
-		TxIndex:     3,
-		BlockHash:   common.HexToHash("0xbeef").Hex(),
+		SessionID:      sessionID,
+		BlockNumber:    150,
+		TxHash:         common.HexToHash("0xdead").Hex(),
+		LogIndex:       9,
+		Address:        common.HexToAddress("0x1234567890123456789012345678901234567890").Hex(),
+		Topics:         []string{common.HexToHash("0xaaaa").Hex()},
+		Data:           common.LeftPadBytes(big.NewInt(42).Bytes(), 32),
+		TxIndex:        3,
+		BlockHash:      common.HexToHash("0xbeef").Hex(),
+		BlockTimestamp: 1_700_000_000,
 	}
 	tm.store.EXPECT().GetAddressScanLogs(ctx, sessionID).Return([]schema.AddressScanLog{row}, nil)
 
@@ -129,6 +133,7 @@ func TestReplayEthereumScanSession_RoundTripsLogsAndPersistsTokens(t *testing.T)
 			assert.Equal(t, row.Data, vLog.Data)
 			assert.Equal(t, uint(3), vLog.TxIndex)
 			assert.Equal(t, common.HexToHash("0xbeef"), vLog.BlockHash)
+			assert.Equal(t, uint64(1_700_000_000), vLog.BlockTimestamp, "restored logs keep the staged block time so replay needs no block-provider lookup")
 			return discovered, nil
 		})
 

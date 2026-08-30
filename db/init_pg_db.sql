@@ -442,6 +442,9 @@ CREATE TABLE address_scan_logs (
     data BYTEA,
     tx_index INTEGER NOT NULL DEFAULT 0,
     block_hash TEXT,
+    -- Unix block time carried on the log (warehouse-served windows, migration 029);
+    -- 0 = unknown, resolved by the block provider at replay.
+    block_timestamp BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (session_id, block_number, tx_hash, log_index)
 );
 

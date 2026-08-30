@@ -20,14 +20,15 @@ import (
 
 func buildScanLog(block uint64, txHash string, logIndex uint) schema.AddressScanLog {
 	return schema.AddressScanLog{
-		BlockNumber: block,
-		TxHash:      txHash,
-		LogIndex:    logIndex,
-		Address:     "0x1234567890123456789012345678901234567890",
-		Topics:      []string{"0xaaaa", "0xbbbb"},
-		Data:        []byte{0x01, 0x02},
-		TxIndex:     1,
-		BlockHash:   "0xbeef",
+		BlockNumber:    block,
+		TxHash:         txHash,
+		LogIndex:       logIndex,
+		Address:        "0x1234567890123456789012345678901234567890",
+		Topics:         []string{"0xaaaa", "0xbbbb"},
+		Data:           []byte{0x01, 0x02},
+		TxIndex:        1,
+		BlockHash:      "0xbeef",
+		BlockTimestamp: 1_700_000_000,
 	}
 }
 

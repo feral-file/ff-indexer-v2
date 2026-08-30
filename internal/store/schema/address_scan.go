@@ -69,6 +69,10 @@ type AddressScanLog struct {
 	TxIndex uint `gorm:"column:tx_index;not null;default:0"`
 	// BlockHash is the hash of the block containing the log
 	BlockHash string `gorm:"column:block_hash"`
+	// BlockTimestamp is the Unix block time carried on the log when the window
+	// was served by the log warehouse (migration 029); 0 = unknown, in which
+	// case the replay resolves it through the block provider as before.
+	BlockTimestamp uint64 `gorm:"column:block_timestamp;not null;default:0"`
 }
 
 // TableName overrides the GORM table name.

@@ -218,3 +218,89 @@ func TestVerifiedLogWarehouse_ConcurrentCallersDoNotWaitForVerification(t *testi
 	wg.Wait()
 	require.NoError(t, firstErr)
 }
+
+// TestVerifiedLogWarehouse_PostVerificationOutageCoolsDown pins round-3 F1:
+// once verified, a transport failure demotes the warehouse to unverified with
+// the retry cooldown — the next callers fall through without an RPC — and the
+// first call after the interval re-verifies. An error the warehouse answered
+// with (rpc.Error: the result cap) is not an outage and keeps it verified.
+func TestVerifiedLogWarehouse_PostVerificationOutageCoolsDown(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	inner := mocks.NewMockLogWarehouse(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	base := time.Unix(1_700_000_000, 0)
+	now := base
+	clock.EXPECT().Now().DoAndReturn(func() time.Time { return now }).AnyTimes()
+	gomock.InOrder(
+		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),
+		inner.EXPECT().Head(gomock.Any()).Return(uint64(1), nil),
+		inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return(nil, &fakeRPCError{code: -32000, msg: "query returned more than 100000 results"}),
+		inner.EXPECT().Head(gomock.Any()).Return(uint64(0), errors.New("dial tcp: connection refused")),
+		// cooldown: no RPC
+		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),
+		inner.EXPECT().Head(gomock.Any()).Return(uint64(2), nil),
+	)
+	w := adapter.NewVerifiedLogWarehouse(inner, adapter.LogWarehouseRequirements{ChainID: 1}, clock, 30*time.Second)
+
+	_, err := w.Head(context.Background())
+	require.NoError(t, err)
+	_, err = w.FilterLogs(context.Background(), ethereum.FilterQuery{})
+	require.Error(t, err, "result cap surfaces to the caller")
+	_, err = w.Head(context.Background())
+	require.ErrorContains(t, err, "connection refused", "the warehouse answered the cap, so it stayed verified and the outage reached the inner call")
+
+	now = now.Add(10 * time.Second)
+	_, err = w.Head(context.Background())
+	require.ErrorIs(t, err, adapter.ErrLogWarehouseUnverified, "inside the cooldown after an outage: no RPC")
+	_, err = w.FilterLogs(context.Background(), ethereum.FilterQuery{})
+	require.ErrorIs(t, err, adapter.ErrLogWarehouseUnverified)
+
+	now = base.Add(31 * time.Second)
+	head, err := w.Head(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), head)
+}
+
+// TestVerifiedLogWarehouse_CallerCancellationIsNotCached pins round-3 F3: a
+// verification that ends because the caller's own context is done is not a
+// warehouse failure; a fresh caller verifies immediately afterwards.
+func TestVerifiedLogWarehouse_CallerCancellationIsNotCached(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	inner := mocks.NewMockLogWarehouse(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	clock.EXPECT().Now().Return(time.Unix(1_700_000_000, 0)).AnyTimes()
+	gomock.InOrder(
+		inner.EXPECT().ChainID(gomock.Any()).DoAndReturn(func(ctx context.Context) (*big.Int, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}),
+		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),
+		inner.EXPECT().Head(gomock.Any()).Return(uint64(4), nil),
+		// a post-verification failure caused by the caller's context must not demote either
+		inner.EXPECT().Head(gomock.Any()).DoAndReturn(func(ctx context.Context) (uint64, error) {
+			<-ctx.Done()
+			return 0, ctx.Err()
+		}),
+		inner.EXPECT().Head(gomock.Any()).Return(uint64(5), nil),
+	)
+	w := adapter.NewVerifiedLogWarehouse(inner, adapter.LogWarehouseRequirements{ChainID: 1}, clock, 30*time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := w.Head(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+
+	head, err := w.Head(context.Background())
+	require.NoError(t, err, "a fresh caller verifies at once")
+	require.Equal(t, uint64(4), head)
+
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	_, err = w.Head(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	head, err = w.Head(context.Background())
+	require.NoError(t, err, "still verified: the caller's cancellation is not an outage")
+	require.Equal(t, uint64(5), head)
+}
