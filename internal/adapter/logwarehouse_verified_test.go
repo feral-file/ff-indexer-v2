@@ -67,6 +67,33 @@ func TestVerifiedLogWarehouse_RoutesOnlyAfterVerification(t *testing.T) {
 	require.NoError(t, err, "second call must not re-verify (strict Times(1) on ChainID/probe)")
 }
 
+// TestVerifiedLogWarehouse_ProbeForwardsERC1155ID pins that a probe carrying an
+// ERC1155ID reaches inner.FilterLogs with that id, so a capability probe can
+// prove the warehouse actually applies the erc1155Id filter.
+func TestVerifiedLogWarehouse_ProbeForwardsERC1155ID(t *testing.T) {
+	t.Parallel()
+	inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
+	want := common.BigToHash(big.NewInt(0x7b))
+	probe := adapter.LogWarehouseProbe{
+		Name:      "erc1155 id probe",
+		Query:     ethereum.FilterQuery{FromBlock: big.NewInt(7), ToBlock: big.NewInt(7)},
+		ERC1155ID: &want,
+		Accept:    func(logs []types.Log) bool { return len(logs) == 1 },
+	}
+	inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil).Times(1)
+	inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ ethereum.FilterQuery, id *common.Hash) ([]types.Log, error) {
+			require.NotNil(t, id, "the probe id must reach the warehouse")
+			require.Equal(t, want, *id)
+			return []types.Log{{}}, nil
+		}).Times(1)
+	inner.EXPECT().Head(gomock.Any()).Return(uint64(100), nil).Times(1)
+
+	w := newVerified(inner, mainnetReqs(probe))
+	_, err := w.Head(context.Background())
+	require.NoError(t, err)
+}
+
 // TestVerifiedLogWarehouse_PermanentRefusals pins that a chain mismatch, a
 // probe answered without the shape, and a probe refused as out of scope each
 // disable routing for good: every later request fails without touching the

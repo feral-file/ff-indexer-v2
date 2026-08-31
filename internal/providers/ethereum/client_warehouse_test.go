@@ -30,18 +30,37 @@ func TestLogWarehouseRequirements(t *testing.T) {
 		reqs, err := ethereum.LogWarehouseRequirements(domain.ChainEthereumMainnet)
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), reqs.ChainID)
-		require.Len(t, reqs.Probes, 1)
+		require.Len(t, reqs.Probes, 2)
 		probe := reqs.Probes[0]
 		punks := common.HexToAddress("0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb")
 		require.Equal(t, []common.Address{punks}, probe.Query.Addresses)
 		require.Equal(t, [][]common.Hash{{helpers.TransferEventSignature}}, probe.Query.Topics)
 		require.Equal(t, probe.Query.FromBlock, probe.Query.ToBlock, "a single-block probe")
 		require.Equal(t, int64(3_919_706), probe.Query.FromBlock.Int64())
+		require.Nil(t, probe.ERC1155ID, "the CryptoPunks probe sends a standard filter")
 
 		require.False(t, probe.Accept(nil), "no logs: the shape is missing")
 		require.False(t, probe.Accept([]types.Log{{Address: punks, Topics: make([]common.Hash, 4)}}), "a 4-topic Transfer is not the internal one")
 		require.False(t, probe.Accept([]types.Log{{Address: common.HexToAddress("0x1"), Topics: make([]common.Hash, 3)}}), "another emitter does not count")
 		require.True(t, probe.Accept([]types.Log{{Address: punks, Topics: make([]common.Hash, 3)}}))
+
+		// The erc1155Id capability probe: single block, storefront, TransferSingle,
+		// with the token id set, accepting only when every log carries that id.
+		idProbe := reqs.Probes[1]
+		require.Equal(t, "ERC-1155 erc1155Id filter", idProbe.Name)
+		require.Equal(t, []common.Address{common.HexToAddress("0x495f947276749Ce646f68AC8c248420045cb7b5e")}, idProbe.Query.Addresses)
+		require.Equal(t, [][]common.Hash{{helpers.ERC1155TransferSingleEventSignature}}, idProbe.Query.Topics)
+		require.Equal(t, idProbe.Query.FromBlock, idProbe.Query.ToBlock, "a single-block probe")
+		require.Equal(t, int64(14_045_001), idProbe.Query.FromBlock.Int64())
+		require.NotNil(t, idProbe.ERC1155ID, "the id must be sent so the probe tests the filter")
+		id := *idProbe.ERC1155ID
+		match := types.Log{Data: append(append([]byte{}, id.Bytes()...), make([]byte, 32)...)}
+		foreign := types.Log{Data: append(append([]byte{}, common.HexToHash("0x99").Bytes()...), make([]byte, 32)...)}
+		require.False(t, idProbe.Accept(nil), "empty: the filter dropped everything or is unsupported")
+		require.True(t, idProbe.Accept([]types.Log{match, match}), "only the requested token's logs")
+		require.False(t, idProbe.Accept([]types.Log{match, foreign}), "a sibling token proves the filter was ignored")
+		require.False(t, idProbe.Accept([]types.Log{foreign}), "a foreign token id alone is rejected")
+		require.False(t, idProbe.Accept([]types.Log{{Data: []byte{0x01}}}), "a truncated data field is rejected")
 	})
 	t.Run("testnet needs only the chain id", func(t *testing.T) {
 		t.Parallel()

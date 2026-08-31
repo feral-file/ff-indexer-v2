@@ -26,6 +26,22 @@ var cryptoPunksAddress = common.HexToAddress("0xb47e3cd837ddf8e4c57f05d70ab865de
 // on 2026-08-30, one of 45 such logs in blocks 3,914,623–3,924,623).
 const cryptoPunksInternalTransferProbeBlock = 3_919_706
 
+// openSeaSharedStorefrontAddress is the OpenSea Shared Storefront (a large,
+// multi-token ERC-1155), used to probe the warehouse's erc1155Id filter.
+var openSeaSharedStorefrontAddress = common.HexToAddress("0x495f947276749Ce646f68AC8c248420045cb7b5e")
+
+// erc1155IDProbeBlock is a mainnet block in which the storefront emitted five
+// TransferSingle logs across four distinct token ids — erc1155ProbeTokenID
+// (twice) and three siblings (verified live against the warehouse 2026-08-31).
+// Probing the block with erc1155ProbeTokenID must return only its two logs: a
+// warehouse that ignores the unknown field answers with the siblings too,
+// which the probe rejects.
+const erc1155IDProbeBlock = 14_045_001
+
+// erc1155ProbeTokenID is a token transferred (twice) in erc1155IDProbeBlock; its
+// 32-byte id is the first data word of those TransferSingle logs.
+var erc1155ProbeTokenID = common.HexToHash("0x57b090ba902578996db810e9f3140bd73ea8495e000000000000010000000032")
+
 // LogWarehouseRequirements returns what the warehouse must satisfy before the
 // indexer routes history through it for the given chain: the chain id, and on
 // mainnet a probe proving it stores the CryptoPunks internal Transfer.
@@ -45,7 +61,7 @@ func LogWarehouseRequirements(chain domain.Chain) (adapter.LogWarehouseRequireme
 	}
 	reqs := adapter.LogWarehouseRequirements{ChainID: uint64(id)}
 	if chain == domain.ChainEthereumMainnet {
-		reqs.Probes = append(reqs.Probes, cryptoPunksInternalTransferProbe())
+		reqs.Probes = append(reqs.Probes, cryptoPunksInternalTransferProbe(), erc1155IDFilterProbe())
 	}
 	return reqs, nil
 }
@@ -69,6 +85,47 @@ func cryptoPunksInternalTransferProbe() adapter.LogWarehouseProbe {
 				}
 			}
 			return false
+		},
+	}
+}
+
+// erc1155IDFilterProbe verifies the warehouse actually applies the erc1155Id
+// filter (ff-eth-logs api_design.md 3.8), on which per-token ERC-1155
+// provenance depends: GetTokenEvents sends the token id so the walk is an
+// index point lookup instead of a whole-contract scan.
+//
+// Reason: the field is a warehouse-only extension a standard node — and an
+// older warehouse build — ignores, answering the whole query. The indexer
+// trusts the warehouse's answer for the covered range with no vendor backstop,
+// so a warehouse that ignores or misapplies the filter would either resume the
+// full-contract scan (an ignored field) or silently drop the token's history
+// (a broken filter). The probe turns both into a refused warehouse. It asks
+// erc1155IDProbeBlock (two distinct tokens) for erc1155ProbeTokenID and accepts
+// only when every returned TransferSingle carries that id in data word 0 and at
+// least one does: a warehouse that ignored the field returns the sibling token
+// too (rejected), and one that dropped everything returns nothing (rejected).
+func erc1155IDFilterProbe() adapter.LogWarehouseProbe {
+	block := new(big.Int).SetUint64(erc1155IDProbeBlock)
+	id := erc1155ProbeTokenID
+	return adapter.LogWarehouseProbe{
+		Name: "ERC-1155 erc1155Id filter",
+		Query: ethereum.FilterQuery{
+			FromBlock: block,
+			ToBlock:   block,
+			Addresses: []common.Address{openSeaSharedStorefrontAddress},
+			Topics:    [][]common.Hash{{helpers.ERC1155TransferSingleEventSignature}},
+		},
+		ERC1155ID: &id,
+		Accept: func(logs []types.Log) bool {
+			matched := 0
+			for _, l := range logs {
+				// TransferSingle carries the token id in data word 0.
+				if len(l.Data) < 32 || common.BytesToHash(l.Data[:32]) != id {
+					return false // a foreign token id proves the filter was not applied
+				}
+				matched++
+			}
+			return matched > 0
 		},
 	}
 }

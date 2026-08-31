@@ -46,6 +46,11 @@ type LogWarehouseProbe struct {
 	// Query is sent as-is; it should be narrow (a single block) so the probe
 	// is cheap and cannot trip the warehouse result cap.
 	Query ethereum.FilterQuery
+	// ERC1155ID, when non-nil, is passed as the warehouse's erc1155Id filter so
+	// a probe can verify the warehouse actually applies it (an older build
+	// ignores the unknown field and answers the whole query, which the Accept
+	// then rejects). nil sends a standard filter.
+	ERC1155ID *common.Hash
 	// Accept reports whether the served logs prove the capability.
 	Accept func(logs []types.Log) bool
 }
@@ -231,7 +236,7 @@ func (w *VerifiedLogWarehouse) check(ctx context.Context) error {
 // does not cover the probe's block, so it cannot hold the shape either — while
 // any other error keeps the warehouse unverified.
 func (w *VerifiedLogWarehouse) runProbe(ctx context.Context, probe LogWarehouseProbe) error {
-	logs, err := w.inner.FilterLogs(ctx, probe.Query, nil)
+	logs, err := w.inner.FilterLogs(ctx, probe.Query, probe.ERC1155ID)
 	switch {
 	case IsOutOfScope(err):
 		return fmt.Errorf("%w: probe %q refused: %w", ErrLogWarehouseProbeFailed, probe.Name, err)
