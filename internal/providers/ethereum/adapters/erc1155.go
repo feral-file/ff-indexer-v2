@@ -150,7 +150,7 @@ func (a *ERC1155Adapter) GetEventSignatures() []common.Hash {
 // and filter by token ID client-side. Returns events in ascending order of timestamp.
 func (a *ERC1155Adapter) GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string) ([]domain.BlockchainEvent, error) {
 	// Parse token number to big.Int
-	_, ok := new(big.Int).SetString(tokenNumber, 10)
+	tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
 	if !ok {
 		return nil, fmt.Errorf("invalid token number: %s", tokenNumber)
 	}
@@ -172,8 +172,13 @@ func (a *ERC1155Adapter) GetTokenEvents(ctx context.Context, contractAddress, to
 		},
 	}
 
-	// Fetch logs with pagination to handle Infura's 10k limitation
-	logs, err := a.pagination.FilterLogsWithPagination(ctx, query)
+	// Fetch logs with pagination to handle Infura's 10k limitation. The warehouse
+	// hint turns the per-token history walk into an index point lookup there
+	// (TransferSingle by data word 0, URI by topic1); the vendor leg ignores it
+	// and still returns the whole contract, so the token-id filter below remains
+	// the correctness backstop.
+	logs, err := a.pagination.FilterLogsWithPagination(ctx, query,
+		helpers.WithERC1155TokenID(common.BigToHash(tokenID)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to filter logs: %w", err)
 	}

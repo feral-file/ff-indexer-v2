@@ -105,8 +105,8 @@ func TestFetchIngestionLogs_RoutesThroughWarehouse(t *testing.T) {
 	vendor := mocks.NewMockEthClient(ctrl)
 	wh := mocks.NewMockLogWarehouse(ctrl)
 	wh.EXPECT().Head(gomock.Any()).Return(uint64(1_010), nil)
-	wh.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, q goeth.FilterQuery) ([]types.Log, error) {
+	wh.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q goeth.FilterQuery, _ *common.Hash) ([]types.Log, error) {
 			require.Equal(t, uint64(1_000), q.FromBlock.Uint64())
 			require.Equal(t, uint64(1_009), q.ToBlock.Uint64())
 			require.Len(t, q.Topics, 1)

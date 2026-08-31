@@ -5,6 +5,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"go.uber.org/zap"
 
@@ -40,7 +41,7 @@ import (
 // (a vendor cost backstop). The returned logs are in (block, log index) order,
 // as the warehouse guarantees and as the vendor leg appended after them
 // preserves, so no re-sort is needed.
-func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.FilterQuery, from, to uint64) ([]types.Log, uint64, error) {
+func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.FilterQuery, from, to uint64, erc1155ID *common.Hash) ([]types.Log, uint64, error) {
 	head, err := h.guards.LogWarehouse.Head(ctx)
 	if err != nil {
 		return h.fallThrough(ctx, from, to, "head lookup", err)
@@ -52,7 +53,7 @@ func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.Filt
 		return nil, from, nil
 	}
 	served := min(to, head)
-	logs, err := h.warehouseFetch(ctx, query, from, served)
+	logs, err := h.warehouseFetch(ctx, query, from, served, erc1155ID)
 	if err != nil {
 		return h.fallThrough(ctx, from, to, "eth_getLogs", err)
 	}
@@ -85,11 +86,11 @@ func (h *PaginationHelper) fallThrough(ctx context.Context, from, to uint64, sta
 // vendor, whose walk has the receipts path for dense blocks). There is no
 // sleep between halves: unlike a vendor's rate limit, the warehouse cap is a
 // response-size bound, and the halves are independent local queries.
-func (h *PaginationHelper) warehouseFetch(ctx context.Context, query ethereum.FilterQuery, from, to uint64) ([]types.Log, error) {
+func (h *PaginationHelper) warehouseFetch(ctx context.Context, query ethereum.FilterQuery, from, to uint64, erc1155ID *common.Hash) ([]types.Log, error) {
 	rangeQuery := query
 	rangeQuery.FromBlock = new(big.Int).SetUint64(from)
 	rangeQuery.ToBlock = new(big.Int).SetUint64(to)
-	logs, err := h.guards.LogWarehouse.FilterLogs(ctx, rangeQuery)
+	logs, err := h.guards.LogWarehouse.FilterLogs(ctx, rangeQuery, erc1155ID)
 	if err == nil {
 		return logs, nil
 	}
@@ -97,11 +98,11 @@ func (h *PaginationHelper) warehouseFetch(ctx context.Context, query ethereum.Fi
 		return nil, err
 	}
 	mid := from + (to-from)/2
-	left, err := h.warehouseFetch(ctx, query, from, mid)
+	left, err := h.warehouseFetch(ctx, query, from, mid, erc1155ID)
 	if err != nil {
 		return nil, err
 	}
-	right, err := h.warehouseFetch(ctx, query, mid+1, to)
+	right, err := h.warehouseFetch(ctx, query, mid+1, to, erc1155ID)
 	if err != nil {
 		return nil, err
 	}

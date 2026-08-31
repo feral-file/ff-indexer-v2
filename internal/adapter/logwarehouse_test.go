@@ -114,7 +114,7 @@ func TestRealLogWarehouse_FilterLogsDecodesBlockTimestamp(t *testing.T) {
 		FromBlock: big.NewInt(0),
 		ToBlock:   big.NewInt(16),
 		Topics:    [][]common.Hash{{common.Hash{}}},
-	})
+	}, nil)
 	require.NoError(t, err)
 	require.Len(t, logs, 1)
 	require.Equal(t, uint64(16), logs[0].BlockNumber)
@@ -126,6 +126,40 @@ func TestRealLogWarehouse_FilterLogsDecodesBlockTimestamp(t *testing.T) {
 	require.Len(t, params, 1)
 	require.Equal(t, "0x0", params[0]["fromBlock"])
 	require.Equal(t, "0x10", params[0]["toBlock"])
+	require.NotContains(t, params[0], "erc1155Id", "a nil id sends a standard, node-compatible filter")
+}
+
+// TestRealLogWarehouse_FilterLogsSendsERC1155ID pins the warehouse-only wire
+// contract: a non-nil erc1155ID is sent as the eth_getLogs "erc1155Id" field
+// (32-byte hex) alongside the standard fields, and a nil id omits it entirely
+// so the vendor-shaped request a node also accepts is preserved. The field
+// name and encoding must match ff-eth-logs rpcapi.FilterCriteria.
+func TestRealLogWarehouse_FilterLogsSendsERC1155ID(t *testing.T) {
+	t.Parallel()
+	f, wh := newFakeWarehouse(t)
+	var gotParams json.RawMessage
+	f.handlers["eth_getLogs"] = func(params json.RawMessage) (any, *jsonError) {
+		gotParams = params
+		return []map[string]any{}, nil
+	}
+
+	id := common.BigToHash(big.NewInt(42))
+	_, err := wh.FilterLogs(context.Background(), ethereum.FilterQuery{
+		FromBlock: big.NewInt(0),
+		ToBlock:   big.NewInt(16),
+		Addresses: []common.Address{common.HexToAddress("0xabc")},
+		Topics:    [][]common.Hash{{common.Hash{}}},
+	}, &id)
+	require.NoError(t, err)
+
+	var params []map[string]any
+	require.NoError(t, json.Unmarshal(gotParams, &params))
+	require.Len(t, params, 1)
+	require.Equal(t, id.Hex(), params[0]["erc1155Id"], "the 32-byte token id is sent as erc1155Id")
+	require.Equal(t, "0x0", params[0]["fromBlock"], "standard fields still present")
+	require.Equal(t, "0x10", params[0]["toBlock"])
+	require.Contains(t, params[0], "address")
+	require.Contains(t, params[0], "topics")
 }
 
 // TestRealLogWarehouse_ScopeErrorIsOutOfScope pins the contract with
@@ -143,7 +177,7 @@ func TestRealLogWarehouse_ScopeErrorIsOutOfScope(t *testing.T) {
 		return nil, scopeError("warehouse is empty")
 	}
 
-	_, err := wh.FilterLogs(context.Background(), ethereum.FilterQuery{FromBlock: big.NewInt(100), ToBlock: big.NewInt(200)})
+	_, err := wh.FilterLogs(context.Background(), ethereum.FilterQuery{FromBlock: big.NewInt(100), ToBlock: big.NewInt(200)}, nil)
 	require.True(t, adapter.IsOutOfScope(err), "scope refusal must classify: %v", err)
 	require.ErrorIs(t, err, adapter.ErrOutOfScope)
 	require.ErrorContains(t, err, "extend above the warehouse head 50", "the warehouse's reason must survive for the log line")
@@ -168,7 +202,7 @@ func TestRealLogWarehouse_ResultCapErrorKeepsCodeAndMessage(t *testing.T) {
 	f.handlers["eth_getLogs"] = func(json.RawMessage) (any, *jsonError) {
 		return nil, &jsonError{Code: -32000, Message: "query returned more than 100000 results"}
 	}
-	_, err := wh.FilterLogs(context.Background(), ethereum.FilterQuery{FromBlock: big.NewInt(0), ToBlock: big.NewInt(1)})
+	_, err := wh.FilterLogs(context.Background(), ethereum.FilterQuery{FromBlock: big.NewInt(0), ToBlock: big.NewInt(1)}, nil)
 	require.Error(t, err)
 	require.False(t, adapter.IsOutOfScope(err))
 	var rpcErr rpc.Error

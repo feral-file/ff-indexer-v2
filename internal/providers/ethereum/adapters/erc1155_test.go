@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
+	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
@@ -133,4 +135,49 @@ func TestERC1155ParseEvent_UnknownSignature(t *testing.T) {
 	parsed, err := adapter.ParseEvent(context.Background(), vLog)
 	require.ErrorIs(t, err, adapters.ErrUnknownEvent)
 	require.Nil(t, parsed)
+}
+
+// TestERC1155GetTokenEvents_RoutesTokenIDToWarehouse pins the indexer end of
+// the ERC-1155 point-lookup: GetTokenEvents derives the 32-byte id from the
+// decimal token number and forwards it as the warehouse hint, so a per-token
+// history walk is served by the warehouse index rather than a whole-contract
+// scan. The vendor mock has no expectation: the warehouse serves the range.
+func TestERC1155GetTokenEvents_RoutesTokenIDToWarehouse(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	wh := mocks.NewMockLogWarehouse(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
+	vendor := mocks.NewMockEthClient(ctrl) // never called
+
+	const head = uint64(1_000)
+	mockBlock.EXPECT().GetLatestBlock(gomock.Any()).Return(head, nil).AnyTimes()
+	wh.EXPECT().Head(gomock.Any()).Return(head, nil)
+
+	contract := common.HexToAddress("0x495f947276749ce646f68ac8c248420045cb7b5e")
+	wantID := common.BigToHash(big.NewInt(42))
+	value := common.BigToHash(big.NewInt(1))
+	tsLog := types.Log{
+		Address:        contract,
+		Topics:         []common.Hash{helpers.ERC1155TransferSingleEventSignature, {}, {}, {}},
+		Data:           append(append([]byte{}, wantID.Bytes()...), value.Bytes()...),
+		BlockNumber:    5,
+		BlockTimestamp: 1_700_000_000, // set so parsing needs no block lookup
+		TxHash:         common.HexToHash("0xabc"),
+		Index:          0,
+	}
+	wh.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ ethereum.FilterQuery, id *common.Hash) ([]types.Log, error) {
+			require.NotNil(t, id, "the token id must reach the warehouse")
+			require.Equal(t, wantID, *id)
+			return []types.Log{tsLog}, nil
+		})
+
+	pagination := helpers.NewGuardedPaginationHelper(vendor, ethadapter.NewClock(), mockBlock,
+		helpers.PaginationGuards{LogWarehouse: wh})
+	adapter := adapters.NewERC1155Adapter(vendor, pagination, domain.ChainEthereumMainnet, mockBlock)
+
+	events, err := adapter.GetTokenEvents(context.Background(), contract.Hex(), "42")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, "42", events[0].TokenNumber)
 }
