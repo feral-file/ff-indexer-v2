@@ -30,7 +30,7 @@ func TestLogWarehouseRequirements(t *testing.T) {
 		reqs, err := ethereum.LogWarehouseRequirements(domain.ChainEthereumMainnet)
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), reqs.ChainID)
-		require.Len(t, reqs.Probes, 2)
+		require.Len(t, reqs.Probes, 3)
 		probe := reqs.Probes[0]
 		punks := common.HexToAddress("0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb")
 		require.Equal(t, []common.Address{punks}, probe.Query.Addresses)
@@ -61,6 +61,22 @@ func TestLogWarehouseRequirements(t *testing.T) {
 		require.False(t, idProbe.Accept([]types.Log{match, foreign}), "a sibling token proves the filter was ignored")
 		require.False(t, idProbe.Accept([]types.Log{foreign}), "a foreign token id alone is rejected")
 		require.False(t, idProbe.Accept([]types.Log{{Data: []byte{0x01}}}), "a truncated data field is rejected")
+
+		// The URI arm probe: single block, a URI-emitting contract, URI topic,
+		// id set; URI carries the token id in topic1, not data.
+		uriProbe := reqs.Probes[2]
+		require.Equal(t, "ERC-1155 URI erc1155Id filter", uriProbe.Name)
+		require.Equal(t, [][]common.Hash{{helpers.ERC1155URIEventSignature}}, uriProbe.Query.Topics)
+		require.Equal(t, uriProbe.Query.FromBlock, uriProbe.Query.ToBlock, "a single-block probe")
+		require.Equal(t, int64(6_938_761), uriProbe.Query.FromBlock.Int64())
+		require.NotNil(t, uriProbe.ERC1155ID)
+		uid := *uriProbe.ERC1155ID
+		uriMatch := types.Log{Topics: []common.Hash{helpers.ERC1155URIEventSignature, uid}}
+		uriForeign := types.Log{Topics: []common.Hash{helpers.ERC1155URIEventSignature, common.HexToHash("0x99")}}
+		require.False(t, uriProbe.Accept(nil), "empty: dropped or unsupported")
+		require.True(t, uriProbe.Accept([]types.Log{uriMatch}), "only the requested token's URI")
+		require.False(t, uriProbe.Accept([]types.Log{uriMatch, uriForeign}), "a sibling URI proves the filter was ignored")
+		require.False(t, uriProbe.Accept([]types.Log{{Topics: []common.Hash{helpers.ERC1155URIEventSignature}}}), "a URI without topic1 is rejected")
 	})
 	t.Run("testnet needs only the chain id", func(t *testing.T) {
 		t.Parallel()

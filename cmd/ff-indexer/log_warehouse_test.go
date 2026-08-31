@@ -26,6 +26,10 @@ func warehouseServer(t *testing.T, chainID string, probeLogs []map[string]any) *
 		var req struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
+			Params []struct {
+				ERC1155ID string     `json:"erc1155Id"`
+				Topics    [][]string `json:"topics"`
+			} `json:"params"`
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 		var result any
@@ -33,7 +37,18 @@ func warehouseServer(t *testing.T, chainID string, probeLogs []map[string]any) *
 		case "eth_chainId":
 			result = chainID
 		case "eth_getLogs":
-			result = probeLogs
+			// The erc1155Id capability probes send the field; answer each with a
+			// correctly filtered log for its signature (TransferSingle by data
+			// word 0, URI by topic1) so a compliant warehouse is simulated.
+			// Every other eth_getLogs (the CryptoPunks probe) gets probeLogs.
+			switch {
+			case len(req.Params) == 1 && req.Params[0].ERC1155ID != "" && probeTopic0(req.Params[0].Topics) == helpers.ERC1155URIEventSignature.Hex():
+				result = erc1155URI(req.Params[0].ERC1155ID)
+			case len(req.Params) == 1 && req.Params[0].ERC1155ID != "":
+				result = erc1155TransferSingle(req.Params[0].ERC1155ID)
+			default:
+				result = probeLogs
+			}
 		default:
 			t.Errorf("unexpected method %s", req.Method)
 		}
@@ -42,6 +57,25 @@ func warehouseServer(t *testing.T, chainID string, probeLogs []map[string]any) *
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// erc1155TransferSingle is a TransferSingle log whose data word 0 is idHex (a
+// 32-byte hex token id), i.e. the shape the erc1155Id capability probe accepts.
+func erc1155TransferSingle(idHex string) []map[string]any {
+	zero := "0x" + common.Bytes2Hex(make([]byte, 32))
+	id := common.HexToHash(idHex)
+	data := "0x" + common.Bytes2Hex(append(append([]byte{}, id.Bytes()...), make([]byte, 32)...)) // id || value
+	return []map[string]any{{
+		"address":          "0x495f947276749ce646f68ac8c248420045cb7b5e",
+		"topics":           []string{helpers.ERC1155TransferSingleEventSignature.Hex(), zero, zero, zero},
+		"data":             data,
+		"blockNumber":      "0xd65e29",
+		"transactionHash":  zero,
+		"transactionIndex": "0x0",
+		"blockHash":        zero,
+		"logIndex":         "0x0",
+		"removed":          false,
+	}}
 }
 
 // punksInternalTransfer is a 3-topic Transfer from the CryptoPunks contract,
@@ -53,6 +87,32 @@ func punksInternalTransfer() []map[string]any {
 		"topics":           []string{helpers.TransferEventSignature.Hex(), zero, zero},
 		"data":             "0x",
 		"blockNumber":      "0x3bcf5a",
+		"transactionHash":  zero,
+		"transactionIndex": "0x0",
+		"blockHash":        zero,
+		"logIndex":         "0x0",
+		"removed":          false,
+	}}
+}
+
+// probeTopic0 returns the first topic0 hex of a decoded topics filter, or "".
+func probeTopic0(topics [][]string) string {
+	if len(topics) > 0 && len(topics[0]) > 0 {
+		return topics[0][0]
+	}
+	return ""
+}
+
+// erc1155URI is a URI log whose indexed topic1 is idHex, i.e. the shape the
+// URI capability probe accepts.
+func erc1155URI(idHex string) []map[string]any {
+	zero := "0x" + common.Bytes2Hex(make([]byte, 32))
+	id := common.HexToHash(idHex)
+	return []map[string]any{{
+		"address":          "0xd0e4847359ae76c2786d242e5f45c4f6f1abd752",
+		"topics":           []string{helpers.ERC1155URIEventSignature.Hex(), id.Hex()},
+		"data":             zero,
+		"blockNumber":      "0x69e0c9",
 		"transactionHash":  zero,
 		"transactionIndex": "0x0",
 		"blockHash":        zero,

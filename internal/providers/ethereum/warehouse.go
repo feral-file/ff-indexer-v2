@@ -42,18 +42,42 @@ const erc1155IDProbeBlock = 14_045_001
 // 32-byte id is the first data word of those TransferSingle logs.
 var erc1155ProbeTokenID = common.HexToHash("0x57b090ba902578996db810e9f3140bd73ea8495e000000000000010000000032")
 
+// uriProbeContract emitted 25 URI logs — one per token id 1..25 — in a single
+// block, used to probe the erc1155Id filter's URI arm (the id is in topic1, not
+// data). Verified live 2026-08-31.
+var uriProbeContract = common.HexToAddress("0xd0e4847359ae76c2786d242e5f45c4f6f1abd752")
+
+// uriProbeBlock holds uriProbeContract's 25 URI logs.
+const uriProbeBlock = 6_938_761
+
+// uriProbeTokenID is one of the token ids with a URI log in uriProbeBlock; for
+// URI the id is the indexed topic1.
+var uriProbeTokenID = common.BigToHash(big.NewInt(5))
+
 // LogWarehouseRequirements returns what the warehouse must satisfy before the
 // indexer routes history through it for the given chain: the chain id, and on
-// mainnet a probe proving it stores the CryptoPunks internal Transfer.
+// mainnet three capability probes — the CryptoPunks internal Transfer, and the
+// erc1155Id filter's TransferSingle and URI arms.
 //
-// Reason: the owner scan discovers corrupted acceptBidForPunk purchases (a
-// PunkBought whose indexed buyer is zero) only through that internal Transfer
-// (adapters.GenericAdapter.OwnerQuerySpecs / PostProcessOwnerLogs). It is a
-// 3-topic log under the ERC-721 Transfer signature — the shape a warehouse
-// build drops as "ERC-20". A warehouse without it would answer the owner
-// query completely, minus the one log that triggers the repair, and the buyer
-// would vanish from owner discovery with no fall-through to catch it. The
-// probe turns that silent omission into a refused warehouse.
+// Reason: each probe guards a call site whose correctness depends on a shape or
+// capability the warehouse's answer must include, and which a routing client
+// cannot otherwise detect (the warehouse-covered range has no vendor backstop):
+//   - CryptoPunks internal Transfer: the owner scan discovers corrupted
+//     acceptBidForPunk purchases (a PunkBought whose indexed buyer is zero)
+//     only through that 3-topic log under the ERC-721 Transfer signature — the
+//     shape a warehouse build drops as "ERC-20".
+//   - erc1155Id TransferSingle / URI arms: GetTokenEvents sends the token id so
+//     a per-token ERC-1155 history walk is an index point lookup, not a
+//     whole-contract scan. A warehouse that ignores the warehouse-only field
+//     (an older build) would restore the scan; one that misfilters would drop
+//     the token's history. Both arms are probed because the id lives in a
+//     different place per signature (TransferSingle data word 0, URI topic1).
+//
+// Because a failed probe disables all warehouse routing for the process, a
+// warehouse that predates the erc1155Id filter (ff-eth-logs #8) fails these
+// probes: #8 must be deployed to the warehouse before an indexer image that
+// carries these requirements, or every history query falls through to the
+// vendor.
 func LogWarehouseRequirements(chain domain.Chain) (adapter.LogWarehouseRequirements, error) {
 	id, ok := chain.EIP155NumericID()
 	if !ok || id < 0 {
@@ -61,7 +85,7 @@ func LogWarehouseRequirements(chain domain.Chain) (adapter.LogWarehouseRequireme
 	}
 	reqs := adapter.LogWarehouseRequirements{ChainID: uint64(id)}
 	if chain == domain.ChainEthereumMainnet {
-		reqs.Probes = append(reqs.Probes, cryptoPunksInternalTransferProbe(), erc1155IDFilterProbe())
+		reqs.Probes = append(reqs.Probes, cryptoPunksInternalTransferProbe(), erc1155IDFilterProbe(), erc1155URIFilterProbe())
 	}
 	return reqs, nil
 }
@@ -122,6 +146,42 @@ func erc1155IDFilterProbe() adapter.LogWarehouseProbe {
 				// TransferSingle carries the token id in data word 0.
 				if len(l.Data) < 32 || common.BytesToHash(l.Data[:32]) != id {
 					return false // a foreign token id proves the filter was not applied
+				}
+				matched++
+			}
+			return matched > 0
+		},
+	}
+}
+
+// erc1155URIFilterProbe verifies the erc1155Id filter's URI arm: a URI log
+// carries its token id in the indexed topic1, so the warehouse must filter it
+// there (not by a data word). GetTokenEvents sends one erc1155Id-filtered query
+// covering both TransferSingle and URI, so a warehouse that filters transfers
+// but drops or misfilters URIs would silently omit metadata-update provenance
+// on the covered range. The probe asks uriProbeBlock (25 URI logs across 25
+// token ids) for uriProbeTokenID and accepts only when every returned URI
+// carries that id in topic1 and at least one does: an ignoring warehouse
+// returns the other 24 ids (rejected), a dropping one returns nothing
+// (rejected).
+func erc1155URIFilterProbe() adapter.LogWarehouseProbe {
+	block := new(big.Int).SetUint64(uriProbeBlock)
+	id := uriProbeTokenID
+	return adapter.LogWarehouseProbe{
+		Name: "ERC-1155 URI erc1155Id filter",
+		Query: ethereum.FilterQuery{
+			FromBlock: block,
+			ToBlock:   block,
+			Addresses: []common.Address{uriProbeContract},
+			Topics:    [][]common.Hash{{helpers.ERC1155URIEventSignature}},
+		},
+		ERC1155ID: &id,
+		Accept: func(logs []types.Log) bool {
+			matched := 0
+			for _, l := range logs {
+				// URI carries the token id in the indexed topic1.
+				if len(l.Topics) < 2 || l.Topics[1] != id {
+					return false
 				}
 				matched++
 			}
