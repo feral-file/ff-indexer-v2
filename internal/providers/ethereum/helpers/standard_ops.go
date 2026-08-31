@@ -397,6 +397,30 @@ func ParseERC721TransferLog(vLog types.Log, base domain.BlockchainEvent) (*domai
 //   - fallbackNow: function providing current time if timestamp lookup fails
 //
 // Returns a slice of BlockchainEvent structs representing individual token transfers within the batch.
+// ownerHistoryTimestamp resolves the block time for an ERC-1155 owner-history
+// log: the timestamp carried on the log when there is one (every log the log
+// warehouse serves has it), otherwise the block provider, otherwise the
+// current time — the historical lenient fallback of these paths, kept so a
+// vendor timestamp outage degrades a replay instead of failing it.
+//
+// Reason: these two parsers built the event inline and always asked the block
+// provider, so a warehouse-served history still paid one vendor
+// eth_getBlockByNumber per distinct block and, on a lookup failure, replaced
+// a timestamp the log already carried with "now".
+func ownerHistoryTimestamp(ctx context.Context, vLog types.Log, blockProvider block.BlockProvider, fallbackNow func() time.Time) time.Time {
+	if vLog.BlockTimestamp != 0 {
+		return time.Unix(int64(vLog.BlockTimestamp), 0) //nolint:gosec,G115
+	}
+	blockTimestamp, err := blockProvider.GetBlockTimestamp(ctx, vLog.BlockNumber)
+	if err != nil {
+		logger.WarnCtx(ctx, "Failed to get block timestamp, using current time",
+			zap.Error(err),
+			zap.Uint64("blockNumber", vLog.BlockNumber))
+		return fallbackNow()
+	}
+	return blockTimestamp
+}
+
 func ParseERC1155TransferBatch(
 	ctx context.Context,
 	chainID domain.Chain,
@@ -473,15 +497,7 @@ func ParseERC1155TransferBatch(
 		valueEnd := valueStart + 32
 		value := new(big.Int).SetBytes(vLog.Data[valueStart:valueEnd])
 
-		// Get block timestamp
-		blockTimestamp, err := blockProvider.GetBlockTimestamp(ctx, vLog.BlockNumber)
-		if err != nil {
-			logger.WarnCtx(ctx, "Failed to get block timestamp, using current time",
-				zap.Error(err),
-				zap.Uint64("blockNumber", vLog.BlockNumber))
-			blockTimestamp = fallbackNow()
-		}
-
+		blockTimestamp := ownerHistoryTimestamp(ctx, vLog, blockProvider, fallbackNow)
 		blockHash := vLog.BlockHash.Hex()
 
 		// Create event
@@ -833,14 +849,7 @@ func ERC1155BalanceAndEventsForOwner(
 			toAddress := common.BytesToAddress(vLog.Topics[3].Bytes()).Hex()
 			quantity := new(big.Int).SetBytes(vLog.Data[32:64])
 
-			blockTimestamp, err := blockProvider.GetBlockTimestamp(ctx, vLog.BlockNumber)
-			if err != nil {
-				logger.WarnCtx(ctx, "Failed to get block timestamp, using current time",
-					zap.Error(err),
-					zap.Uint64("blockNumber", vLog.BlockNumber))
-				blockTimestamp = fallbackNow()
-			}
-
+			blockTimestamp := ownerHistoryTimestamp(ctx, vLog, blockProvider, fallbackNow)
 			blockHash := vLog.BlockHash.Hex()
 			event := domain.BlockchainEvent{
 				Chain:           chainID,

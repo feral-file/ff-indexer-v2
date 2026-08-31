@@ -121,6 +121,8 @@ export FF_INDEXER_DATABASE_DBNAME=ff_indexer
 export FF_INDEXER_ETHEREUM_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY            # Chainstack: https://ethereum-mainnet.core.chainstack.com/YOUR_KEY
 export FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://mainnet.infura.io/ws/v3/YOUR_KEY     # Chainstack: wss://ethereum-mainnet.core.chainstack.com/YOUR_KEY
 export FF_INDEXER_ETHEREUM_CHAIN_ID=eip155:1
+# Optional: self-hosted log warehouse (ff-eth-logs) for historical eth_getLogs; empty = vendor only
+export FF_INDEXER_ETHEREUM_LOG_WAREHOUSE_URL=http://localhost:8545
 
 # Job queue (names for token_index / media_index workers)
 export FF_INDEXER_JOBS_TOKEN_QUEUE=token_index
@@ -142,6 +144,18 @@ The Ethereum code path is provider-agnostic, but two providers are known and the
 | Load behaviour (measured 2026-08-26, same script, sequential) | owner-shaped 10k-block `eth_getLogs`: idle 1.6–1.8 s; queues linearly with concurrency (p50 4 s at 32–64, 8 s at 128) with sporadic `503 service temporarily unavailable`; **at 256 concurrent 201/256 fail with 503 plus a 429** — the production peak below is beyond what Infura serves; unfiltered topic-only 10k scans stay ≤ 4 s even at 32 concurrent | owner-shaped: idle 0.2 s, p50 ≤ 0.4 s to 128, **256/256 ok at p50 1.2 s and 360/360 ok at p50 2.2 s (max 4.8 s)** with `eth_blockNumber` unaffected and immediate recovery — i.e. the production peak `token_worker.concurrency × scan_window_concurrency × 3` = 360 in flight is served (one transient held/closed connection was seen once at 128; it did not recur at 256 or 360 and the adapter retries it as EOF). **Unfiltered topic-only 10k scans serialize** (~0.6 s each: p50 4 / 8 / 22 s at 8 / 16 / 32 concurrent) and stall trivial calls while they drain (`eth_blockNumber` up to 5.5 s, 17 s to recover); abandoned requests keep running server-side. Production never issues that shape (catch-up uses 10-block windows; adapter queries are address/owner-scoped) — keep it that way |
 
 Both phrasings (and drpc's `query returns too many logs`) are recognised by `helpers.IsBlockRangeCapError` / `IsTooManyResultsError`, which is what lets pagination halve instead of aborting a walk. `TestE2E_OverRangeGetLogsIsClassifiedAndPaginated` (`-tags e2elive`, `E2E_ETH_WS=wss://...`) issues an over-cap request through the production client, asserts the classifier recognises the rejection, and paginates the same range to completion — run it against any new provider before cut-over, and add any new limit message to the classifier with a test.
+
+### Ethereum log warehouse (ff-eth-logs)
+
+`ethereum.log_warehouse_url` points the indexer at a [ff-eth-logs](https://github.com/feral-file/ff-eth-logs) warehouse (JSON-RPC over HTTP, private network, no auth). With it set, the historical part of every `eth_getLogs` is one warehouse query and only the blocks above the warehouse head reach the vendor; without it nothing changes. The routing, its fall-through policy and what the warehouse answers are described in `docs/architecture.md` ("Ethereum log warehouse routing").
+
+| Key | Default | Meaning |
+|---|---|---|
+| `ethereum.log_warehouse_url` | `""` (off) | http(s) endpoint of the warehouse; validated at load, chain id and capability probe checked at startup (mismatch / failed probe is fatal, unreachable is a WARN and re-verified on first use) |
+| `ethereum.log_warehouse_timeout` | `120s` | per-request deadline, one attempt, no retry — on expiry the query falls through to the vendor |
+| `ethereum.log_warehouse_scan_window_blocks` | `1000000` | owner-scan window over the warehouse-covered range (above the head: `getlogs_span_cap + 1`) |
+
+Locally, `make quickstart` in the ff-eth-logs repo starts a **tail-only** warehouse on `http://localhost:8545` (it serves only the blocks it has followed since it started). The indexer **refuses** such a warehouse: on mainnet it probes block 3,919,706 for the CryptoPunks internal `Transfer` before routing anything (`docs/architecture.md`, "Nothing is routed through an unverified warehouse"), and a warehouse whose coverage starts above that block fails the probe at startup. To exercise routing locally, load the backfill first (`make backfill` in ff-eth-logs). The routing itself is visible in the logs: `Log warehouse verified` (info), `Log range served by the warehouse` (debug), `Log warehouse unavailable for range, falling through to the vendor` (warn). Sizing note for the warehouse side: each owner-scan window issues the three merged owner queries at once, so the warehouse sees up to `token_worker.concurrency × scan_window_concurrency × 3` concurrent queries against its PostgreSQL pool.
 
 ## Running Locally
 
@@ -218,7 +232,9 @@ missing column — jobs error instead of deferring.
 
 1. Disable `ethereum.full_provenance_disabled` in deploy config and restart workers
 2. Size the backfill burst first — each deferred token replays full history
-   (~0.7–1.3M Infura credits at a 10k span cap):
+   (~0.7–1.3M Infura credits at a 10k span cap; with `ethereum.log_warehouse_url`
+   set the replay is one warehouse query per token and the burst is warehouse
+   load, not vendor spend):
    `SELECT count(*) FROM tokens WHERE provenance_deferred_at IS NOT NULL;`
 3. Run the backfill with the deployment's token queue (required parameter):
    `psql ... -v queue=<jobs.token_queue> -f db/migrations/025_backfill.sql`

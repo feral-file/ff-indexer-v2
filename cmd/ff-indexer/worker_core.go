@@ -62,6 +62,11 @@ func registerWorkerCore(
 	if err != nil {
 		return nil, nil, err
 	}
+	logWarehouse, err := dialLogWarehouse(ctx, cfg.Ethereum)
+	if err != nil {
+		adapterEthClient.Close()
+		return nil, nil, err
+	}
 
 	ethBlockFetcher := ethereum.NewEthereumBlockFetcher(adapterEthClient)
 	ethBlockProvider := block.NewBlockProvider(ethBlockFetcher,
@@ -75,8 +80,11 @@ func registerWorkerCore(
 			GetLogsSpanCap:         cfg.Ethereum.GetLogsSpanCap,
 			GetLogsCallBudget:      cfg.Ethereum.GetLogsCallBudget,
 			FullProvenanceDisabled: cfg.Ethereum.FullProvenanceDisabled,
+			LogWarehouse:           logWarehouse,
 		})
 	if err != nil {
+		closeLogWarehouse(logWarehouse)
+		adapterEthClient.Close()
 		return nil, nil, fmt.Errorf("initialize ethereum client: %w", err)
 	}
 
@@ -167,6 +175,7 @@ func registerWorkerCore(
 			EthereumChainID:                    cfg.Ethereum.ChainID,
 			TezosChainID:                       cfg.Tezos.ChainID,
 			EthereumScanWindowBlocks:           scanWindowBlocksFromSpanCap(cfg.Ethereum.GetLogsSpanCap),
+			EthereumWarehouseScanWindowBlocks:  warehouseScanWindowBlocks(cfg.Ethereum, logWarehouse),
 			EthereumScanWindowConcurrency:      cfg.Ethereum.ScanWindowConcurrency,
 			EthereumOwnerFirstBatchTarget:      cfg.EthereumOwnerFirstBatchTarget,
 			EthereumOwnerSubsequentBatchTarget: cfg.EthereumOwnerSubsequentBatchTarget,

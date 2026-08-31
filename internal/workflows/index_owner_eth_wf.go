@@ -179,6 +179,49 @@ func scanWindows(cursor, toBlock, windowBlocks uint64) []scanWindow {
 	return windows
 }
 
+// planScanWindows partitions [cursor, toBlock] for the scan. Without a log
+// warehouse (none configured, unreachable at scan start, or the warehouse
+// window size unset) every window is windowBlocks wide. With one, the blocks
+// it covers — [cursor, warehouse head] — are cut into
+// EthereumWarehouseScanWindowBlocks-wide windows (one warehouse query per
+// merged owner query each) and only the residual above the head keeps the
+// vendor's cap-sized windows.
+//
+// Reason: the vendor-sized window is one accepted call per query on a
+// span-capped provider, but against the warehouse it is ~2,600 needless
+// round-trips per full scan. The head is read once here, for planning; each
+// window's fetch re-checks it and falls through to the vendor on its own, so
+// a stale plan costs at most a larger vendor walk inside a window, never a
+// wrong result.
+func (w *coreWorkflows) planScanWindows(ctx context.Context, cursor, toBlock, windowBlocks uint64) []scanWindow {
+	warehouseBlocks := w.config.EthereumWarehouseScanWindowBlocks
+	if warehouseBlocks == 0 {
+		return scanWindows(cursor, toBlock, windowBlocks)
+	}
+	head, ok := w.executor.EthereumLogWarehouseHead(ctx)
+	if !ok {
+		return scanWindows(cursor, toBlock, windowBlocks)
+	}
+	return splitScanWindows(cursor, toBlock, head, warehouseBlocks, windowBlocks)
+}
+
+// splitScanWindows is the pure partition behind planScanWindows: warehouse
+// windows up to min(head, toBlock), vendor windows above, indexed consecutively.
+func splitScanWindows(cursor, toBlock, head, warehouseBlocks, windowBlocks uint64) []scanWindow {
+	covered := min(head, toBlock)
+	if cursor > covered {
+		return scanWindows(cursor, toBlock, windowBlocks)
+	}
+	windows := scanWindows(cursor, covered, warehouseBlocks)
+	if covered < toBlock {
+		for _, win := range scanWindows(covered+1, toBlock, windowBlocks) {
+			win.index = len(windows)
+			windows = append(windows, win)
+		}
+	}
+	return windows
+}
+
 // scanEthereumSessionWindows runs the window loop from the session's cursor to
 // its target block, fetching up to EthereumScanWindowConcurrency windows at a
 // time while committing them to the checkpoint strictly in order.
@@ -207,7 +250,7 @@ func (w *coreWorkflows) scanEthereumSessionWindows(ctx context.Context, address 
 		concurrency = 1
 	}
 
-	windows := scanWindows(session.CursorBlock, session.ToBlock, windowBlocks)
+	windows := w.planScanWindows(ctx, session.CursorBlock, session.ToBlock, windowBlocks)
 	if len(windows) == 0 {
 		return nil
 	}

@@ -119,12 +119,13 @@ type RealEthClient struct {
 func NewRealEthClient(client *ethclient.Client, url string) *RealEthClient {
 	return &RealEthClient{
 		client: client,
-		url:    endpointForLogs(url),
+		url:    EndpointForLogs(url),
 	}
 }
 
-// endpointForLogs strips everything but scheme and host from an RPC URL.
-func endpointForLogs(rawurl string) string {
+// EndpointForLogs strips everything but scheme and host from an RPC URL so a
+// log line can name the provider without leaking the API key in its path.
+func EndpointForLogs(rawurl string) string {
 	parsed, err := neturl.Parse(rawurl)
 	if err != nil || parsed.Host == "" {
 		return "<redacted>"
@@ -198,7 +199,10 @@ func isRetryableEthError(err error) bool {
 		"connection refused",
 		"connection reset",
 		"connection timed out",
+		// Both spellings: providers differ, and a cancellation that misses the
+		// retry list becomes a permanent failure that aborts the whole walk.
 		"query cancelled", //nolint:misspell
+		"query canceled",
 		"i/o timeout",
 		"broken pipe",
 		"rate limit",

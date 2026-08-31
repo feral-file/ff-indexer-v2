@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -115,6 +116,25 @@ type EthereumConfig struct {
 	// shallow reorgs before anything is emitted, at ~12 s of latency per block.
 	// A reorg deeper than this is logged as an error, not replayed. 0 = emit tip.
 	ConfirmationBlocks uint64 `mapstructure:"confirmation_blocks"`
+
+	// Log warehouse routing (ff-eth-logs; ff-indexer-v2 #130 Phase 2). When
+	// LogWarehouseURL is set, the historical part of every eth_getLogs walk —
+	// owner scans, provenance, replays, ingestion catch-up — is served by the
+	// self-hosted warehouse in one query and only the blocks above its head go
+	// to the vendor. Any warehouse failure falls through to the vendor for the
+	// whole query (logged at WARN); the credit guards above still bound that
+	// path. Empty = every eth_getLogs stays on the vendor.
+	LogWarehouseURL string `mapstructure:"log_warehouse_url"`
+	// LogWarehouseTimeout bounds one warehouse request; there is no retry —
+	// on expiry the query falls through to the vendor. The warehouse's own
+	// per-query limit is 60s and its write timeout 120s.
+	LogWarehouseTimeout time.Duration `mapstructure:"log_warehouse_timeout"`
+	// LogWarehouseScanWindowBlocks is the owner-scan window size over the
+	// blocks the warehouse covers (docs/address_scan_sessions.md); above the
+	// warehouse head windows stay at getlogs_span_cap + 1. Deployment config:
+	// larger windows are fewer warehouse queries per scan but a costlier vendor
+	// walk when a window falls through. Ignored without a warehouse URL.
+	LogWarehouseScanWindowBlocks uint64 `mapstructure:"log_warehouse_scan_window_blocks"`
 }
 
 // TezosConfig holds Tezos-specific configuration
@@ -610,6 +630,29 @@ func SSRFValidatorFromProtection(sp SSRFProtectionConfig) (*ssrf.Validator, erro
 	return ssrf.NewValidator(opts), nil
 }
 
+// validateLogWarehouseConfig rejects a warehouse setup that could not work:
+// a URL that is not http(s) (the warehouse serves JSON-RPC over HTTP on the
+// private network), a non-positive timeout (an unbounded warehouse call would
+// hold a scan window for as long as a wedged connection), or a zero scan
+// window (the window loop would never advance). All three are skipped when no
+// URL is set, so the defaults never block a vendor-only deployment.
+func validateLogWarehouseConfig(cfg *EthereumConfig) error {
+	if cfg.LogWarehouseURL == "" {
+		return nil
+	}
+	parsed, err := neturl.Parse(cfg.LogWarehouseURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("ethereum.log_warehouse_url must be an http(s) URL, got %q", cfg.LogWarehouseURL)
+	}
+	if cfg.LogWarehouseTimeout <= 0 {
+		return fmt.Errorf("ethereum.log_warehouse_timeout must be > 0, got %s", cfg.LogWarehouseTimeout)
+	}
+	if cfg.LogWarehouseScanWindowBlocks == 0 {
+		return errors.New("ethereum.log_warehouse_scan_window_blocks must be > 0 when ethereum.log_warehouse_url is set")
+	}
+	return nil
+}
+
 // ValidateRequiredConfigValues verifies that the unified ff-indexer process has
 // the minimum required config values present before startup initializes shared
 // dependencies.
@@ -663,6 +706,9 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 	// fetched), and the unbounded case is what rate-limit discipline is for.
 	if cfg.Ethereum.ScanWindowConcurrency < 1 {
 		return fmt.Errorf("ethereum.scan_window_concurrency must be >= 1, got %d", cfg.Ethereum.ScanWindowConcurrency)
+	}
+	if err := validateLogWarehouseConfig(&cfg.Ethereum); err != nil {
+		return err
 	}
 
 	// Address-indexing throttle: negative durations would silently disable the
@@ -1004,6 +1050,13 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// Post-merge mainnet reorgs are almost always one block deep; two blocks
 	// (~24 s) absorbs them with margin while keeping events near-real-time.
 	v.SetDefault("ethereum.confirmation_blocks", 2)
+	// Log warehouse: off by default (no URL). The timeout matches the
+	// warehouse's server write timeout; 1M-block windows make a full mainnet
+	// owner scan ~26 windows per merged query while keeping a fall-through
+	// window at ~100 vendor calls.
+	v.SetDefault("ethereum.log_warehouse_url", "")
+	v.SetDefault("ethereum.log_warehouse_timeout", 120*time.Second)
+	v.SetDefault("ethereum.log_warehouse_scan_window_blocks", 1_000_000)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("tezos.block_head_ttl", 10)
@@ -1181,6 +1234,9 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.full_provenance_disabled",
 		"ethereum.max_catchup_blocks",
 		"ethereum.confirmation_blocks",
+		"ethereum.log_warehouse_url",
+		"ethereum.log_warehouse_timeout",
+		"ethereum.log_warehouse_scan_window_blocks",
 		// Tezos
 		"tezos.api_url",
 		"tezos.websocket_url",

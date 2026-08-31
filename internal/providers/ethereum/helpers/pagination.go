@@ -56,6 +56,13 @@ type PaginationGuards struct {
 	// backstop, not a pace-setter: size it above ceil(chain head / SpanCap) so every
 	// legitimate full-history walk fits (mainnet at a 10k cap needs ~2,600 calls).
 	CallBudget int
+	// LogWarehouse, when set, serves the historical part of every walk
+	// ([fromBlock, warehouse head]) in one unpaginated query and leaves only
+	// the residual above the head to the vendor walk the other two guards
+	// bound; nil keeps every block on the vendor. Any warehouse failure falls
+	// through to the vendor for the whole range — see warehouseLeg. Warehouse
+	// calls do not count against CallBudget.
+	LogWarehouse ethadapter.LogWarehouse
 }
 
 // paceState is the walk-scoped progress heartbeat: long walks against a
@@ -136,7 +143,16 @@ func NewGuardedPaginationHelper(
 // owner scan on a capped provider before it could finish.
 const noDeadlineTimeout = 4 * time.Hour
 
-// FilterLogsWithPagination fetches logs across a block range using adaptive pagination.
+// FilterLogsWithPagination fetches logs across a block range: the part the
+// log warehouse covers in one query (when a warehouse is configured, see
+// PaginationGuards.LogWarehouse), the rest from the vendor with adaptive
+// pagination. A query by block hash always goes to the vendor unpaginated.
+//
+// Constraints: on a caller deadline the vendor walk returns the logs fetched
+// so far together with the context error (callers such as TokenExists use
+// the partial result); any other vendor failure returns no logs at all, the
+// warehouse-served prefix included, so a caller can never mistake a partial
+// history for a complete one.
 func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
 	timeoutCtx := ctx
 	var cancel context.CancelFunc
@@ -149,40 +165,72 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 		return h.ethClient.FilterLogs(timeoutCtx, query)
 	}
 
-	var fromBlock, toBlock *big.Int
-	if query.FromBlock != nil {
-		fromBlock = query.FromBlock
-	} else {
-		fromBlock = big.NewInt(0)
-	}
-
-	if query.ToBlock != nil {
-		toBlock = query.ToBlock
-	} else {
-		latestBlockNum, err := h.blockProvider.GetLatestBlock(timeoutCtx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get latest block: %w", err)
-		}
-		toBlock = new(big.Int).SetUint64(latestBlockNum)
+	fromBlock, toBlock, err := h.resolveRange(timeoutCtx, query)
+	if err != nil {
+		return nil, err
 	}
 
 	var allLogs []types.Log
-	currentFrom := new(big.Int).Set(fromBlock)
+	vendorFrom := fromBlock
+	if h.guards.LogWarehouse != nil {
+		served, next, err := h.warehouseLeg(timeoutCtx, query, fromBlock, toBlock)
+		if err != nil {
+			return nil, err
+		}
+		allLogs, vendorFrom = served, next
+	}
+	if vendorFrom > toBlock {
+		return allLogs, nil
+	}
+
+	vendorLogs, err := h.vendorWalk(ctx, timeoutCtx, query, vendorFrom, toBlock)
+	if err != nil && timeoutCtx.Err() == nil {
+		return nil, err
+	}
+	return append(allLogs, vendorLogs...), err
+}
+
+// resolveRange turns the query's optional bounds into a concrete block range:
+// a missing fromBlock is genesis, a missing toBlock is the vendor's latest
+// block (the chain tip, cached by the block provider).
+func (h *PaginationHelper) resolveRange(ctx context.Context, query ethereum.FilterQuery) (uint64, uint64, error) {
+	fromBlock := uint64(0)
+	if query.FromBlock != nil {
+		fromBlock = query.FromBlock.Uint64()
+	}
+	if query.ToBlock != nil {
+		return fromBlock, query.ToBlock.Uint64(), nil
+	}
+	latestBlockNum, err := h.blockProvider.GetLatestBlock(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get latest block: %w", err)
+	}
+	return fromBlock, latestBlockNum, nil
+}
+
+// vendorWalk paginates [fromBlock, toBlock] against the vendor with adaptive
+// step sizing. On the walk's deadline it returns the logs fetched so far with
+// the context error; on any other failure it returns nil logs and the error.
+// ctx is the caller's context (for log lines), timeoutCtx the bounded one.
+func (h *PaginationHelper) vendorWalk(ctx, timeoutCtx context.Context, query ethereum.FilterQuery, fromBlock, toBlock uint64) ([]types.Log, error) {
+	var allLogs []types.Log
+	currentFrom := new(big.Int).SetUint64(fromBlock)
+	target := new(big.Int).SetUint64(toBlock)
 	stepSize := h.calculateStepSize(timeoutCtx, query)
 	callsUsed := 0
 	// Walk-scoped pace state: with a configured span cap the outer and inner
 	// window sizes coincide, so every getLogsWithRetry call completes after ONE
 	// window — a counter local to that function can never reach the heartbeat
 	// threshold, silently killing the progress log the moment the guard is on.
-	pace := paceState{walkStart: time.Now(), target: toBlock.Uint64()}
+	pace := paceState{walkStart: time.Now(), target: toBlock}
 
-	for currentFrom.Cmp(toBlock) <= 0 {
+	for currentFrom.Cmp(target) <= 0 {
 		select {
 		case <-timeoutCtx.Done():
 			logger.WarnCtx(ctx, "Context deadline exceeded during log pagination, returning partial logs",
 				zap.Int("partialLogsCount", len(allLogs)),
 				zap.Uint64("processedUpToBlock", currentFrom.Uint64()-1),
-				zap.Uint64("targetToBlock", toBlock.Uint64()),
+				zap.Uint64("targetToBlock", toBlock),
 			)
 			return allLogs, timeoutCtx.Err()
 		default:
@@ -193,8 +241,8 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 		// one extra block per window, which cost a second single-block RPC call per
 		// window once the range cap was hoisted here — doubling the walk's call count.
 		currentTo := new(big.Int).Add(currentFrom, new(big.Int).SetUint64(stepSize-1))
-		if currentTo.Cmp(toBlock) > 0 {
-			currentTo.Set(toBlock)
+		if currentTo.Cmp(target) > 0 {
+			currentTo.Set(target)
 		}
 
 		rangeQuery := query

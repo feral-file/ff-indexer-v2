@@ -58,6 +58,11 @@ func (e *coreExecutor) CreateEthereumScanSession(ctx context.Context, address st
 	return scanSessionInfoFromSchema(session), nil
 }
 
+// EthereumLogWarehouseHead exposes the client's warehouse head to the workflow.
+func (e *coreExecutor) EthereumLogWarehouseHead(ctx context.Context) (uint64, bool) {
+	return e.ethClient.LogWarehouseHead(ctx)
+}
+
 // FetchEthereumOwnerWindow fetches one window of merged owner logs from the
 // chain and returns them as staged rows WITHOUT touching the checkpoint.
 //
@@ -156,21 +161,25 @@ func (e *coreExecutor) DeleteEthereumScanSession(ctx context.Context, sessionID 
 
 // scanLogRowFromEthLog converts a go-ethereum log to its staged-row form.
 // Everything the ownership replay and the CryptoPunks receipt repair read is
-// preserved: emitting address, topics, data, block/tx/log position.
+// preserved: emitting address, topics, data, block/tx/log position, and the
+// block timestamp when the log carries one (warehouse-served windows) — the
+// replay's event parsing prefers it and otherwise pays a vendor
+// eth_getBlockByNumber per distinct block.
 func scanLogRowFromEthLog(vLog ethtypes.Log) schema.AddressScanLog {
 	topics := make(pq.StringArray, len(vLog.Topics))
 	for i, topic := range vLog.Topics {
 		topics[i] = topic.Hex()
 	}
 	return schema.AddressScanLog{
-		BlockNumber: vLog.BlockNumber,
-		TxHash:      vLog.TxHash.Hex(),
-		LogIndex:    vLog.Index,
-		Address:     vLog.Address.Hex(),
-		Topics:      topics,
-		Data:        vLog.Data,
-		TxIndex:     vLog.TxIndex,
-		BlockHash:   vLog.BlockHash.Hex(),
+		BlockNumber:    vLog.BlockNumber,
+		TxHash:         vLog.TxHash.Hex(),
+		LogIndex:       vLog.Index,
+		Address:        vLog.Address.Hex(),
+		Topics:         topics,
+		Data:           vLog.Data,
+		TxIndex:        vLog.TxIndex,
+		BlockHash:      vLog.BlockHash.Hex(),
+		BlockTimestamp: vLog.BlockTimestamp,
 	}
 }
 
@@ -182,13 +191,14 @@ func ethLogFromScanLogRow(row schema.AddressScanLog) ethtypes.Log {
 		topics[i] = common.HexToHash(topic)
 	}
 	return ethtypes.Log{
-		Address:     common.HexToAddress(row.Address),
-		Topics:      topics,
-		Data:        row.Data,
-		BlockNumber: row.BlockNumber,
-		TxHash:      common.HexToHash(row.TxHash),
-		TxIndex:     row.TxIndex,
-		BlockHash:   common.HexToHash(row.BlockHash),
-		Index:       row.LogIndex,
+		Address:        common.HexToAddress(row.Address),
+		Topics:         topics,
+		Data:           row.Data,
+		BlockNumber:    row.BlockNumber,
+		TxHash:         common.HexToHash(row.TxHash),
+		TxIndex:        row.TxIndex,
+		BlockHash:      common.HexToHash(row.BlockHash),
+		Index:          row.LogIndex,
+		BlockTimestamp: row.BlockTimestamp,
 	}
 }

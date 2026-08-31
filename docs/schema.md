@@ -500,6 +500,7 @@ Raw owner-scoped logs staged per scan window; the identity primary key makes win
 | data | BYTEA | Raw log data payload |
 | tx_index | INTEGER | Transaction index within the block |
 | block_hash | TEXT | Block hash |
+| block_timestamp | BIGINT | Unix block time carried on the log when the window was served by the log warehouse; 0 = unknown, resolved by the block provider at replay. Added in migration 029 |
 
 **Primary Key**: `(session_id, block_number, tx_hash, log_index)`
 
@@ -842,6 +843,7 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 - `025.sql` - Adds `tokens.provenance_deferred_at` and the partial index `idx_tokens_provenance_deferred`, recording tokens whose full provenance was skipped by the EVM credit guard (`ethereum.full_provenance_disabled`). **Must be applied before the guard is enabled** — the application writes the column whenever a guard skip occurs.
 - `025_backfill.sql` - Operator-run recovery step, executed **after** the guard is disabled and workers restarted: enqueues `IndexTokenProvenances` for every token with `provenance_deferred_at` set. Requires the deployment's token queue as a psql parameter (`-v queue=<jobs.token_queue>`, default `token_index`) and fails loudly without it. Idempotent under `jobs_unique_key_active`; the file documents burst sizing (each token replays full history, ~0.7–1.3M Infura credits) and time-sliced execution. See the guard runbook in DEVELOPMENT.md.
 - `026.sql` - Adds the unique index `idx_address_indexing_jobs_job_id` on `address_indexing_jobs(job_id)` after deduplicating historical per-retry rows (newest row per `job_id` wins). One tracking row per queue job: closes the trigger-vs-worker create race that application-level checks cannot, since the partial active indexes only protect active rows. Run before deploying application code (standard ordering).
+- `029.sql` - Adds `address_scan_logs.block_timestamp` (BIGINT NOT NULL DEFAULT 0): the Unix block time carried on warehouse-served owner-scan logs (ff-indexer-v2 #144), so the replay's event parsing no longer pays a vendor `eth_getBlockByNumber` per distinct block for windows the log warehouse served. Vendor-served windows stage 0 and keep the block-provider fallback. Standard ordering: apply before deploying the image.
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data

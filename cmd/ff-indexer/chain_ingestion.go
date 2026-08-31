@@ -36,6 +36,11 @@ func runEthereumIngestion(
 		return err
 	}
 	defer adapterEthClient.Close()
+	logWarehouse, err := dialLogWarehouse(ctx, cfg.Ethereum)
+	if err != nil {
+		return err
+	}
+	defer closeLogWarehouse(logWarehouse)
 
 	ethBlockFetcher := ethereum.NewEthereumBlockFetcher(adapterEthClient)
 	ethBlockProvider := block.NewBlockProvider(ethBlockFetcher,
@@ -49,6 +54,7 @@ func runEthereumIngestion(
 			GetLogsSpanCap:         cfg.Ethereum.GetLogsSpanCap,
 			GetLogsCallBudget:      cfg.Ethereum.GetLogsCallBudget,
 			FullProvenanceDisabled: cfg.Ethereum.FullProvenanceDisabled,
+			LogWarehouse:           logWarehouse,
 		})
 	if err != nil {
 		return fmt.Errorf("initialize ethereum client: %w", err)
