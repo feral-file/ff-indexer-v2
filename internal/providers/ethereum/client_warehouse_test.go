@@ -3,6 +3,7 @@ package ethereum_test
 import (
 	"context"
 	"errors"
+	"math/big"
 	"testing"
 
 	goeth "github.com/ethereum/go-ethereum"
@@ -162,4 +163,65 @@ func TestFetchIngestionLogs_RoutesThroughWarehouse(t *testing.T) {
 	logs, err := client.FetchIngestionLogs(context.Background(), 1_000, 1_009)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{1_001, 1_005}, []uint64{logs[0].BlockNumber, logs[1].BlockNumber}, "ordering contract holds on warehouse logs too")
+}
+
+// TestFetchIngestionLogs_StrictWarehouseDenseBlockRecoversViaReceipts is the
+// regression for the strict default (LogWarehouseVendorFallthrough false):
+// when a warehouse block exceeds the warehouse result cap, the bisection now
+// raises a SingleBlockOverflowError (not a generic wrapped outage error), so
+// FetchIngestionLogs's receipt recovery still fires and ingestion advances past
+// the dense block. The neighbors are served by the warehouse, the dense block
+// by its receipts, and no vendor eth_getLogs is ever issued.
+func TestFetchIngestionLogs_StrictWarehouseDenseBlockRecoversViaReceipts(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	vendor := mocks.NewMockEthClient(ctrl)
+	wh := mocks.NewMockLogWarehouse(ctrl)
+
+	// Warehouse covers the whole range; block 101 is over its result cap.
+	wh.EXPECT().Head(gomock.Any()).Return(uint64(1_000_000), nil).AnyTimes()
+	capErr := errors.New("query returned more than 100000 results")
+	wh.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q goeth.FilterQuery, _ *common.Hash) ([]types.Log, error) {
+			from, to := q.FromBlock.Uint64(), q.ToBlock.Uint64()
+			if from <= 101 && 101 <= to {
+				return nil, capErr // any window touching block 101 is over the cap
+			}
+			var logs []types.Log
+			for b := from; b <= to; b++ {
+				logs = append(logs, types.Log{BlockNumber: b, Index: 0, Topics: []common.Hash{helpers.TransferEventSignature}})
+			}
+			return logs, nil
+		}).AnyTimes()
+
+	// The dense block is read from receipts (the vendor) — a single bounded
+	// call, never an eth_getLogs walk; the strict vendor mock has no FilterLogs
+	// expectation, so any warehouse-outage fall-through would fail the test.
+	unrelated := common.HexToHash("0x1111")
+	vendor.EXPECT().BlockReceipts(gomock.Any(), big.NewInt(101)).
+		Return([]*types.Receipt{
+			{Logs: []*types.Log{
+				{BlockNumber: 101, Index: 0, Topics: []common.Hash{unrelated}},
+				{BlockNumber: 101, Index: 1, Topics: []common.Hash{helpers.TransferEventSignature, {}, {}}},
+			}},
+			{Logs: []*types.Log{
+				{BlockNumber: 101, Index: 2, Topics: []common.Hash{helpers.ERC1155TransferSingleEventSignature}},
+			}},
+		}, nil)
+
+	client, err := ethereum.NewGuardedClient(domain.ChainEthereumMainnet, vendor, mocks.NewMockClock(ctrl), nil, ethereum.ClientGuards{
+		GetLogsSpanCap: 10_000,
+		LogWarehouse:   wh,
+		// LogWarehouseVendorFallthrough left false: the strict default.
+	})
+	require.NoError(t, err)
+
+	logs, err := client.FetchIngestionLogs(context.Background(), 100, 102)
+	require.NoError(t, err)
+	var got [][2]uint64
+	for _, l := range logs {
+		got = append(got, [2]uint64{l.BlockNumber, uint64(l.Index)})
+	}
+	require.Equal(t, [][2]uint64{{100, 0}, {101, 1}, {101, 2}, {102, 0}}, got,
+		"neighbors via the warehouse, dense block via receipts, in chain order — even in strict mode")
 }

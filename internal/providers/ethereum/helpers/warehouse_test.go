@@ -320,6 +320,28 @@ func TestFilterLogsWithPagination_WarehouseResultCapBisects(t *testing.T) {
 	}
 }
 
+// TestFilterLogsWithPagination_WarehouseSingleBlockOverflowIsNotAFallThrough
+// pins that a single warehouse block over the result cap surfaces as a
+// SingleBlockOverflowError (the receipt-recovery signal) rather than being
+// routed through the outage fall-through — in strict mode, where a generic
+// wrapped error would otherwise hide the type and wedge ingestion on the dense
+// block. The vendor is never asked (strict mock, no FilterLogs).
+func TestFilterLogsWithPagination_WarehouseSingleBlockOverflowIsNotAFallThrough(t *testing.T) {
+	t.Parallel()
+	h := newStrictRoutedHelper(t, 10_000)
+	h.warehouse.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
+	// Every window is over the cap, so the bisection walks down to one block.
+	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("query returned more than 100000 results")).AnyTimes()
+
+	logs, err := h.helper.FilterLogsWithPagination(context.Background(), transferQuery(0, 1_000))
+	require.Nil(t, logs)
+	var overflow *helpers.SingleBlockOverflowError
+	require.ErrorAs(t, err, &overflow, "a single warehouse block over the cap must stay a SingleBlockOverflowError")
+	require.NotContains(t, err.Error(), "fall-through disabled",
+		"a dense-block overflow is a receipts signal, not a warehouse outage")
+}
+
 // TestFilterLogsWithPagination_WarehouseCallsBypassCallBudget pins that the
 // warehouse leg is not metered by the vendor call budget: with a budget of 1,
 // a bisected warehouse fetch (several warehouse calls) still succeeds and the

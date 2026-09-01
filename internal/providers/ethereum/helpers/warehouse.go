@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -59,6 +60,17 @@ func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.Filt
 	served := min(to, head)
 	logs, err := h.warehouseFetch(ctx, query, from, served, erc1155ID)
 	if err != nil {
+		// A single block whose logs exceed the warehouse result cap is not an
+		// outage: neither the warehouse nor a vendor eth_getLogs can page it,
+		// only block receipts can. Surface it verbatim (the receipts path in
+		// FetchIngestionLogs errors.As on it; other callers see the same fatal
+		// error the vendor walk raises) rather than routing it through the
+		// outage fall-through, so it is served — at the cost of one block's
+		// receipts — under both the strict and fall-through policies.
+		var overflow *SingleBlockOverflowError
+		if errors.As(err, &overflow) {
+			return nil, from, err
+		}
 		return h.fallThrough(ctx, from, to, "eth_getLogs", err)
 	}
 	logger.DebugCtx(ctx, "Log range served by the warehouse",
@@ -110,10 +122,12 @@ func (h *PaginationHelper) fallThrough(ctx context.Context, from, to uint64, sta
 // warehouseFetch runs one warehouse eth_getLogs for [from, to], bisecting the
 // range when the warehouse reports its result cap ("query returned more than
 // N results", recognized by IsTooManyResultsError) until each half fits. A
-// single block over the cap is returned as an error (falls through to the
-// vendor, whose walk has the receipts path for dense blocks). There is no
-// sleep between halves: unlike a vendor's rate limit, the warehouse cap is a
-// response-size bound, and the halves are independent local queries.
+// single block over the cap is returned as a SingleBlockOverflowError — the
+// same signal the vendor walk raises — so FetchIngestionLogs's receipt path
+// (client.go) recovers a dense warehouse block regardless of the fall-through
+// policy; see warehouseLeg for why that case bypasses the outage handling.
+// There is no sleep between halves: unlike a vendor's rate limit, the warehouse
+// cap is a response-size bound, and the halves are independent local queries.
 func (h *PaginationHelper) warehouseFetch(ctx context.Context, query ethereum.FilterQuery, from, to uint64, erc1155ID *common.Hash) ([]types.Log, error) {
 	rangeQuery := query
 	rangeQuery.FromBlock = new(big.Int).SetUint64(from)
@@ -122,8 +136,15 @@ func (h *PaginationHelper) warehouseFetch(ctx context.Context, query ethereum.Fi
 	if err == nil {
 		return logs, nil
 	}
-	if from == to || !IsTooManyResultsError(err) {
+	if !IsTooManyResultsError(err) {
 		return nil, err
+	}
+	if from == to {
+		// One block over the warehouse result cap cannot be split further and
+		// cannot be paged by any eth_getLogs; only block receipts can serve it.
+		// Raise the same error the vendor walk raises so the receipt recovery
+		// fires on the warehouse leg too.
+		return nil, &SingleBlockOverflowError{Block: from, Err: err}
 	}
 	mid := from + (to-from)/2
 	left, err := h.warehouseFetch(ctx, query, from, mid, erc1155ID)

@@ -83,16 +83,27 @@ ethereum:
   # Log warehouse (ff-eth-logs): when set, the historical part of every
   # eth_getLogs — owner scans, provenance, replays, ingestion catch-up — is
   # served by the self-hosted warehouse in one query and only the blocks above
-  # its head go to the vendor. Any warehouse failure falls through to the
-  # vendor for that query (WARN-logged); the credit guards still bound it.
-  # Empty = every eth_getLogs stays on the vendor. http(s) only, private network.
+  # its head go to the vendor. A warehouse failure is handled per
+  # log_warehouse_vendor_fallthrough below. Empty = every eth_getLogs stays on
+  # the vendor. http(s) only, private network.
   log_warehouse_url: ""
-  # One attempt per warehouse request, no retry; on expiry the query falls
-  # through to the vendor.
+  # Warehouse-outage policy. false (default, strict): a warehouse failure
+  # (unreachable, timeout, an unexpected or scope error, or an unverified/
+  # refused warehouse) FAILS the query with an explicit ERROR and never touches
+  # the vendor — a warehouse outage can never silently re-issue a genesis-to-head
+  # walk against the metered vendor and burn credits. true: fall through to the
+  # vendor for the whole query at pre-warehouse cost (WARN-logged), still bounded
+  # by the credit guards — prefer availability over cost. The normal above-head
+  # split is not a failure and always reaches the vendor regardless.
+  log_warehouse_vendor_fallthrough: false
+  # One attempt per warehouse request, no retry; on expiry the query fails (or
+  # falls through to the vendor when log_warehouse_vendor_fallthrough is true).
   log_warehouse_timeout: 120s
   # Owner-scan window size over the blocks the warehouse covers (above its
   # head windows stay at getlogs_span_cap + 1). Fewer, larger windows = fewer
-  # warehouse queries per scan but a costlier vendor walk on a fall-through.
+  # warehouse queries per scan; the cost of a failed window depends on
+  # log_warehouse_vendor_fallthrough (a vendor walk when true, a failed scan when
+  # false).
   log_warehouse_scan_window_blocks: 1000000
 
 tezos:
