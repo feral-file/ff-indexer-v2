@@ -30,13 +30,13 @@ const cryptoPunksInternalTransferProbeBlock = 3_919_706
 // multi-token ERC-1155), used to probe the warehouse's erc1155Id filter.
 var openSeaSharedStorefrontAddress = common.HexToAddress("0x495f947276749Ce646f68AC8c248420045cb7b5e")
 
-// erc1155IDProbeBlock is a mainnet block in which the storefront emitted five
-// TransferSingle logs across four distinct token ids — erc1155ProbeTokenID
+// erc1155IDProbeBlock (0xd65e29) is a mainnet block in which the storefront
+// emitted five TransferSingle logs across four distinct token ids — erc1155ProbeTokenID
 // (twice) and three siblings (verified live against the warehouse 2026-08-31).
 // Probing the block with erc1155ProbeTokenID must return only its two logs: a
 // warehouse that ignores the unknown field answers with the siblings too,
 // which the probe rejects.
-const erc1155IDProbeBlock = 14_045_001
+const erc1155IDProbeBlock = 14_048_809
 
 // erc1155ProbeTokenID is a token transferred (twice) in erc1155IDProbeBlock; its
 // 32-byte id is the first data word of those TransferSingle logs.

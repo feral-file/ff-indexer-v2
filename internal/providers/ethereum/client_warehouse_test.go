@@ -51,7 +51,7 @@ func TestLogWarehouseRequirements(t *testing.T) {
 		require.Equal(t, []common.Address{common.HexToAddress("0x495f947276749Ce646f68AC8c248420045cb7b5e")}, idProbe.Query.Addresses)
 		require.Equal(t, [][]common.Hash{{helpers.ERC1155TransferSingleEventSignature}}, idProbe.Query.Topics)
 		require.Equal(t, idProbe.Query.FromBlock, idProbe.Query.ToBlock, "a single-block probe")
-		require.Equal(t, int64(14_045_001), idProbe.Query.FromBlock.Int64())
+		require.Equal(t, int64(14_048_809), idProbe.Query.FromBlock.Int64())
 		require.NotNil(t, idProbe.ERC1155ID, "the id must be sent so the probe tests the filter")
 		id := *idProbe.ERC1155ID
 		match := types.Log{Data: append(append([]byte{}, id.Bytes()...), make([]byte, 32)...)}
