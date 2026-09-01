@@ -190,9 +190,11 @@ func scanWindows(cursor, toBlock, windowBlocks uint64) []scanWindow {
 // Reason: the vendor-sized window is one accepted call per query on a
 // span-capped provider, but against the warehouse it is ~2,600 needless
 // round-trips per full scan. The head is read once here, for planning; each
-// window's fetch re-checks it and falls through to the vendor on its own, so
-// a stale plan costs at most a larger vendor walk inside a window, never a
-// wrong result.
+// window's fetch re-checks it and applies the configured outage policy on its
+// own, so a stale plan never yields a wrong result. In fall-through mode a
+// warehouse that becomes unavailable after planning costs at most a larger
+// vendor walk inside the affected window; in strict mode (the default) that
+// window's query fails instead — no silent vendor walk.
 func (w *coreWorkflows) planScanWindows(ctx context.Context, cursor, toBlock, windowBlocks uint64) []scanWindow {
 	warehouseBlocks := w.config.EthereumWarehouseScanWindowBlocks
 	if warehouseBlocks == 0 {

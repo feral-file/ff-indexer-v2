@@ -246,9 +246,10 @@ func TestVerifiedLogWarehouse_ConcurrentCallersDoNotWaitForVerification(t *testi
 	require.NoError(t, firstErr)
 }
 
-// TestVerifiedLogWarehouse_PostVerificationOutageCoolsDown pins round-3 F1:
-// once verified, a transport failure demotes the warehouse to unverified with
-// the retry cooldown — the next callers fall through without an RPC — and the
+// TestVerifiedLogWarehouse_PostVerificationOutageCoolsDown pins the
+// post-verification cooldown: once verified, a transport failure demotes the
+// warehouse to unverified with the retry cooldown — the next callers get the
+// cached failure without an RPC (and resolve it per their policy) — and the
 // first call after the interval re-verifies. An error the warehouse answered
 // with (rpc.Error: the result cap) is not an outage and keeps it verified.
 func TestVerifiedLogWarehouse_PostVerificationOutageCoolsDown(t *testing.T) {

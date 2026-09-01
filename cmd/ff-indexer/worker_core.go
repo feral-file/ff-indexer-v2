@@ -77,10 +77,11 @@ func registerWorkerCore(
 		}, clockAdapter)
 	ethereumClient, err := ethereum.NewGuardedClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider,
 		ethereum.ClientGuards{
-			GetLogsSpanCap:         cfg.Ethereum.GetLogsSpanCap,
-			GetLogsCallBudget:      cfg.Ethereum.GetLogsCallBudget,
-			FullProvenanceDisabled: cfg.Ethereum.FullProvenanceDisabled,
-			LogWarehouse:           logWarehouse,
+			GetLogsSpanCap:                cfg.Ethereum.GetLogsSpanCap,
+			GetLogsCallBudget:             cfg.Ethereum.GetLogsCallBudget,
+			FullProvenanceDisabled:        cfg.Ethereum.FullProvenanceDisabled,
+			LogWarehouse:                  logWarehouse,
+			LogWarehouseVendorFallthrough: cfg.Ethereum.LogWarehouseVendorFallthrough,
 		})
 	if err != nil {
 		closeLogWarehouse(logWarehouse)

@@ -26,7 +26,20 @@ type routedHelper struct {
 	helper    *helpers.PaginationHelper
 }
 
+// newRoutedHelper builds a helper in vendor-fall-through mode (a warehouse
+// failure degrades to the vendor). Strict-mode behavior — the production
+// default — is exercised by newStrictRoutedHelper.
 func newRoutedHelper(t *testing.T, spanCap uint64) routedHelper {
+	return newRoutedHelperWithFallthrough(t, spanCap, true)
+}
+
+// newStrictRoutedHelper builds a helper in the default strict mode: a warehouse
+// failure fails the query and never touches the vendor.
+func newStrictRoutedHelper(t *testing.T, spanCap uint64) routedHelper {
+	return newRoutedHelperWithFallthrough(t, spanCap, false)
+}
+
+func newRoutedHelperWithFallthrough(t *testing.T, spanCap uint64, fallthrough_ bool) routedHelper {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	vendor := mocks.NewMockEthClient(ctrl)
@@ -37,8 +50,9 @@ func newRoutedHelper(t *testing.T, spanCap uint64) routedHelper {
 		vendor:    vendor,
 		warehouse: warehouse,
 		helper: helpers.NewGuardedPaginationHelper(vendor, clock, nil, helpers.PaginationGuards{
-			SpanCap:      spanCap,
-			LogWarehouse: warehouse,
+			SpanCap:                       spanCap,
+			LogWarehouse:                  warehouse,
+			LogWarehouseVendorFallthrough: fallthrough_,
 		}),
 	}
 }
@@ -202,6 +216,194 @@ func TestFilterLogsWithPagination_FallsThroughOnWarehouseFailure(t *testing.T) {
 	}
 }
 
+// TestFilterLogsWithPagination_StrictModeFailsInsteadOfFallingThrough pins the
+// production default (LogWarehouseVendorFallthrough false): every warehouse
+// failure — a head-lookup outage, a scope refusal, and a transport error on
+// eth_getLogs — fails the whole query and the vendor is NEVER asked (strict
+// mock, no FilterLogs expectation), so a warehouse outage cannot silently burn
+// vendor credits on a genesis-to-head walk.
+func TestFilterLogsWithPagination_StrictModeFailsInsteadOfFallingThrough(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		setup func(w *mocks.MockLogWarehouse)
+	}{
+		{"head lookup fails", func(w *mocks.MockLogWarehouse) {
+			w.EXPECT().Head(gomock.Any()).Return(uint64(0), errors.New("dial tcp: connection refused"))
+		}},
+		{"scope refusal", func(w *mocks.MockLogWarehouse) {
+			w.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
+			w.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(nil, fmt.Errorf("%w: blocks 0-1000 extend below the warehouse coverage start 500", ethadapter.ErrOutOfScope))
+		}},
+		{"transport error on eth_getLogs", func(w *mocks.MockLogWarehouse) {
+			w.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
+			w.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("dial tcp: connection refused"))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newStrictRoutedHelper(t, 10_000)
+			tc.setup(h.warehouse)
+			// The vendor mock has no FilterLogs expectation: any call fails the test.
+
+			logs, err := h.helper.FilterLogsWithPagination(context.Background(), transferQuery(0, 1_000))
+			require.Error(t, err)
+			require.Nil(t, logs, "a failed warehouse leg in strict mode yields no logs, not a partial result")
+			require.ErrorContains(t, err, "vendor fall-through disabled")
+		})
+	}
+}
+
+// TestFilterLogsWithPagination_StrictImplicitLatestFailsWithoutVendorTip pins
+// the no-vendor-call guarantee for the common implicit-latest query
+// (ERC-721/1155/generic provenance send a nil ToBlock): in strict mode a
+// warehouse head-lookup failure fails the query WITHOUT resolving the chain tip
+// (blockProvider.GetLatestBlock, a metered vendor HeaderByNumber on a cold
+// cache) and without any vendor eth_getLogs. Both the block provider and the
+// vendor are strict mocks with no expectations, so any call fails the test.
+func TestFilterLogsWithPagination_StrictImplicitLatestFailsWithoutVendorTip(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	vendor := mocks.NewMockEthClient(ctrl) // no FilterLogs expectation
+	warehouse := mocks.NewMockLogWarehouse(ctrl)
+	blockProvider := mocks.NewMockBlockProvider(ctrl) // no GetLatestBlock expectation
+	clock := mocks.NewMockClock(ctrl)
+	clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+	helper := helpers.NewGuardedPaginationHelper(vendor, clock, blockProvider, helpers.PaginationGuards{
+		SpanCap:      10_000,
+		LogWarehouse: warehouse,
+		// LogWarehouseVendorFallthrough left false: the strict default.
+	})
+	warehouse.EXPECT().Head(gomock.Any()).Return(uint64(0), errors.New("dial tcp: connection refused"))
+
+	// Implicit-latest query: ToBlock is nil, the case that used to resolve the
+	// tip (a vendor call) before the warehouse leg.
+	query := ethereum.FilterQuery{
+		FromBlock: big.NewInt(0),
+		Topics:    [][]common.Hash{{helpers.TransferEventSignature}},
+	}
+	logs, err := helper.FilterLogsWithPagination(context.Background(), query)
+	require.Error(t, err)
+	require.Nil(t, logs)
+	require.ErrorContains(t, err, "vendor fall-through disabled")
+	require.ErrorContains(t, err, "latest", "an unresolved tip renders as 'latest', not a bogus numeric bound")
+}
+
+// TestFilterLogsWithPagination_ImplicitLatestResolvesTipAfterWarehouse pins the
+// success path of the deferred tip: with a healthy warehouse and a nil ToBlock,
+// the warehouse serves [from, head], the chain tip is resolved once (after the
+// warehouse leg), and the vendor serves only the above-head suffix (head, tip].
+func TestFilterLogsWithPagination_ImplicitLatestResolvesTipAfterWarehouse(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	vendor := mocks.NewMockEthClient(ctrl)
+	warehouse := mocks.NewMockLogWarehouse(ctrl)
+	blockProvider := mocks.NewMockBlockProvider(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+	helper := helpers.NewGuardedPaginationHelper(vendor, clock, blockProvider, helpers.PaginationGuards{
+		SpanCap:      10_000,
+		LogWarehouse: warehouse,
+	})
+	const head = uint64(100)
+	warehouse.EXPECT().Head(gomock.Any()).Return(head, nil)
+	warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery, _ *common.Hash) ([]types.Log, error) {
+			from, to := rangeOf(q)
+			require.Equal(t, uint64(0), from)
+			require.Equal(t, head, to, "the warehouse leg ends at the head for an implicit-latest query")
+			return []types.Log{logAt(10, 0)}, nil
+		})
+	blockProvider.EXPECT().GetLatestBlock(gomock.Any()).Return(uint64(110), nil).Times(1)
+	vendor.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+			from, to := rangeOf(q)
+			require.Equal(t, blockRange{head + 1, 110}, blockRange{from, to}, "vendor covers only the above-head suffix")
+			return []types.Log{logAt(105, 0)}, nil
+		})
+
+	query := ethereum.FilterQuery{
+		FromBlock: big.NewInt(0),
+		Topics:    [][]common.Hash{{helpers.TransferEventSignature}},
+	}
+	logs, err := helper.FilterLogsWithPagination(context.Background(), query)
+	require.NoError(t, err)
+	require.Equal(t, []types.Log{logAt(10, 0), logAt(105, 0)}, logs)
+}
+
+// TestFilterLogsWithPagination_ImplicitLatestCapsWarehouseAtStaleTip pins that
+// the deferred tip does not let the warehouse over-serve: when the warehouse
+// head (101) sits above a stale/cached vendor tip (GetLatestBlock returns 100),
+// a warehouse log at block 101 is dropped because the query's resolved upper
+// bound is 100, and the vendor is never walked (strict mock, no FilterLogs).
+func TestFilterLogsWithPagination_ImplicitLatestCapsWarehouseAtStaleTip(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	vendor := mocks.NewMockEthClient(ctrl)
+	warehouse := mocks.NewMockLogWarehouse(ctrl)
+	blockProvider := mocks.NewMockBlockProvider(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+	helper := helpers.NewGuardedPaginationHelper(vendor, clock, blockProvider, helpers.PaginationGuards{
+		SpanCap:      10_000,
+		LogWarehouse: warehouse,
+	})
+	const head = uint64(101)
+	warehouse.EXPECT().Head(gomock.Any()).Return(head, nil)
+	warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery, _ *common.Hash) ([]types.Log, error) {
+			_, to := rangeOf(q)
+			require.Equal(t, head, to, "the warehouse leg fetches up to its head")
+			return []types.Log{logAt(50, 0), logAt(head, 0)}, nil // includes a log AT the head
+		})
+	// Stale/cached vendor tip behind the warehouse head.
+	blockProvider.EXPECT().GetLatestBlock(gomock.Any()).Return(uint64(100), nil)
+
+	query := ethereum.FilterQuery{FromBlock: big.NewInt(0), Topics: [][]common.Hash{{helpers.TransferEventSignature}}}
+	logs, err := helper.FilterLogsWithPagination(context.Background(), query)
+	require.NoError(t, err)
+	require.Equal(t, []types.Log{logAt(50, 0)}, logs,
+		"the block-101 log is above the resolved tip (100) and must be dropped")
+}
+
+// TestFilterLogsWithPagination_StrictModeAboveHeadStillReachesVendor pins that
+// strict mode does not block the NORMAL above-head split: blocks above the
+// warehouse head are not a failure, so they still go to the vendor even with
+// fall-through disabled.
+func TestFilterLogsWithPagination_StrictModeAboveHeadStillReachesVendor(t *testing.T) {
+	t.Parallel()
+	h := newStrictRoutedHelper(t, 10_000)
+	h.warehouse.EXPECT().Head(gomock.Any()).Return(uint64(100), nil)
+	h.vendor.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+			from, to := rangeOf(q)
+			require.Equal(t, blockRange{101, 110}, blockRange{from, to})
+			return []types.Log{logAt(105, 0)}, nil
+		})
+
+	logs, err := h.helper.FilterLogsWithPagination(context.Background(), transferQuery(101, 110))
+	require.NoError(t, err)
+	require.Equal(t, []types.Log{logAt(105, 0)}, logs)
+}
+
+// TestFilterLogsWithPagination_StrictModeCancelledContextIsError pins that a
+// caller cancellation is still returned as the context error in strict mode,
+// not wrapped as a fall-through-disabled failure.
+func TestFilterLogsWithPagination_StrictModeCancelledContextIsError(t *testing.T) {
+	t.Parallel()
+	h := newStrictRoutedHelper(t, 10_000)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.warehouse.EXPECT().Head(gomock.Any()).DoAndReturn(func(context.Context) (uint64, error) {
+		cancel()
+		return 0, context.Canceled
+	})
+
+	_, err := h.helper.FilterLogsWithPagination(ctx, transferQuery(0, 1_000))
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 // TestFilterLogsWithPagination_WarehouseResultCapBisects pins that the
 // warehouse's "query returned more than N results" is a split signal, not a
 // fall-through: the range is bisected until each half fits, in order, with no
@@ -228,6 +430,53 @@ func TestFilterLogsWithPagination_WarehouseResultCapBisects(t *testing.T) {
 	for i := 1; i < len(logs); i++ {
 		require.Less(t, logs[i-1].BlockNumber, logs[i].BlockNumber, "halves are concatenated in block order")
 	}
+}
+
+// TestFilterLogsWithPagination_WarehouseSingleBlockOverflowIsNotAFallThrough
+// pins that a single warehouse block over the result cap surfaces as a
+// SingleBlockOverflowError (the receipt-recovery signal) rather than being
+// routed through the outage fall-through — in strict mode, where a generic
+// wrapped error would otherwise hide the type and wedge ingestion on the dense
+// block. The vendor is never asked (strict mock, no FilterLogs).
+func TestFilterLogsWithPagination_WarehouseSingleBlockOverflowIsNotAFallThrough(t *testing.T) {
+	t.Parallel()
+	h := newStrictRoutedHelper(t, 10_000)
+	h.warehouse.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
+	// Every window is over the cap, so the bisection walks down to one block.
+	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("query returned more than 100000 results")).AnyTimes()
+
+	logs, err := h.helper.FilterLogsWithPagination(context.Background(), transferQuery(0, 1_000))
+	require.Nil(t, logs)
+	var overflow *helpers.SingleBlockOverflowError
+	require.ErrorAs(t, err, &overflow, "a single warehouse block over the cap must stay a SingleBlockOverflowError")
+	require.NotContains(t, err.Error(), "fall-through disabled",
+		"a dense-block overflow is a receipts signal, not a warehouse outage")
+}
+
+// TestFilterLogsWithPagination_FallthroughWarehouseOverflowGoesToVendor pins the
+// other outcome: with vendor fall-through enabled, a single warehouse block over
+// the cap falls through to the vendor for the whole range (the vendor's cap is
+// independent, so it may serve the block), rather than failing owner scans that
+// have no receipt path. Preserves the pre-strict behavior.
+func TestFilterLogsWithPagination_FallthroughWarehouseOverflowGoesToVendor(t *testing.T) {
+	t.Parallel()
+	h := newRoutedHelper(t, 10_000) // fall-through mode
+	h.warehouse.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
+	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("query returned more than 100000 results")).AnyTimes()
+	var vendorRanges []blockRange
+	h.vendor.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+			from, to := rangeOf(q)
+			vendorRanges = append(vendorRanges, blockRange{from, to})
+			return []types.Log{logAt(from, 0)}, nil
+		}).AnyTimes()
+
+	logs, err := h.helper.FilterLogsWithPagination(context.Background(), transferQuery(0, 1_000))
+	require.NoError(t, err)
+	require.NotEmpty(t, logs)
+	requireContiguousCoverage(t, vendorRanges, 0, 1_000)
 }
 
 // TestFilterLogsWithPagination_WarehouseCallsBypassCallBudget pins that the

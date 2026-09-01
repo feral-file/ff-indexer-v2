@@ -77,9 +77,12 @@ warehouse head once at window-planning time and splits the range: the covered pa
 `[cursor, head]` is cut into `ethereum.log_warehouse_scan_window_blocks` windows
 (default 1M — a full mainnet scan is ~26 windows, each one warehouse query per
 merged owner query), the residual above the head keeps the cap-sized vendor windows.
-The trade-off in the window size is fall-through cost: a warehouse window that
-falls through to the vendor mid-scan is walked at the span cap inside that window
-(~100 calls per query at 1M), still checkpointed per window. If the head is
+The trade-off in the window size is the cost of a warehouse failure mid-scan,
+which depends on `ethereum.log_warehouse_vendor_fallthrough`: with fall-through
+enabled a failed warehouse window is walked at the span cap inside that window
+(~100 calls per query at 1M), still checkpointed per window; with the strict
+default that window's query fails instead (no vendor cost, but the scan errors).
+If the head is
 unavailable at planning time the partition is the plain cap-sized one; every
 window's fetch re-checks the head on its own, so a stale plan never yields a wrong
 result.

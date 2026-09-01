@@ -20,10 +20,12 @@ import (
 // a PostgreSQL store of every NFT-relevant mainnet log, served through
 // go-ethereum's own filter semantics with no block-span cap and no per-call
 // billing. It answers only what it stores; anything else is a scope error the
-// caller must route to the vendor (see IsOutOfScope).
+// caller resolves per its configured outage policy (see IsOutOfScope and
+// helpers.PaginationGuards.LogWarehouseVendorFallthrough).
 //
 // Reason: it is deliberately NOT an EthClient. It serves three methods, its
-// failure policy is "fall through to the vendor at once" rather than the
+// failure is a single bounded attempt whose outcome the caller decides — fail
+// fast (strict, the default) or fall through to the vendor — rather than the
 // vendor client's five-minute retry budget (a warehouse outage must not stall
 // ingestion or a scan for minutes per call), and keeping the surface minimal
 // makes the routing split explicit: history through here, live state through
@@ -76,7 +78,8 @@ func NewLogWarehouseDialer() LogWarehouseDialer {
 
 // Dial connects to the warehouse. HTTP endpoints do not open a connection
 // here, so a warehouse that is down at startup is only discovered by the
-// first request — by design: the routing client treats it as "fall through".
+// first request — by design: the routing client discovers the outage there and
+// resolves it per its configured policy (fail, or fall through to the vendor).
 func (d *RealLogWarehouseDialer) Dial(ctx context.Context, rawurl string, timeout time.Duration) (LogWarehouse, error) {
 	client, err := rpc.DialContext(ctx, rawurl)
 	if err != nil {
@@ -85,11 +88,13 @@ func (d *RealLogWarehouseDialer) Dial(ctx context.Context, rawurl string, timeou
 	return NewRealLogWarehouse(client, timeout), nil
 }
 
-// scopeErrorPrefix is the message prefix ff-eth-logs puts on every refusal it
-// wants a routing client to treat as "ask the vendor" (rpcapi.ScopeError). It
-// is part of the warehouse's API contract (docs/api_design.md there): the
-// wording avoids "range", "limit" and "too many" so the pagination helper's
-// result-cap classifier never mistakes a scope error for a window to halve.
+// scopeErrorPrefix is the message prefix ff-eth-logs puts on every refusal a
+// routing client should classify as out-of-scope (rpcapi.ScopeError) — the
+// client then resolves it per its configured policy (fail in strict mode, or
+// route to the vendor), never as a retry or a window to split. It is part of
+// the warehouse's API contract (docs/api_design.md there): the wording avoids
+// "range", "limit" and "too many" so the pagination helper's result-cap
+// classifier never mistakes a scope error for a window to halve.
 const scopeErrorPrefix = "out of warehouse scope"
 
 // scopeErrorCode is the JSON-RPC code the warehouse uses for scope errors
@@ -102,8 +107,9 @@ var ErrOutOfScope = errors.New("log warehouse: out of scope")
 
 // IsOutOfScope reports whether err is a warehouse scope refusal — the one
 // warehouse error class that is expected in normal operation (the range is
-// above the head, below coverage, or under maintenance) and means "route this
-// query to the vendor", never "retry" and never "split the window".
+// above the head, below coverage, or under maintenance). The caller resolves it
+// per its configured policy (fail in strict mode, or route to the vendor),
+// never "retry" and never "split the window".
 func IsOutOfScope(err error) bool {
 	if errors.Is(err, ErrOutOfScope) {
 		return true
@@ -117,11 +123,11 @@ func IsOutOfScope(err error) bool {
 // RealLogWarehouse is the production LogWarehouse over a JSON-RPC connection.
 //
 // Reason: every request runs exactly once under its own deadline — no retry,
-// no backoff. The warehouse sits on the private network, so a failure is
-// either a real outage (which the caller handles by falling through to the
-// vendor immediately) or a query that legitimately exceeds the deadline (which
-// the vendor walk then serves at its usual cost). Retrying here would only
-// delay that decision.
+// no backoff. The warehouse sits on the private network, so a failure is either
+// a real outage or a query that legitimately exceeds the deadline; the caller
+// resolves both per its configured policy — fail fast (strict, the default) or
+// fall through to the vendor at its usual cost. Retrying here would only delay
+// that decision.
 type RealLogWarehouse struct {
 	rpc     *rpc.Client
 	eth     *ethclient.Client

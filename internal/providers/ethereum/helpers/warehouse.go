@@ -2,7 +2,10 @@ package helpers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math/big"
+	"strconv"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -15,9 +18,12 @@ import (
 
 // warehouseLeg serves the historical part of a log walk from the log
 // warehouse: blocks [from, min(to, head)] in one query, where head is the
-// warehouse head at the time of the call. It returns the logs and the first
-// block the vendor walk must still cover (to+1 when the warehouse covered the
-// whole range, so the vendor walk becomes a no-op).
+// warehouse head at the time of the call. to is a pointer: nil means the query
+// is implicit-latest, whose upper bound is the chain tip the caller has not
+// resolved yet — the warehouse then serves [from, head] (head <= tip always).
+// It returns the logs and the first block the vendor walk must still cover
+// (served+1: head+1 for an implicit-latest query, so the vendor covers only
+// (head, latest]).
 //
 // Reason: this is the routing split of ff-indexer-v2#130 Phase 2. Every
 // history query the indexer issues — owner scans, provenance, replays, the
@@ -31,17 +37,20 @@ import (
 // per-block ingestion fetch above the head costs one local call, not a refused
 // eth_getLogs. Any warehouse failure — a scope refusal (the range is below
 // coverage, the filter names a foreign signature, the warehouse is under
-// maintenance), a transport error, or the per-request timeout — falls through
-// to the vendor for the whole range at once, logged at WARN: the agreed policy
-// is that a warehouse outage degrades to pre-warehouse cost (still bounded by
-// the credit guards), never to a stalled scan. Only a canceled or expired
-// caller context is returned as an error.
+// maintenance), a transport error, the per-request timeout, or an
+// unverified/refused warehouse — is handled by fallThrough per the configured
+// policy (PaginationGuards.LogWarehouseVendorFallthrough): the query either
+// fails with an explicit ERROR (strict, the default — a warehouse outage never
+// re-issues the walk against the metered vendor) or falls through to the vendor
+// for the whole range at once, logged at WARN, still bounded by the credit
+// guards. Only a canceled or expired caller context is always returned as an
+// error, never mistaken for either policy.
 //
 // Constraints: warehouse calls do not count against PaginationGuards.CallBudget
 // (a vendor cost backstop). The returned logs are in (block, log index) order,
 // as the warehouse guarantees and as the vendor leg appended after them
 // preserves, so no re-sort is needed.
-func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.FilterQuery, from, to uint64, erc1155ID *common.Hash) ([]types.Log, uint64, error) {
+func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.FilterQuery, from uint64, to *uint64, erc1155ID *common.Hash) ([]types.Log, uint64, error) {
 	head, err := h.guards.LogWarehouse.Head(ctx)
 	if err != nil {
 		return h.fallThrough(ctx, from, to, "head lookup", err)
@@ -52,10 +61,33 @@ func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.Filt
 		// normal path for every tip block.
 		return nil, from, nil
 	}
-	served := min(to, head)
+	// An implicit-latest query (to == nil) serves [from, head]: head is the last
+	// fully-stored block, always <= the chain tip, so min(latest, head) == head
+	// and the vendor takes (head, latest]. This is why the tip need not be
+	// resolved before the warehouse leg.
+	served := head
+	if to != nil {
+		served = min(*to, head)
+	}
 	logs, err := h.warehouseFetch(ctx, query, from, served, erc1155ID)
 	if err != nil {
-		return h.fallThrough(ctx, from, to, "eth_getLogs", err)
+		// A single block whose logs exceed the warehouse result cap is a
+		// receipts signal, not an outage. In strict mode surface it verbatim so
+		// FetchIngestionLogs's receipt path (client.go errors.As on it) pages
+		// the block without a vendor walk; owner scans and other callers fail,
+		// as they do for any block they cannot page — strict mode does not fall
+		// through. When vendor fall-through is enabled, route it like any other
+		// failure: the vendor's result cap is independent of the warehouse's, so
+		// the vendor may serve the block, or reproduce the overflow for the
+		// receipt path — preserving the pre-strict fall-through behavior for
+		// availability-first deployments.
+		var overflow *SingleBlockOverflowError
+		if errors.As(err, &overflow) && !h.guards.LogWarehouseVendorFallthrough {
+			return nil, from, err
+		}
+		// The fetch covered [from, served] (concrete, even for implicit-latest).
+		servedTo := served
+		return h.fallThrough(ctx, from, &servedTo, "eth_getLogs", err)
 	}
 	logger.DebugCtx(ctx, "Log range served by the warehouse",
 		zap.Uint64("fromBlock", from), zap.Uint64("toBlock", served),
@@ -63,18 +95,51 @@ func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.Filt
 	return logs, served + 1, nil
 }
 
-// fallThrough is the single exit for a failed warehouse leg: the whole range
-// goes to the vendor (next = from, no logs) unless the caller's context is
-// done, in which case that error is returned instead of a vendor walk that
-// would fail the same way.
-func (h *PaginationHelper) fallThrough(ctx context.Context, from, to uint64, stage string, err error) ([]types.Log, uint64, error) {
+// fallThrough is the single exit for a failed warehouse leg. A canceled or
+// expired caller context is always returned as such — a vendor walk would fail
+// the same way. Otherwise the outcome depends on the configured policy:
+//
+//   - strict (LogWarehouseVendorFallthrough false, the default): the query
+//     fails with the warehouse error wrapped and logged at ERROR. The vendor is
+//     not touched, so a warehouse outage cannot silently re-issue a
+//     genesis-to-head walk against the metered vendor and burn credits. The
+//     failure is loud and actionable, which is the point — the operator runs
+//     the warehouse as the primary log source and wants an outage surfaced, not
+//     absorbed. A scope refusal is failed here too (the flag gates every
+//     failure by the operator's chosen policy): in normal operation the warehouse
+//     covers every signature and range the indexer asks for below its head, so
+//     a scope refusal signals a real coverage gap or maintenance that the
+//     operator must see, not a routine hand-off.
+//   - fall-through (LogWarehouseVendorFallthrough true): the whole range goes
+//     to the vendor (next = from, no logs), logged at WARN. The credit guards
+//     still bound that walk. This is the original "never stall" policy, for
+//     deployments that prefer availability over cost.
+func (h *PaginationHelper) fallThrough(ctx context.Context, from uint64, to *uint64, stage string, err error) ([]types.Log, uint64, error) {
 	if ctx.Err() != nil {
 		return nil, from, ctx.Err()
 	}
+	outOfScope := ethadapter.IsOutOfScope(err)
+	// to is nil for an implicit-latest query whose tip was never resolved (the
+	// warehouse head lookup failed first); render it as "latest" rather than a
+	// bogus numeric bound.
+	toStr := "latest"
+	if to != nil {
+		toStr = strconv.FormatUint(*to, 10)
+	}
+	if !h.guards.LogWarehouseVendorFallthrough {
+		// Stable message (cause and location as fields) so operators can alert on
+		// a fixed string, symmetric with the WARN fall-through line below.
+		logger.ErrorCtx(ctx, errors.New("log warehouse unavailable for range and vendor fall-through is disabled; failing the query"),
+			zap.String("stage", stage),
+			zap.Bool("outOfScope", outOfScope),
+			zap.Uint64("fromBlock", from), zap.String("toBlock", toStr),
+			zap.Error(err))
+		return nil, from, fmt.Errorf("log warehouse unavailable at %s for range [%d, %s] and vendor fall-through disabled: %w", stage, from, toStr, err)
+	}
 	logger.WarnCtx(ctx, "Log warehouse unavailable for range, falling through to the vendor",
 		zap.String("stage", stage),
-		zap.Bool("outOfScope", ethadapter.IsOutOfScope(err)),
-		zap.Uint64("fromBlock", from), zap.Uint64("toBlock", to),
+		zap.Bool("outOfScope", outOfScope),
+		zap.Uint64("fromBlock", from), zap.String("toBlock", toStr),
 		zap.Error(err))
 	return nil, from, nil
 }
@@ -82,9 +147,11 @@ func (h *PaginationHelper) fallThrough(ctx context.Context, from, to uint64, sta
 // warehouseFetch runs one warehouse eth_getLogs for [from, to], bisecting the
 // range when the warehouse reports its result cap ("query returned more than
 // N results", recognized by IsTooManyResultsError) until each half fits. A
-// single block over the cap is returned as an error (falls through to the
-// vendor, whose walk has the receipts path for dense blocks). There is no
-// sleep between halves: unlike a vendor's rate limit, the warehouse cap is a
+// single block over the cap is returned as a SingleBlockOverflowError — the
+// same signal the vendor walk raises — so FetchIngestionLogs's receipt path
+// (client.go) can recover a dense warehouse block; see warehouseLeg for how the
+// strict and fall-through policies each route that error. There is no sleep
+// between halves: unlike a vendor's rate limit, the warehouse cap is a
 // response-size bound, and the halves are independent local queries.
 func (h *PaginationHelper) warehouseFetch(ctx context.Context, query ethereum.FilterQuery, from, to uint64, erc1155ID *common.Hash) ([]types.Log, error) {
 	rangeQuery := query
@@ -94,8 +161,15 @@ func (h *PaginationHelper) warehouseFetch(ctx context.Context, query ethereum.Fi
 	if err == nil {
 		return logs, nil
 	}
-	if from == to || !IsTooManyResultsError(err) {
+	if !IsTooManyResultsError(err) {
 		return nil, err
+	}
+	if from == to {
+		// One block over the warehouse result cap cannot be split further and
+		// cannot be paged by any eth_getLogs; only block receipts can serve it.
+		// Raise the same error the vendor walk raises so the receipt recovery
+		// fires on the warehouse leg too.
+		return nil, &SingleBlockOverflowError{Block: from, Err: err}
 	}
 	mid := from + (to-from)/2
 	left, err := h.warehouseFetch(ctx, query, from, mid, erc1155ID)

@@ -121,13 +121,24 @@ type EthereumConfig struct {
 	// LogWarehouseURL is set, the historical part of every eth_getLogs walk —
 	// owner scans, provenance, replays, ingestion catch-up — is served by the
 	// self-hosted warehouse in one query and only the blocks above its head go
-	// to the vendor. Any warehouse failure falls through to the vendor for the
-	// whole query (logged at WARN); the credit guards above still bound that
-	// path. Empty = every eth_getLogs stays on the vendor.
+	// to the vendor. A warehouse failure is handled per LogWarehouseVendorFallthrough
+	// below. Empty = every eth_getLogs stays on the vendor.
 	LogWarehouseURL string `mapstructure:"log_warehouse_url"`
-	// LogWarehouseTimeout bounds one warehouse request; there is no retry —
-	// on expiry the query falls through to the vendor. The warehouse's own
-	// per-query limit is 60s and its write timeout 120s.
+	// LogWarehouseVendorFallthrough decides what happens when a warehouse
+	// request fails (unreachable, timeout, an unexpected or scope error, or an
+	// unverified/refused warehouse): false (the default) fails the query with an
+	// explicit ERROR and does NOT touch the vendor, so a warehouse outage can
+	// never silently re-issue a genesis-to-head walk against the metered vendor
+	// and burn credits; true restores the original policy of falling through to
+	// the vendor for the whole query at pre-warehouse cost (logged at WARN),
+	// bounded by the credit guards above. Ignored without a warehouse URL. The
+	// normal split above the warehouse head is not a failure and always reaches
+	// the vendor regardless of this flag.
+	LogWarehouseVendorFallthrough bool `mapstructure:"log_warehouse_vendor_fallthrough"`
+	// LogWarehouseTimeout bounds one warehouse request; there is no retry — on
+	// expiry the query fails (or falls through to the vendor when
+	// LogWarehouseVendorFallthrough is set). The warehouse's own per-query limit
+	// is 60s and its write timeout 120s.
 	LogWarehouseTimeout time.Duration `mapstructure:"log_warehouse_timeout"`
 	// LogWarehouseScanWindowBlocks is the owner-scan window size over the
 	// blocks the warehouse covers (docs/address_scan_sessions.md); above the
@@ -1055,6 +1066,10 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// owner scan ~26 windows per merged query while keeping a fall-through
 	// window at ~100 vendor calls.
 	v.SetDefault("ethereum.log_warehouse_url", "")
+	// Strict by default: a warehouse outage fails the query rather than falling
+	// through to the metered vendor. Deployments that prefer availability over
+	// cost set this true (see EthereumConfig.LogWarehouseVendorFallthrough).
+	v.SetDefault("ethereum.log_warehouse_vendor_fallthrough", false)
 	v.SetDefault("ethereum.log_warehouse_timeout", 120*time.Second)
 	v.SetDefault("ethereum.log_warehouse_scan_window_blocks", 1_000_000)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
@@ -1235,6 +1250,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.max_catchup_blocks",
 		"ethereum.confirmation_blocks",
 		"ethereum.log_warehouse_url",
+		"ethereum.log_warehouse_vendor_fallthrough",
 		"ethereum.log_warehouse_timeout",
 		"ethereum.log_warehouse_scan_window_blocks",
 		// Tezos
