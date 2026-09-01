@@ -123,11 +123,11 @@ func IsOutOfScope(err error) bool {
 // RealLogWarehouse is the production LogWarehouse over a JSON-RPC connection.
 //
 // Reason: every request runs exactly once under its own deadline — no retry,
-// no backoff. The warehouse sits on the private network, so a failure is
-// either a real outage (which the caller handles by falling through to the
-// vendor immediately) or a query that legitimately exceeds the deadline (which
-// the vendor walk then serves at its usual cost). Retrying here would only
-// delay that decision.
+// no backoff. The warehouse sits on the private network, so a failure is either
+// a real outage or a query that legitimately exceeds the deadline; the caller
+// resolves both per its configured policy — fail fast (strict, the default) or
+// fall through to the vendor at its usual cost. Retrying here would only delay
+// that decision.
 type RealLogWarehouse struct {
 	rpc     *rpc.Client
 	eth     *ethclient.Client
