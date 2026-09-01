@@ -42,6 +42,10 @@ const erc1155IDProbeBlock = 14_045_001
 // 32-byte id is the first data word of those TransferSingle logs.
 var erc1155ProbeTokenID = common.HexToHash("0x57b090ba902578996db810e9f3140bd73ea8495e000000000000010000000032")
 
+// erc1155ProbeTokenLogs is how many TransferSingle logs erc1155ProbeTokenID has
+// in erc1155IDProbeBlock (verified live); the probe requires exactly this many.
+const erc1155ProbeTokenLogs = 2
+
 // uriProbeContract emitted 25 URI logs — one per token id 1..25 — in a single
 // block, used to probe the erc1155Id filter's URI arm (the id is in topic1, not
 // data). Verified live 2026-08-31.
@@ -53,6 +57,20 @@ const uriProbeBlock = 6_938_761
 // uriProbeTokenID is one of the token ids with a URI log in uriProbeBlock; for
 // URI the id is the indexed topic1.
 var uriProbeTokenID = common.BigToHash(big.NewInt(5))
+
+// uriProbeTokenLogs is how many URI logs uriProbeTokenID has in uriProbeBlock
+// (verified live); the probe requires exactly this many.
+const uriProbeTokenLogs = 1
+
+// ChainSupportsWarehouseERC1155Filter reports whether a warehouse for chain is
+// verified to apply the erc1155Id filter — i.e. whether LogWarehouseRequirements
+// adds the capability probes for it. It is the single source the indexer uses
+// both to add those probes and to decide whether to send the erc1155Id hint
+// (adapters.NewERC1155Adapter): the hint must never be sent on a chain whose
+// warehouse the probes do not cover, or it would be trusted unverified.
+func ChainSupportsWarehouseERC1155Filter(chain domain.Chain) bool {
+	return chain == domain.ChainEthereumMainnet
+}
 
 // LogWarehouseRequirements returns what the warehouse must satisfy before the
 // indexer routes history through it for the given chain: the chain id, and on
@@ -73,18 +91,21 @@ var uriProbeTokenID = common.BigToHash(big.NewInt(5))
 //     the token's history. Both arms are probed because the id lives in a
 //     different place per signature (TransferSingle data word 0, URI topic1).
 //
-// Because a failed probe disables all warehouse routing for the process, a
-// warehouse that predates the erc1155Id filter (ff-eth-logs #8) fails these
-// probes: #8 must be deployed to the warehouse before an indexer image that
-// carries these requirements, or every history query falls through to the
-// vendor.
+// A failed probe is fatal at startup (dialLogWarehouse returns the error and
+// worker init stops) — the same "fail loud on a misconfigured warehouse" rule
+// the chain-id and CryptoPunks checks already use. So a warehouse that predates
+// the erc1155Id filter (ff-eth-logs #8) fails these probes and the indexer will
+// not start: #8 must be deployed to the warehouse BEFORE an indexer image that
+// carries these requirements. (A warehouse that is merely unreachable at
+// startup is tolerated and re-verified on first use; only an answered-but-failed
+// probe is fatal.)
 func LogWarehouseRequirements(chain domain.Chain) (adapter.LogWarehouseRequirements, error) {
 	id, ok := chain.EIP155NumericID()
 	if !ok || id < 0 {
 		return adapter.LogWarehouseRequirements{}, fmt.Errorf("log warehouse requires an eip155 chain, got %q", chain)
 	}
 	reqs := adapter.LogWarehouseRequirements{ChainID: uint64(id)}
-	if chain == domain.ChainEthereumMainnet {
+	if ChainSupportsWarehouseERC1155Filter(chain) {
 		reqs.Probes = append(reqs.Probes, cryptoPunksInternalTransferProbe(), erc1155IDFilterProbe(), erc1155URIFilterProbe())
 	}
 	return reqs, nil
@@ -149,7 +170,10 @@ func erc1155IDFilterProbe() adapter.LogWarehouseProbe {
 				}
 				matched++
 			}
-			return matched > 0
+			// The block holds exactly two TransferSingle logs for this token;
+			// require both so a partially populated index that returns only one
+			// is refused, not trusted.
+			return matched == erc1155ProbeTokenLogs
 		},
 	}
 }
@@ -185,7 +209,8 @@ func erc1155URIFilterProbe() adapter.LogWarehouseProbe {
 				}
 				matched++
 			}
-			return matched > 0
+			// Exactly one URI log for this token in the block.
+			return matched == uriProbeTokenLogs
 		},
 	}
 }

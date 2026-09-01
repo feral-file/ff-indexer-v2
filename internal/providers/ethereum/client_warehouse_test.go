@@ -57,7 +57,8 @@ func TestLogWarehouseRequirements(t *testing.T) {
 		match := types.Log{Data: append(append([]byte{}, id.Bytes()...), make([]byte, 32)...)}
 		foreign := types.Log{Data: append(append([]byte{}, common.HexToHash("0x99").Bytes()...), make([]byte, 32)...)}
 		require.False(t, idProbe.Accept(nil), "empty: the filter dropped everything or is unsupported")
-		require.True(t, idProbe.Accept([]types.Log{match, match}), "only the requested token's logs")
+		require.True(t, idProbe.Accept([]types.Log{match, match}), "the block's two matching logs")
+		require.False(t, idProbe.Accept([]types.Log{match}), "only one of the two matching logs: a partial index is rejected")
 		require.False(t, idProbe.Accept([]types.Log{match, foreign}), "a sibling token proves the filter was ignored")
 		require.False(t, idProbe.Accept([]types.Log{foreign}), "a foreign token id alone is rejected")
 		require.False(t, idProbe.Accept([]types.Log{{Data: []byte{0x01}}}), "a truncated data field is rejected")
@@ -74,7 +75,8 @@ func TestLogWarehouseRequirements(t *testing.T) {
 		uriMatch := types.Log{Topics: []common.Hash{helpers.ERC1155URIEventSignature, uid}}
 		uriForeign := types.Log{Topics: []common.Hash{helpers.ERC1155URIEventSignature, common.HexToHash("0x99")}}
 		require.False(t, uriProbe.Accept(nil), "empty: dropped or unsupported")
-		require.True(t, uriProbe.Accept([]types.Log{uriMatch}), "only the requested token's URI")
+		require.True(t, uriProbe.Accept([]types.Log{uriMatch}), "the block's one matching URI")
+		require.False(t, uriProbe.Accept([]types.Log{uriMatch, uriMatch}), "more than the one expected URI is rejected")
 		require.False(t, uriProbe.Accept([]types.Log{uriMatch, uriForeign}), "a sibling URI proves the filter was ignored")
 		require.False(t, uriProbe.Accept([]types.Log{{Topics: []common.Hash{helpers.ERC1155URIEventSignature}}}), "a URI without topic1 is rejected")
 	})

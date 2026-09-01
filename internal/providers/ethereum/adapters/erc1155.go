@@ -26,6 +26,13 @@ type ERC1155Adapter struct {
 	pagination    *helpers.PaginationHelper
 	chainID       domain.Chain
 	blockProvider block.BlockProvider
+	// warehouseTokenFilter is true only when the warehouse for this chain is
+	// verified to apply the erc1155Id filter (see
+	// ethereum.ChainSupportsWarehouseERC1155Filter). The per-token hint is sent
+	// only then; on any other chain the whole-contract fetch plus the
+	// client-side token-id filter below is used instead, so an unverified
+	// warehouse is never trusted to have filtered by id.
+	warehouseTokenFilter bool
 }
 
 // NewERC1155Adapter creates an adapter for standard ERC-1155 contracts.
@@ -34,12 +41,14 @@ func NewERC1155Adapter(
 	pagination *helpers.PaginationHelper,
 	chainID domain.Chain,
 	blockProvider block.BlockProvider,
+	warehouseTokenFilter bool,
 ) *ERC1155Adapter {
 	return &ERC1155Adapter{
-		ethClient:     ethClient,
-		pagination:    pagination,
-		chainID:       chainID,
-		blockProvider: blockProvider,
+		ethClient:            ethClient,
+		pagination:           pagination,
+		chainID:              chainID,
+		blockProvider:        blockProvider,
+		warehouseTokenFilter: warehouseTokenFilter,
 	}
 }
 
@@ -172,13 +181,18 @@ func (a *ERC1155Adapter) GetTokenEvents(ctx context.Context, contractAddress, to
 		},
 	}
 
-	// Fetch logs with pagination to handle Infura's 10k limitation. The warehouse
-	// hint turns the per-token history walk into an index point lookup there
+	// Fetch logs with pagination to handle Infura's 10k limitation. When the
+	// warehouse for this chain is verified to apply the erc1155Id filter, send
+	// the token-id hint so the per-token walk is an index point lookup there
 	// (TransferSingle by data word 0, URI by topic1); the vendor leg ignores it
 	// and still returns the whole contract, so the token-id filter below remains
-	// the correctness backstop.
-	logs, err := a.pagination.FilterLogsWithPagination(ctx, query,
-		helpers.WithERC1155TokenID(common.BigToHash(tokenID)))
+	// the correctness backstop. On a chain without that verified capability the
+	// hint is omitted (never trusted unverified).
+	var opts []helpers.FilterOption
+	if a.warehouseTokenFilter {
+		opts = append(opts, helpers.WithERC1155TokenID(common.BigToHash(tokenID)))
+	}
+	logs, err := a.pagination.FilterLogsWithPagination(ctx, query, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to filter logs: %w", err)
 	}

@@ -65,7 +65,9 @@ func erc1155TransferSingle(idHex string) []map[string]any {
 	zero := "0x" + common.Bytes2Hex(make([]byte, 32))
 	id := common.HexToHash(idHex)
 	data := "0x" + common.Bytes2Hex(append(append([]byte{}, id.Bytes()...), make([]byte, 32)...)) // id || value
-	return []map[string]any{{
+	// Two logs: the probe requires exactly the count the real block holds
+	// (erc1155ProbeTokenLogs), so a partially populated index is rejected.
+	log := map[string]any{
 		"address":          "0x495f947276749ce646f68ac8c248420045cb7b5e",
 		"topics":           []string{helpers.ERC1155TransferSingleEventSignature.Hex(), zero, zero, zero},
 		"data":             data,
@@ -75,7 +77,13 @@ func erc1155TransferSingle(idHex string) []map[string]any {
 		"blockHash":        zero,
 		"logIndex":         "0x0",
 		"removed":          false,
-	}}
+	}
+	second := map[string]any{}
+	for k, v := range log {
+		second[k] = v
+	}
+	second["logIndex"] = "0x1"
+	return []map[string]any{log, second}
 }
 
 // punksInternalTransfer is a 3-topic Transfer from the CryptoPunks contract,
