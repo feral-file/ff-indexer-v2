@@ -60,15 +60,18 @@ func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.Filt
 	served := min(to, head)
 	logs, err := h.warehouseFetch(ctx, query, from, served, erc1155ID)
 	if err != nil {
-		// A single block whose logs exceed the warehouse result cap is not an
-		// outage: neither the warehouse nor a vendor eth_getLogs can page it,
-		// only block receipts can. Surface it verbatim (the receipts path in
-		// FetchIngestionLogs errors.As on it; other callers see the same fatal
-		// error the vendor walk raises) rather than routing it through the
-		// outage fall-through, so it is served — at the cost of one block's
-		// receipts — under both the strict and fall-through policies.
+		// A single block whose logs exceed the warehouse result cap is a
+		// receipts signal, not an outage. In strict mode surface it verbatim so
+		// FetchIngestionLogs's receipt path (client.go errors.As on it) pages
+		// the block without a vendor walk; owner scans and other callers fail,
+		// as they do for any block they cannot page — strict mode does not fall
+		// through. When vendor fall-through is enabled, route it like any other
+		// failure: the vendor's result cap is independent of the warehouse's, so
+		// the vendor may serve the block, or reproduce the overflow for the
+		// receipt path — preserving the pre-strict fall-through behavior for
+		// availability-first deployments.
 		var overflow *SingleBlockOverflowError
-		if errors.As(err, &overflow) {
+		if errors.As(err, &overflow) && !h.guards.LogWarehouseVendorFallthrough {
 			return nil, from, err
 		}
 		return h.fallThrough(ctx, from, to, "eth_getLogs", err)
@@ -124,10 +127,10 @@ func (h *PaginationHelper) fallThrough(ctx context.Context, from, to uint64, sta
 // N results", recognized by IsTooManyResultsError) until each half fits. A
 // single block over the cap is returned as a SingleBlockOverflowError — the
 // same signal the vendor walk raises — so FetchIngestionLogs's receipt path
-// (client.go) recovers a dense warehouse block regardless of the fall-through
-// policy; see warehouseLeg for why that case bypasses the outage handling.
-// There is no sleep between halves: unlike a vendor's rate limit, the warehouse
-// cap is a response-size bound, and the halves are independent local queries.
+// (client.go) can recover a dense warehouse block; see warehouseLeg for how the
+// strict and fall-through policies each route that error. There is no sleep
+// between halves: unlike a vendor's rate limit, the warehouse cap is a
+// response-size bound, and the halves are independent local queries.
 func (h *PaginationHelper) warehouseFetch(ctx context.Context, query ethereum.FilterQuery, from, to uint64, erc1155ID *common.Hash) ([]types.Log, error) {
 	rangeQuery := query
 	rangeQuery.FromBlock = new(big.Int).SetUint64(from)

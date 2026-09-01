@@ -20,10 +20,12 @@ import (
 // a PostgreSQL store of every NFT-relevant mainnet log, served through
 // go-ethereum's own filter semantics with no block-span cap and no per-call
 // billing. It answers only what it stores; anything else is a scope error the
-// caller must route to the vendor (see IsOutOfScope).
+// caller resolves per its configured outage policy (see IsOutOfScope and
+// helpers.PaginationGuards.LogWarehouseVendorFallthrough).
 //
 // Reason: it is deliberately NOT an EthClient. It serves three methods, its
-// failure policy is "fall through to the vendor at once" rather than the
+// failure is a single bounded attempt whose outcome the caller decides — fail
+// fast (strict, the default) or fall through to the vendor — rather than the
 // vendor client's five-minute retry budget (a warehouse outage must not stall
 // ingestion or a scan for minutes per call), and keeping the surface minimal
 // makes the routing split explicit: history through here, live state through
@@ -76,7 +78,8 @@ func NewLogWarehouseDialer() LogWarehouseDialer {
 
 // Dial connects to the warehouse. HTTP endpoints do not open a connection
 // here, so a warehouse that is down at startup is only discovered by the
-// first request — by design: the routing client treats it as "fall through".
+// first request — by design: the routing client discovers the outage there and
+// resolves it per its configured policy (fail, or fall through to the vendor).
 func (d *RealLogWarehouseDialer) Dial(ctx context.Context, rawurl string, timeout time.Duration) (LogWarehouse, error) {
 	client, err := rpc.DialContext(ctx, rawurl)
 	if err != nil {

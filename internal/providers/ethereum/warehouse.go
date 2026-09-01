@@ -219,7 +219,9 @@ func erc1155URIFilterProbe() adapter.LogWarehouseProbe {
 // configured and answers; (0, false) when none is configured, it is
 // unreachable, or it was refused. Callers plan work around the head (the
 // owner scan sizes its windows by it) but never depend on it: every log fetch
-// re-checks the head and falls through to the vendor on its own.
+// re-checks the head and applies the configured outage policy on its own (fail
+// in strict mode, or fall through to the vendor — see
+// helpers.PaginationGuards.LogWarehouseVendorFallthrough).
 func (f *ethereumClient) LogWarehouseHead(ctx context.Context) (uint64, bool) {
 	if f.guards.LogWarehouse == nil {
 		return 0, false

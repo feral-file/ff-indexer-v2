@@ -68,25 +68,26 @@ type LogWarehouseRequirements struct {
 // warehouse's identity and capabilities.
 //
 // Reason: the warehouse endpoint is a bare URL. A startup check alone is not
-// enough — a warehouse that is down at startup is tolerated (routing falls
-// through until it answers), so without this gate a wrong-chain or
+// enough — a warehouse that is down at startup is tolerated (routing is
+// deferred until it answers), so without this gate a wrong-chain or
 // wrong-build warehouse that comes up later would be routed to unverified.
 // Verification therefore happens lazily on the first request that reaches an
 // unverified warehouse, and its outcome is sticky: success routes for the life
 // of the process, a mismatch or failed probe disables routing permanently
-// (every request returns the permanent error and the caller falls through to
-// the vendor), a transport error leaves the warehouse unverified so the next
-// request tries again.
+// (every request returns the permanent error, which the caller resolves per
+// its outage policy — fail in strict mode, or fall through to the vendor), a
+// transport error leaves the warehouse unverified so the next request tries
+// again.
 //
-// Constraints — "fall through, never stall" applies to verification too. The
+// Constraints — "return at once, never stall" applies to verification too. The
 // RPCs run outside the mutex; a caller that arrives while another goroutine's
 // verification is in flight does not wait for it but fails at once with
-// ErrLogWarehouseUnverified (and falls through to the vendor), and a transient
-// failure is cached for retryInterval so that an outage costs one bounded
-// attempt per interval, not one timeout per concurrent caller. Owner scans
-// issue their merged queries concurrently and ingestion fetches every block,
-// so without both rules an unreachable warehouse would serialize minutes of
-// timeouts in front of a healthy vendor.
+// ErrLogWarehouseUnverified (which the caller then resolves per its outage
+// policy), and a transient failure is cached for retryInterval so that an
+// outage costs one bounded attempt per interval, not one timeout per concurrent
+// caller. Owner scans issue their merged queries concurrently and ingestion
+// fetches every block, so without both rules an unreachable warehouse would
+// serialize minutes of timeouts in front of the routing decision.
 type VerifiedLogWarehouse struct {
 	inner         LogWarehouse
 	reqs          LogWarehouseRequirements
@@ -192,8 +193,9 @@ func (w *VerifiedLogWarehouse) finish(ctx context.Context, err error) uint64 {
 
 // observe applies the outage cooldown to a request that failed AFTER
 // verification: a warehouse that stops answering is demoted to unverified with
-// the same retry interval, so the callers that follow fall through at once
-// instead of each paying a timeout. Only outages count — an error the
+// the same retry interval, so the callers that follow get the cached failure at
+// once (and resolve it per their outage policy) instead of each paying a
+// timeout. Only outages count — an error the
 // warehouse itself answered with (any rpc.Error: the result-cap split signal,
 // a scope refusal) proves it is alive, and a failure caused by the caller's
 // own context says nothing about it. gen is the generation the request was

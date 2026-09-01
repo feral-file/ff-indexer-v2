@@ -342,6 +342,31 @@ func TestFilterLogsWithPagination_WarehouseSingleBlockOverflowIsNotAFallThrough(
 		"a dense-block overflow is a receipts signal, not a warehouse outage")
 }
 
+// TestFilterLogsWithPagination_FallthroughWarehouseOverflowGoesToVendor pins the
+// other outcome: with vendor fall-through enabled, a single warehouse block over
+// the cap falls through to the vendor for the whole range (the vendor's cap is
+// independent, so it may serve the block), rather than failing owner scans that
+// have no receipt path. Preserves the pre-strict behavior.
+func TestFilterLogsWithPagination_FallthroughWarehouseOverflowGoesToVendor(t *testing.T) {
+	t.Parallel()
+	h := newRoutedHelper(t, 10_000) // fall-through mode
+	h.warehouse.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
+	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("query returned more than 100000 results")).AnyTimes()
+	var vendorRanges []blockRange
+	h.vendor.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+			from, to := rangeOf(q)
+			vendorRanges = append(vendorRanges, blockRange{from, to})
+			return []types.Log{logAt(from, 0)}, nil
+		}).AnyTimes()
+
+	logs, err := h.helper.FilterLogsWithPagination(context.Background(), transferQuery(0, 1_000))
+	require.NoError(t, err)
+	require.NotEmpty(t, logs)
+	requireContiguousCoverage(t, vendorRanges, 0, 1_000)
+}
+
 // TestFilterLogsWithPagination_WarehouseCallsBypassCallBudget pins that the
 // warehouse leg is not metered by the vendor call budget: with a budget of 1,
 // a bisected warehouse fetch (several warehouse calls) still succeeds and the
