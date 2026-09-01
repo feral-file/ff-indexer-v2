@@ -465,7 +465,6 @@ CREATE TABLE address_scan_tokens (
 -- Tokens table indexes
 CREATE INDEX idx_tokens_chain_contract_number ON tokens (chain, contract_address, token_number);
 CREATE INDEX idx_tokens_current_owner ON tokens (current_owner) WHERE current_owner IS NOT NULL;
-CREATE INDEX idx_tokens_burned ON tokens (burned) WHERE burned;
 CREATE INDEX idx_tokens_created_at ON tokens (created_at);
 CREATE INDEX idx_tokens_viewable ON tokens (is_viewable);
 -- Deferred-provenance backlog (small; only tokens skipped by the EVM credit guard).
@@ -479,29 +478,18 @@ CREATE INDEX idx_tokens_viewable_last_prov_timestamp ON tokens (is_viewable, las
 -- Balances table indexes
 CREATE INDEX idx_balances_token_owner ON balances (token_id, owner_address);
 CREATE INDEX idx_balances_owner_address ON balances (owner_address);
-CREATE INDEX idx_balances_updated_at ON balances (updated_at);
 CREATE INDEX idx_balances_token_id_id ON balances (token_id, id ASC);
 
 -- Token Metadata table indexes
-CREATE INDEX idx_token_metadata_enrichment_level ON token_metadata (enrichment_level);
-CREATE INDEX idx_token_metadata_last_refreshed_at ON token_metadata (last_refreshed_at);
-CREATE INDEX idx_token_metadata_artists ON token_metadata USING GIN (artists) WHERE artists IS NOT NULL AND jsonb_array_length(artists) > 0;
-CREATE INDEX idx_token_metadata_publisher ON token_metadata USING GIN (publisher) WHERE publisher IS NOT NULL AND jsonb_typeof(publisher) = 'object';
 CREATE INDEX idx_token_metadata_image_url_hash ON token_metadata (image_url_hash) WHERE image_url IS NOT NULL;
 CREATE INDEX idx_token_metadata_animation_url_hash ON token_metadata (animation_url_hash) WHERE animation_url IS NOT NULL;
 
 -- Enrichment Sources table indexes
-CREATE INDEX idx_enrichment_sources_vendor ON enrichment_sources (vendor);
-CREATE INDEX idx_enrichment_sources_vendor_hash ON enrichment_sources (vendor_hash) WHERE vendor_hash IS NOT NULL;
-CREATE INDEX idx_enrichment_sources_artists ON enrichment_sources USING GIN (artists) WHERE artists IS NOT NULL;
 CREATE INDEX idx_enrichment_sources_image_url_hash ON enrichment_sources (image_url_hash) WHERE image_url IS NOT NULL;
 CREATE INDEX idx_enrichment_sources_animation_url_hash ON enrichment_sources (animation_url_hash) WHERE animation_url IS NOT NULL;
 
 -- Media Assets table indexes
 CREATE INDEX idx_media_assets_source_url_hash ON media_assets (source_url_hash);
-CREATE INDEX idx_media_assets_provider ON media_assets (provider);
-CREATE INDEX idx_media_assets_provider_asset_id ON media_assets (provider, provider_asset_id);
-CREATE INDEX idx_media_assets_created_at ON media_assets (created_at);
 
 -- Token Media Health table indexes
 CREATE INDEX idx_token_media_health_token_id ON token_media_health (token_id);
@@ -536,17 +524,7 @@ WHERE event_type IN ('acquired', 'released')
 
 -- Provenance Events table indexes
 CREATE INDEX idx_provenance_events_token_id ON provenance_events (token_id);
-CREATE INDEX idx_provenance_events_chain ON provenance_events (chain);
-CREATE INDEX idx_provenance_events_event_type ON provenance_events (event_type);
-CREATE INDEX idx_provenance_events_timestamp ON provenance_events (timestamp);
-CREATE INDEX idx_provenance_events_tx_hash ON provenance_events (tx_hash) WHERE tx_hash IS NOT NULL;
-CREATE INDEX idx_provenance_events_block_number ON provenance_events (block_number) WHERE block_number IS NOT NULL;
-CREATE INDEX idx_provenance_events_raw ON provenance_events USING GIN (raw);
-CREATE INDEX idx_provenance_events_from_address ON provenance_events (from_address);
-CREATE INDEX idx_provenance_events_to_address ON provenance_events (to_address);
-CREATE INDEX idx_provenance_events_token_id_from_address_timestamp ON provenance_events (token_id, from_address, timestamp);
 CREATE INDEX idx_provenance_events_token_id_to_address_timestamp ON provenance_events (token_id, to_address, timestamp);
-CREATE INDEX idx_provenance_events_id_text ON provenance_events (CAST(id AS TEXT));
 CREATE INDEX idx_provenance_events_token_id_timestamp_desc ON provenance_events (token_id, timestamp DESC, ((raw->>'tx_index')::bigint) DESC);
 
 -- Token Ownership Provenance table indexes
@@ -557,19 +535,13 @@ CREATE INDEX idx_token_ownership_prov_token_timestamp ON token_ownership_provena
 
 -- Watched Addresses table indexes
 CREATE INDEX idx_watched_addresses_watching ON watched_addresses (watching, chain, address);
-CREATE INDEX idx_watched_addresses_chain ON watched_addresses (chain);
-CREATE INDEX idx_watched_addresses_last_queried_at ON watched_addresses (last_queried_at);
 
 -- Key-Value Store table indexes
-CREATE INDEX idx_key_value_store_updated_at ON key_value_store (updated_at);
 
 -- Webhook Clients table indexes
 CREATE INDEX idx_webhook_clients_active ON webhook_clients(is_active) WHERE is_active = true;
 
 -- Webhook Deliveries table indexes
-CREATE INDEX idx_webhook_deliveries_status ON webhook_deliveries(delivery_status);
-CREATE INDEX idx_webhook_deliveries_event_id ON webhook_deliveries(event_id);
-CREATE INDEX idx_webhook_deliveries_client ON webhook_deliveries(client_id, created_at DESC);
 
 -- Jobs table indexes
 CREATE UNIQUE INDEX jobs_unique_key_active ON jobs (queue, kind, unique_key) WHERE status IN ('pending', 'running') AND unique_key IS NOT NULL;
@@ -594,18 +566,12 @@ CREATE INDEX idx_address_indexing_jobs_status_created ON address_indexing_jobs(s
 -- ============================================================================
 
 -- JSONB indexes for token metadata
-CREATE INDEX idx_token_metadata_origin_json_gin ON token_metadata USING GIN (origin_json);
-CREATE INDEX idx_token_metadata_latest_json_gin ON token_metadata USING GIN (latest_json);
 
 -- JSONB indexes for enrichment sources
-CREATE INDEX idx_enrichment_sources_vendor_json_gin ON enrichment_sources USING GIN (vendor_json);
 
 -- JSONB indexes for media assets
-CREATE INDEX idx_media_assets_variant_urls_gin ON media_assets USING GIN (variant_urls);
-CREATE INDEX idx_media_assets_provider_metadata_gin ON media_assets USING GIN (provider_metadata) WHERE provider_metadata IS NOT NULL;
 
 -- JSONB indexes for provenance events
-CREATE INDEX idx_provenance_events_raw_gin ON provenance_events USING GIN (raw);
 
 -- ============================================================================
 -- TRIGGERS FOR AUTOMATIC UPDATES
