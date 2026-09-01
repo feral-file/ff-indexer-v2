@@ -824,8 +824,8 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 ### Primary Indexes
 
 - **Composite indexes** for common query patterns (chain + contract + token)
-- **Partial indexes** for filtered queries (WHERE burned = true, WHERE current_owner IS NOT NULL)
-- **GIN indexes** for JSONB columns used in queries
+- **Partial indexes** for filtered queries (e.g. WHERE current_owner IS NOT NULL)
+- **GIN indexes**: none are maintained today (the speculative GIN indexes on `raw`/`artists`/`publisher`/`*_json`/`variant_urls` were dropped in migration 030 as unused). Any future JSONB **containment** search (`@>`, `?`) must ship its own targeted GIN index in the same change.
 - **MD5 hash indexes** for variable-length URLs to avoid size limitations
 
 ### URL Indexing Optimization
@@ -851,12 +851,12 @@ To handle potentially long URLs without exceeding PostgreSQL's B-tree index size
 2. Get tokens by owner → `idx_tokens_current_owner` or `idx_balances_owner_address`
 3. Get metadata → `token_id` foreign key
 4. Get provenance events → `idx_provenance_events_token_id`
-5. Search metadata → GIN indexes on JSONB columns
+5. Search metadata by JSONB containment → not indexed today; a query that needs it must add a targeted GIN index alongside it (no such query currently exists)
 6. Find tokens by media URL → `idx_token_media_health_url_hash` using MD5 hash
 
 ## Performance Considerations
 
-1. **JSONB Columns**: Use GIN indexes for JSONB queries, but avoid frequent JSONB updates
+1. **JSONB Columns**: No GIN indexes are maintained (dropped in 030 as unused); add a targeted GIN only when a real JSONB-containment query needs it, and note GIN maintenance cost on write-heavy tables
 2. **Foreign Keys**: All foreign keys have CASCADE delete for data integrity
 3. **Unique Constraints**: Prefer unique indexes over unique constraints for better performance
 4. **Partial Indexes**: Use WHERE clauses to reduce index size
