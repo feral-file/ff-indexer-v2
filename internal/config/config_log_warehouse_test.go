@@ -30,6 +30,8 @@ func TestLoadAppConfig_LogWarehouseDefaultsOff(t *testing.T) {
 	require.Empty(t, cfg.Ethereum.LogWarehouseURL)
 	require.Equal(t, 120*time.Second, cfg.Ethereum.LogWarehouseTimeout)
 	require.Equal(t, uint64(1_000_000), cfg.Ethereum.LogWarehouseScanWindowBlocks)
+	require.False(t, cfg.Ethereum.LogWarehouseVendorFallthrough,
+		"vendor fall-through is strict (off) by default so a warehouse outage never silently hits the metered vendor")
 }
 
 // TestLoadAppConfig_LogWarehouseEnvVarsReachConfig pins that every warehouse
@@ -39,12 +41,14 @@ func TestLoadAppConfig_LogWarehouseDefaultsOff(t *testing.T) {
 func TestLoadAppConfig_LogWarehouseEnvVarsReachConfig(t *testing.T) {
 	setWarehouseTestEnv(t)
 	t.Setenv("FF_INDEXER_ETHEREUM_LOG_WAREHOUSE_URL", "http://10.124.0.4:8545")
+	t.Setenv("FF_INDEXER_ETHEREUM_LOG_WAREHOUSE_VENDOR_FALLTHROUGH", "true")
 	t.Setenv("FF_INDEXER_ETHEREUM_LOG_WAREHOUSE_TIMEOUT", "45s")
 	t.Setenv("FF_INDEXER_ETHEREUM_LOG_WAREHOUSE_SCAN_WINDOW_BLOCKS", "250000")
 
 	cfg, err := LoadAppConfig("", "")
 	require.NoError(t, err)
 	require.Equal(t, "http://10.124.0.4:8545", cfg.Ethereum.LogWarehouseURL)
+	require.True(t, cfg.Ethereum.LogWarehouseVendorFallthrough)
 	require.Equal(t, 45*time.Second, cfg.Ethereum.LogWarehouseTimeout)
 	require.Equal(t, uint64(250_000), cfg.Ethereum.LogWarehouseScanWindowBlocks)
 }

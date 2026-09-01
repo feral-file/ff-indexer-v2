@@ -26,7 +26,20 @@ type routedHelper struct {
 	helper    *helpers.PaginationHelper
 }
 
+// newRoutedHelper builds a helper in vendor-fall-through mode (a warehouse
+// failure degrades to the vendor). Strict-mode behavior — the production
+// default — is exercised by newStrictRoutedHelper.
 func newRoutedHelper(t *testing.T, spanCap uint64) routedHelper {
+	return newRoutedHelperWithFallthrough(t, spanCap, true)
+}
+
+// newStrictRoutedHelper builds a helper in the default strict mode: a warehouse
+// failure fails the query and never touches the vendor.
+func newStrictRoutedHelper(t *testing.T, spanCap uint64) routedHelper {
+	return newRoutedHelperWithFallthrough(t, spanCap, false)
+}
+
+func newRoutedHelperWithFallthrough(t *testing.T, spanCap uint64, fallthrough_ bool) routedHelper {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	vendor := mocks.NewMockEthClient(ctrl)
@@ -37,8 +50,9 @@ func newRoutedHelper(t *testing.T, spanCap uint64) routedHelper {
 		vendor:    vendor,
 		warehouse: warehouse,
 		helper: helpers.NewGuardedPaginationHelper(vendor, clock, nil, helpers.PaginationGuards{
-			SpanCap:      spanCap,
-			LogWarehouse: warehouse,
+			SpanCap:                       spanCap,
+			LogWarehouse:                  warehouse,
+			LogWarehouseVendorFallthrough: fallthrough_,
 		}),
 	}
 }
@@ -200,6 +214,82 @@ func TestFilterLogsWithPagination_FallsThroughOnWarehouseFailure(t *testing.T) {
 			require.NotEmpty(t, logs)
 		})
 	}
+}
+
+// TestFilterLogsWithPagination_StrictModeFailsInsteadOfFallingThrough pins the
+// production default (LogWarehouseVendorFallthrough false): every warehouse
+// failure — a head-lookup outage, a scope refusal, and a transport error on
+// eth_getLogs — fails the whole query and the vendor is NEVER asked (strict
+// mock, no FilterLogs expectation), so a warehouse outage cannot silently burn
+// vendor credits on a genesis-to-head walk.
+func TestFilterLogsWithPagination_StrictModeFailsInsteadOfFallingThrough(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		setup func(w *mocks.MockLogWarehouse)
+	}{
+		{"head lookup fails", func(w *mocks.MockLogWarehouse) {
+			w.EXPECT().Head(gomock.Any()).Return(uint64(0), errors.New("dial tcp: connection refused"))
+		}},
+		{"scope refusal", func(w *mocks.MockLogWarehouse) {
+			w.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
+			w.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(nil, fmt.Errorf("%w: blocks 0-1000 extend below the warehouse coverage start 500", ethadapter.ErrOutOfScope))
+		}},
+		{"transport error on eth_getLogs", func(w *mocks.MockLogWarehouse) {
+			w.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
+			w.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("dial tcp: connection refused"))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newStrictRoutedHelper(t, 10_000)
+			tc.setup(h.warehouse)
+			// The vendor mock has no FilterLogs expectation: any call fails the test.
+
+			logs, err := h.helper.FilterLogsWithPagination(context.Background(), transferQuery(0, 1_000))
+			require.Error(t, err)
+			require.Nil(t, logs, "a failed warehouse leg in strict mode yields no logs, not a partial result")
+			require.ErrorContains(t, err, "vendor fall-through disabled")
+		})
+	}
+}
+
+// TestFilterLogsWithPagination_StrictModeAboveHeadStillReachesVendor pins that
+// strict mode does not block the NORMAL above-head split: blocks above the
+// warehouse head are not a failure, so they still go to the vendor even with
+// fall-through disabled.
+func TestFilterLogsWithPagination_StrictModeAboveHeadStillReachesVendor(t *testing.T) {
+	t.Parallel()
+	h := newStrictRoutedHelper(t, 10_000)
+	h.warehouse.EXPECT().Head(gomock.Any()).Return(uint64(100), nil)
+	h.vendor.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+			from, to := rangeOf(q)
+			require.Equal(t, blockRange{101, 110}, blockRange{from, to})
+			return []types.Log{logAt(105, 0)}, nil
+		})
+
+	logs, err := h.helper.FilterLogsWithPagination(context.Background(), transferQuery(101, 110))
+	require.NoError(t, err)
+	require.Equal(t, []types.Log{logAt(105, 0)}, logs)
+}
+
+// TestFilterLogsWithPagination_StrictModeCancelledContextIsError pins that a
+// caller cancellation is still returned as the context error in strict mode,
+// not wrapped as a fall-through-disabled failure.
+func TestFilterLogsWithPagination_StrictModeCancelledContextIsError(t *testing.T) {
+	t.Parallel()
+	h := newStrictRoutedHelper(t, 10_000)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.warehouse.EXPECT().Head(gomock.Any()).DoAndReturn(func(context.Context) (uint64, error) {
+		cancel()
+		return 0, context.Canceled
+	})
+
+	_, err := h.helper.FilterLogsWithPagination(ctx, transferQuery(0, 1_000))
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 // TestFilterLogsWithPagination_WarehouseResultCapBisects pins that the

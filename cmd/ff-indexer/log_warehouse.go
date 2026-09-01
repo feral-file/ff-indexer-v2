@@ -42,7 +42,7 @@ func dialLogWarehouse(ctx context.Context, cfg config.EthereumConfig) (adapter.L
 	err = warehouse.Verify(ctx)
 	switch {
 	case errors.Is(err, adapter.ErrLogWarehouseUnverified):
-		logger.WarnCtx(ctx, "Log warehouse not answering at startup; eth_getLogs falls through to the vendor until it verifies",
+		logger.WarnCtx(ctx, "Log warehouse not answering at startup; it verifies on the first request that reaches it (until then eth_getLogs fails or falls through to the vendor per ethereum.log_warehouse_vendor_fallthrough)",
 			zap.String("endpoint", endpoint), zap.Error(err))
 	case err != nil:
 		warehouse.Close()

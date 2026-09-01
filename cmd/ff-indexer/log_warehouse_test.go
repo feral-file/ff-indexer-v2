@@ -185,7 +185,7 @@ func TestDialLogWarehouse(t *testing.T) {
 		cfg.LogWarehouseURL = url
 		wh, err := dialLogWarehouse(context.Background(), cfg)
 		require.NoError(t, err)
-		require.NotNil(t, wh, "routing stays configured; every query falls through until the warehouse answers")
+		require.NotNil(t, wh, "routing stays configured; the warehouse verifies on the first request that reaches it")
 		closeLogWarehouse(wh)
 	})
 }

@@ -186,6 +186,10 @@ type ClientGuards struct {
 	// cover the few blocks above the warehouse head, or a warehouse outage.
 	// See helpers.PaginationGuards.LogWarehouse for the fall-through policy.
 	LogWarehouse adapter.LogWarehouse
+	// LogWarehouseVendorFallthrough governs a warehouse outage: false (default)
+	// fails the query and never touches the metered vendor; true falls through
+	// to the vendor. See helpers.PaginationGuards.LogWarehouseVendorFallthrough.
+	LogWarehouseVendorFallthrough bool
 }
 
 // ethereumClient implements EthereumClient. It wires RPC, pagination, block metadata,
@@ -219,9 +223,10 @@ func NewGuardedClient(chainID domain.Chain, client adapter.EthClient, clock adap
 		guards:        guards,
 	}
 	ec.pagination = helpers.NewGuardedPaginationHelper(client, clock, blockProvider, helpers.PaginationGuards{
-		SpanCap:      guards.GetLogsSpanCap,
-		CallBudget:   guards.GetLogsCallBudget,
-		LogWarehouse: guards.LogWarehouse,
+		SpanCap:                       guards.GetLogsSpanCap,
+		CallBudget:                    guards.GetLogsCallBudget,
+		LogWarehouse:                  guards.LogWarehouse,
+		LogWarehouseVendorFallthrough: guards.LogWarehouseVendorFallthrough,
 	})
 
 	registry, err := contractregistry.NewAdapterRegistry(

@@ -175,7 +175,12 @@ func (w *VerifiedLogWarehouse) finish(ctx context.Context, err error) uint64 {
 			zap.Uint64("chainId", w.reqs.ChainID), zap.Int("probes", len(w.reqs.Probes)))
 	case errors.Is(err, ErrLogWarehouseChainMismatch), errors.Is(err, ErrLogWarehouseProbeFailed):
 		w.disabled = err
-		logger.ErrorCtx(ctx, fmt.Errorf("log warehouse refused; every eth_getLogs falls through to the vendor until restart: %w", err))
+		// Routing is disabled for the life of the process; every warehouse
+		// request now returns this permanent error. What the caller then does
+		// with it — fail the query or fall through to the vendor — is the
+		// caller's configured outage policy (helpers.PaginationGuards
+		// .LogWarehouseVendorFallthrough), not decided here.
+		logger.ErrorCtx(ctx, fmt.Errorf("log warehouse refused; routing disabled until restart: %w", err))
 	case ctx.Err() != nil:
 		// caller-specific; leave lastFailure/nextAttempt untouched
 	default:
@@ -211,7 +216,10 @@ func (w *VerifiedLogWarehouse) observe(ctx context.Context, gen uint64, err erro
 	w.verified = false
 	w.lastFailure = fmt.Errorf("%w: %w", ErrLogWarehouseUnverified, err)
 	w.nextAttempt = w.clock.Now().Add(w.retryInterval)
-	logger.WarnCtx(ctx, "Log warehouse stopped answering; eth_getLogs falls through to the vendor until it re-verifies",
+	// Routing is demoted until the next request re-verifies; whether a request
+	// in the meantime fails or falls through to the vendor is the caller's
+	// configured outage policy (LogWarehouseVendorFallthrough), not decided here.
+	logger.WarnCtx(ctx, "Log warehouse stopped answering; routing demoted until it re-verifies",
 		zap.Duration("retryAfter", w.retryInterval), zap.Error(err))
 }
 

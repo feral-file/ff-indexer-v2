@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
@@ -31,11 +32,14 @@ import (
 // per-block ingestion fetch above the head costs one local call, not a refused
 // eth_getLogs. Any warehouse failure — a scope refusal (the range is below
 // coverage, the filter names a foreign signature, the warehouse is under
-// maintenance), a transport error, or the per-request timeout — falls through
-// to the vendor for the whole range at once, logged at WARN: the agreed policy
-// is that a warehouse outage degrades to pre-warehouse cost (still bounded by
-// the credit guards), never to a stalled scan. Only a canceled or expired
-// caller context is returned as an error.
+// maintenance), a transport error, the per-request timeout, or an
+// unverified/refused warehouse — is handled by fallThrough per the configured
+// policy (PaginationGuards.LogWarehouseVendorFallthrough): the query either
+// fails with an explicit ERROR (strict, the default — a warehouse outage never
+// re-issues the walk against the metered vendor) or falls through to the vendor
+// for the whole range at once, logged at WARN, still bounded by the credit
+// guards. Only a canceled or expired caller context is always returned as an
+// error, never mistaken for either policy.
 //
 // Constraints: warehouse calls do not count against PaginationGuards.CallBudget
 // (a vendor cost backstop). The returned logs are in (block, log index) order,
@@ -63,17 +67,41 @@ func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.Filt
 	return logs, served + 1, nil
 }
 
-// fallThrough is the single exit for a failed warehouse leg: the whole range
-// goes to the vendor (next = from, no logs) unless the caller's context is
-// done, in which case that error is returned instead of a vendor walk that
-// would fail the same way.
+// fallThrough is the single exit for a failed warehouse leg. A canceled or
+// expired caller context is always returned as such — a vendor walk would fail
+// the same way. Otherwise the outcome depends on the configured policy:
+//
+//   - strict (LogWarehouseVendorFallthrough false, the default): the query
+//     fails with the warehouse error wrapped and logged at ERROR. The vendor is
+//     not touched, so a warehouse outage cannot silently re-issue a
+//     genesis-to-head walk against the metered vendor and burn credits. The
+//     failure is loud and actionable, which is the point — the operator runs
+//     the warehouse as the primary log source and wants an outage surfaced, not
+//     absorbed. A scope refusal is failed here too (the flag gates every
+//     failure by the operator's chosen policy): in normal operation the warehouse
+//     covers every signature and range the indexer asks for below its head, so
+//     a scope refusal signals a real coverage gap or maintenance that the
+//     operator must see, not a routine hand-off.
+//   - fall-through (LogWarehouseVendorFallthrough true): the whole range goes
+//     to the vendor (next = from, no logs), logged at WARN. The credit guards
+//     still bound that walk. This is the original "never stall" policy, for
+//     deployments that prefer availability over cost.
 func (h *PaginationHelper) fallThrough(ctx context.Context, from, to uint64, stage string, err error) ([]types.Log, uint64, error) {
 	if ctx.Err() != nil {
 		return nil, from, ctx.Err()
 	}
+	outOfScope := ethadapter.IsOutOfScope(err)
+	if !h.guards.LogWarehouseVendorFallthrough {
+		failErr := fmt.Errorf("log warehouse unavailable at %s for range [%d, %d] and vendor fall-through disabled: %w", stage, from, to, err)
+		logger.ErrorCtx(ctx, failErr,
+			zap.String("stage", stage),
+			zap.Bool("outOfScope", outOfScope),
+			zap.Uint64("fromBlock", from), zap.Uint64("toBlock", to))
+		return nil, from, failErr
+	}
 	logger.WarnCtx(ctx, "Log warehouse unavailable for range, falling through to the vendor",
 		zap.String("stage", stage),
-		zap.Bool("outOfScope", ethadapter.IsOutOfScope(err)),
+		zap.Bool("outOfScope", outOfScope),
 		zap.Uint64("fromBlock", from), zap.Uint64("toBlock", to),
 		zap.Error(err))
 	return nil, from, nil

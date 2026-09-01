@@ -60,10 +60,18 @@ type PaginationGuards struct {
 	// LogWarehouse, when set, serves the historical part of every walk
 	// ([fromBlock, warehouse head]) in one unpaginated query and leaves only
 	// the residual above the head to the vendor walk the other two guards
-	// bound; nil keeps every block on the vendor. Any warehouse failure falls
-	// through to the vendor for the whole range — see warehouseLeg. Warehouse
+	// bound; nil keeps every block on the vendor. A warehouse failure is
+	// handled per LogWarehouseVendorFallthrough — see warehouseLeg. Warehouse
 	// calls do not count against CallBudget.
 	LogWarehouse ethadapter.LogWarehouse
+	// LogWarehouseVendorFallthrough governs a failed warehouse leg (see
+	// fallThrough): false (the default) fails the whole query with an explicit
+	// ERROR so a warehouse outage never silently re-issues the walk against the
+	// metered vendor; true falls through to the vendor for the whole range at
+	// pre-warehouse cost, logged at WARN. Only meaningful when LogWarehouse is
+	// set. The normal above-head split is not a failure and always reaches the
+	// vendor regardless of this flag.
+	LogWarehouseVendorFallthrough bool
 }
 
 // paceState is the walk-scoped progress heartbeat: long walks against a
