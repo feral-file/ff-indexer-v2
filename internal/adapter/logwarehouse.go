@@ -88,11 +88,13 @@ func (d *RealLogWarehouseDialer) Dial(ctx context.Context, rawurl string, timeou
 	return NewRealLogWarehouse(client, timeout), nil
 }
 
-// scopeErrorPrefix is the message prefix ff-eth-logs puts on every refusal it
-// wants a routing client to treat as "ask the vendor" (rpcapi.ScopeError). It
-// is part of the warehouse's API contract (docs/api_design.md there): the
-// wording avoids "range", "limit" and "too many" so the pagination helper's
-// result-cap classifier never mistakes a scope error for a window to halve.
+// scopeErrorPrefix is the message prefix ff-eth-logs puts on every refusal a
+// routing client should classify as out-of-scope (rpcapi.ScopeError) — the
+// client then resolves it per its configured policy (fail in strict mode, or
+// route to the vendor), never as a retry or a window to split. It is part of
+// the warehouse's API contract (docs/api_design.md there): the wording avoids
+// "range", "limit" and "too many" so the pagination helper's result-cap
+// classifier never mistakes a scope error for a window to halve.
 const scopeErrorPrefix = "out of warehouse scope"
 
 // scopeErrorCode is the JSON-RPC code the warehouse uses for scope errors
@@ -105,8 +107,9 @@ var ErrOutOfScope = errors.New("log warehouse: out of scope")
 
 // IsOutOfScope reports whether err is a warehouse scope refusal — the one
 // warehouse error class that is expected in normal operation (the range is
-// above the head, below coverage, or under maintenance) and means "route this
-// query to the vendor", never "retry" and never "split the window".
+// above the head, below coverage, or under maintenance). The caller resolves it
+// per its configured policy (fail in strict mode, or route to the vendor),
+// never "retry" and never "split the window".
 func IsOutOfScope(err error) bool {
 	if errors.Is(err, ErrOutOfScope) {
 		return true

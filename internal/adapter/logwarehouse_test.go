@@ -164,9 +164,10 @@ func TestRealLogWarehouse_FilterLogsSendsERC1155ID(t *testing.T) {
 
 // TestRealLogWarehouse_ScopeErrorIsOutOfScope pins the contract with
 // ff-eth-logs: a -32000 whose message starts with "out of warehouse scope" is
-// the fall-through signal, reachable both through the sentinel and the raw
-// rpc.Error, while the result-cap error is NOT out-of-scope (it must reach the
-// too-many-results classifier so the range gets split).
+// the out-of-scope classification (which the caller resolves per its configured
+// policy), reachable both through the sentinel and the raw rpc.Error, while the
+// result-cap error is NOT out-of-scope (it must reach the too-many-results
+// classifier so the range gets split).
 func TestRealLogWarehouse_ScopeErrorIsOutOfScope(t *testing.T) {
 	t.Parallel()
 	f, wh := newFakeWarehouse(t)

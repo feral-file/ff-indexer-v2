@@ -107,12 +107,14 @@ func (h *PaginationHelper) fallThrough(ctx context.Context, from, to uint64, sta
 	}
 	outOfScope := ethadapter.IsOutOfScope(err)
 	if !h.guards.LogWarehouseVendorFallthrough {
-		failErr := fmt.Errorf("log warehouse unavailable at %s for range [%d, %d] and vendor fall-through disabled: %w", stage, from, to, err)
-		logger.ErrorCtx(ctx, failErr,
+		// Stable message (cause and location as fields) so operators can alert on
+		// a fixed string, symmetric with the WARN fall-through line below.
+		logger.ErrorCtx(ctx, errors.New("log warehouse unavailable for range and vendor fall-through is disabled; failing the query"),
 			zap.String("stage", stage),
 			zap.Bool("outOfScope", outOfScope),
-			zap.Uint64("fromBlock", from), zap.Uint64("toBlock", to))
-		return nil, from, failErr
+			zap.Uint64("fromBlock", from), zap.Uint64("toBlock", to),
+			zap.Error(err))
+		return nil, from, fmt.Errorf("log warehouse unavailable at %s for range [%d, %d] and vendor fall-through disabled: %w", stage, from, to, err)
 	}
 	logger.WarnCtx(ctx, "Log warehouse unavailable for range, falling through to the vendor",
 		zap.String("stage", stage),
