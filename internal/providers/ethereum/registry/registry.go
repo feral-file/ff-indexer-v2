@@ -35,6 +35,7 @@ func NewAdapterRegistry(
 	blockProvider block.BlockProvider,
 	pagination *helpers.PaginationHelper,
 	chainID domain.Chain,
+	warehouseTokenFilter bool,
 ) (*AdapterRegistry, error) {
 	abiRegistry, err := helpers.NewABIRegistry(fsys)
 	if err != nil {
@@ -51,7 +52,7 @@ func NewAdapterRegistry(
 		contractConfigs:  make(map[string]ContractConfig, len(cfg.Contracts)),
 		standardAdapters: map[domain.ChainStandard]adapters.ContractAdapter{
 			domain.StandardERC721:  adapters.NewERC721Adapter(ethClient, pagination, blockProvider, chainID),
-			domain.StandardERC1155: adapters.NewERC1155Adapter(ethClient, pagination, chainID, blockProvider),
+			domain.StandardERC1155: adapters.NewERC1155Adapter(ethClient, pagination, chainID, blockProvider, warehouseTokenFilter),
 		},
 	}
 

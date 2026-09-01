@@ -638,6 +638,7 @@ func TestNewAdapterRegistry_SingleOwnerWithoutEventsLoads(t *testing.T) {
 		nil,
 		helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), nil),
 		domain.ChainEthereumMainnet,
+		false,
 	)
 	require.NoError(t, err)
 	require.Equal(t, 1, reg.ContractOverrideCount())
@@ -721,6 +722,7 @@ func TestNewAdapterRegistry_MissingABI(t *testing.T) {
 		nil,
 		helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), nil),
 		domain.ChainEthereumMainnet,
+		false,
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ABI not found")

@@ -54,7 +54,7 @@ func TestERC1155OwnerScan_MergedTransferLegs(t *testing.T) {
 		})
 
 	pagination := helpers.NewPaginationHelper(mockClient, mockClock, nil)
-	adp := adapters.NewERC1155Adapter(mockClient, pagination, domain.ChainEthereumMainnet, nil)
+	adp := adapters.NewERC1155Adapter(mockClient, pagination, domain.ChainEthereumMainnet, nil, false)
 
 	tokens, err := adp.GetTokensByOwner(context.Background(), owner.Hex(), fromBlock, toBlock, nil)
 	require.NoError(t, err)

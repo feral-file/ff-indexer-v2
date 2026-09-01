@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -41,7 +42,14 @@ type LogWarehouse interface {
 	// filter, and the vendor-style "query returned more than N results" error
 	// above the warehouse result cap, which helpers.IsTooManyResultsError
 	// recognizes so the caller can split the range.
-	FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error)
+	//
+	// erc1155ID, when non-nil, adds the warehouse-only erc1155Id filter
+	// (ff-eth-logs api_design.md 3.8): the warehouse restricts ERC-1155
+	// TransferSingle (data word 0) and URI (topic1) logs to that token id, so a
+	// per-token history query is an index point lookup instead of a
+	// whole-contract scan. It is a warehouse extension a node ignores, so it
+	// only ever travels here, never on the vendor leg.
+	FilterLogs(ctx context.Context, query ethereum.FilterQuery, erc1155ID *common.Hash) ([]types.Log, error)
 
 	// ChainID returns the chain the warehouse stores (eth_chainId), for the
 	// startup check that it matches the indexer's configured chain.
@@ -153,14 +161,75 @@ func (w *RealLogWarehouse) Head(ctx context.Context) (uint64, error) {
 // FilterLogs runs eth_getLogs. The decoded logs carry blockTimestamp (the
 // warehouse always sets it), which lets helpers.BaseEventFromLog skip the
 // per-block eth_getBlockByNumber lookup it otherwise needs for vendor logs.
-func (w *RealLogWarehouse) FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+func (w *RealLogWarehouse) FilterLogs(ctx context.Context, query ethereum.FilterQuery, erc1155ID *common.Hash) ([]types.Log, error) {
 	ctx, cancel := w.bounded(ctx)
 	defer cancel()
-	logs, err := w.eth.FilterLogs(ctx, query)
+	if erc1155ID == nil {
+		// Standard path: geth's ethclient marshals the filter and decodes the
+		// logs, blockTimestamp included.
+		logs, err := w.eth.FilterLogs(ctx, query)
+		if err != nil {
+			return nil, w.classify(err)
+		}
+		return logs, nil
+	}
+	// erc1155Id path: ethclient cannot emit the warehouse-only field, so build
+	// the eth_getLogs argument by hand (same shape geth produces) with the
+	// extra key and decode into types.Log, which unmarshals blockTimestamp too.
+	arg, err := toFilterArg(query)
 	if err != nil {
+		return nil, err
+	}
+	arg["erc1155Id"] = erc1155ID.Hex()
+	var logs []types.Log
+	if err := w.rpc.CallContext(ctx, &logs, "eth_getLogs", arg); err != nil {
 		return nil, w.classify(err)
 	}
 	return logs, nil
+}
+
+// toFilterArg renders an eth_getLogs filter as the JSON argument object, in the
+// same shape go-ethereum's ethclient.toFilterArg produces (that helper is
+// unexported), so the warehouse decodes it identically to a standard call. It
+// exists only so the erc1155Id key can be added alongside the standard fields.
+func toFilterArg(q ethereum.FilterQuery) (map[string]interface{}, error) {
+	arg := map[string]interface{}{"address": q.Addresses, "topics": q.Topics}
+	if q.BlockHash != nil {
+		arg["blockHash"] = *q.BlockHash
+		if q.FromBlock != nil || q.ToBlock != nil {
+			return nil, errors.New("cannot specify both BlockHash and FromBlock/ToBlock, choose one or the other")
+		}
+		return arg, nil
+	}
+	if q.FromBlock == nil {
+		arg["fromBlock"] = "0x0"
+	} else {
+		arg["fromBlock"] = toBlockNumArg(q.FromBlock)
+	}
+	arg["toBlock"] = toBlockNumArg(q.ToBlock)
+	return arg, nil
+}
+
+// toBlockNumArg maps a block bound to its JSON form, matching go-ethereum:
+// nil is "latest", -1 "latest", -2 "pending", -3 "finalized", -4 "safe";
+// every other value is its hex quantity. Warehouse legs pass concrete
+// non-negative bounds, so the tag cases are for parity, not for this caller.
+func toBlockNumArg(number *big.Int) string {
+	if number == nil {
+		return "latest"
+	}
+	switch number.Int64() {
+	case -1:
+		return "latest"
+	case -2:
+		return "pending"
+	case -3:
+		return "finalized"
+	case -4:
+		return "safe"
+	default:
+		return hexutil.EncodeBig(number)
+	}
 }
 
 // ChainID returns eth_chainId.

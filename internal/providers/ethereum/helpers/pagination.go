@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"go.uber.org/zap"
 
@@ -143,6 +144,27 @@ func NewGuardedPaginationHelper(
 // owner scan on a capped provider before it could finish.
 const noDeadlineTimeout = 4 * time.Hour
 
+// FilterOption tunes a FilterLogsWithPagination call without changing the
+// go-ethereum FilterQuery. Options apply only to the warehouse leg; the vendor
+// leg is always a standard eth_getLogs.
+type FilterOption func(*filterOptions)
+
+// filterOptions is the resolved set of FilterOptions for one call.
+type filterOptions struct {
+	// erc1155ID, when set, is forwarded to the warehouse's erc1155Id filter so a
+	// per-token ERC-1155 history query is an index point lookup rather than a
+	// whole-contract scan (ff-eth-logs api_design.md 3.8). nil = not requested.
+	erc1155ID *common.Hash
+}
+
+// WithERC1155TokenID requests that the warehouse leg restrict ERC-1155
+// TransferSingle/URI logs to tokenID. It has no effect on the vendor leg (a
+// node ignores the field) or on a non-ERC-1155 query. Pass the id as the
+// 32-byte big-endian value: common.BigToHash(tokenID).
+func WithERC1155TokenID(tokenID common.Hash) FilterOption {
+	return func(o *filterOptions) { o.erc1155ID = &tokenID }
+}
+
 // FilterLogsWithPagination fetches logs across a block range: the part the
 // log warehouse covers in one query (when a warehouse is configured, see
 // PaginationGuards.LogWarehouse), the rest from the vendor with adaptive
@@ -153,7 +175,12 @@ const noDeadlineTimeout = 4 * time.Hour
 // the partial result); any other vendor failure returns no logs at all, the
 // warehouse-served prefix included, so a caller can never mistake a partial
 // history for a complete one.
-func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery, opts ...FilterOption) ([]types.Log, error) {
+	var fo filterOptions
+	for _, opt := range opts {
+		opt(&fo)
+	}
+
 	timeoutCtx := ctx
 	var cancel context.CancelFunc
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
@@ -173,7 +200,7 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 	var allLogs []types.Log
 	vendorFrom := fromBlock
 	if h.guards.LogWarehouse != nil {
-		served, next, err := h.warehouseLeg(timeoutCtx, query, fromBlock, toBlock)
+		served, next, err := h.warehouseLeg(timeoutCtx, query, fromBlock, toBlock, fo.erc1155ID)
 		if err != nil {
 			return nil, err
 		}

@@ -148,6 +148,7 @@ func newTestRegistryWithBlockProvider(
 		blockProvider,
 		pagination,
 		domain.ChainEthereumMainnet,
+		false,
 	)
 	require.NoError(t, err)
 	return reg

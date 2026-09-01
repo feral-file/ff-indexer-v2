@@ -230,6 +230,7 @@ func NewGuardedClient(chainID domain.Chain, client adapter.EthClient, clock adap
 		blockProvider,
 		ec.pagination,
 		chainID,
+		ChainSupportsWarehouseERC1155Filter(chainID) && guards.LogWarehouse != nil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize contract adapter registry: %w", err)

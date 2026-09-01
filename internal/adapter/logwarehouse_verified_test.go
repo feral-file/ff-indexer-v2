@@ -52,8 +52,8 @@ func TestVerifiedLogWarehouse_RoutesOnlyAfterVerification(t *testing.T) {
 	t.Parallel()
 	inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
 	inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil).Times(1)
-	inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+	inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery, _ *common.Hash) ([]types.Log, error) {
 			require.Equal(t, int64(7), q.FromBlock.Int64(), "the probe query is sent as-is")
 			return []types.Log{{Topics: make([]common.Hash, 3)}}, nil
 		}).Times(1)
@@ -65,6 +65,33 @@ func TestVerifiedLogWarehouse_RoutesOnlyAfterVerification(t *testing.T) {
 	require.Equal(t, uint64(100), head)
 	_, err = w.Head(context.Background())
 	require.NoError(t, err, "second call must not re-verify (strict Times(1) on ChainID/probe)")
+}
+
+// TestVerifiedLogWarehouse_ProbeForwardsERC1155ID pins that a probe carrying an
+// ERC1155ID reaches inner.FilterLogs with that id, so a capability probe can
+// prove the warehouse actually applies the erc1155Id filter.
+func TestVerifiedLogWarehouse_ProbeForwardsERC1155ID(t *testing.T) {
+	t.Parallel()
+	inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
+	want := common.BigToHash(big.NewInt(0x7b))
+	probe := adapter.LogWarehouseProbe{
+		Name:      "erc1155 id probe",
+		Query:     ethereum.FilterQuery{FromBlock: big.NewInt(7), ToBlock: big.NewInt(7)},
+		ERC1155ID: &want,
+		Accept:    func(logs []types.Log) bool { return len(logs) == 1 },
+	}
+	inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil).Times(1)
+	inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ ethereum.FilterQuery, id *common.Hash) ([]types.Log, error) {
+			require.NotNil(t, id, "the probe id must reach the warehouse")
+			require.Equal(t, want, *id)
+			return []types.Log{{}}, nil
+		}).Times(1)
+	inner.EXPECT().Head(gomock.Any()).Return(uint64(100), nil).Times(1)
+
+	w := newVerified(inner, mainnetReqs(probe))
+	_, err := w.Head(context.Background())
+	require.NoError(t, err)
 }
 
 // TestVerifiedLogWarehouse_PermanentRefusals pins that a chain mismatch, a
@@ -83,11 +110,11 @@ func TestVerifiedLogWarehouse_PermanentRefusals(t *testing.T) {
 		}, adapter.ErrLogWarehouseChainMismatch},
 		{"probe without the shape", func(m *mocks.MockLogWarehouse) {
 			m.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil).Times(1)
-			m.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return([]types.Log{{Topics: make([]common.Hash, 4)}}, nil).Times(1)
+			m.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).Return([]types.Log{{Topics: make([]common.Hash, 4)}}, nil).Times(1)
 		}, adapter.ErrLogWarehouseProbeFailed},
 		{"probe out of scope", func(m *mocks.MockLogWarehouse) {
 			m.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil).Times(1)
-			m.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
+			m.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
 				Return(nil, fmt.Errorf("%w: blocks 7-7 extend below the warehouse coverage start 25000000", adapter.ErrOutOfScope)).Times(1)
 		}, adapter.ErrLogWarehouseProbeFailed},
 	}
@@ -101,7 +128,7 @@ func TestVerifiedLogWarehouse_PermanentRefusals(t *testing.T) {
 			require.ErrorIs(t, w.Verify(context.Background()), tc.want)
 			_, err := w.Head(context.Background())
 			require.ErrorIs(t, err, tc.want, "sticky: no request may reach the inner warehouse")
-			_, err = w.FilterLogs(context.Background(), ethereum.FilterQuery{})
+			_, err = w.FilterLogs(context.Background(), ethereum.FilterQuery{}, nil)
 			require.ErrorIs(t, err, tc.want)
 		})
 	}
@@ -116,9 +143,9 @@ func TestVerifiedLogWarehouse_UnreachableRetriesNextCall(t *testing.T) {
 	gomock.InOrder(
 		inner.EXPECT().ChainID(gomock.Any()).Return(nil, errors.New("connection refused")),
 		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),
-		inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return(nil, errors.New("connection reset")),
+		inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("connection reset")),
 		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),
-		inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return([]types.Log{{Topics: make([]common.Hash, 3)}}, nil),
+		inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).Return([]types.Log{{Topics: make([]common.Hash, 3)}}, nil),
 		inner.EXPECT().Head(gomock.Any()).Return(uint64(5), nil),
 	)
 	w := newVerified(inner, mainnetReqs(threeTopicProbe()))
@@ -138,9 +165,9 @@ func TestVerifiedLogWarehouse_NoProbesNeedsOnlyChainID(t *testing.T) {
 	t.Parallel()
 	inner := mocks.NewMockLogWarehouse(gomock.NewController(t))
 	inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(11155111), nil).Times(1)
-	inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return(nil, nil).Times(1)
+	inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).Times(1)
 	w := newVerified(inner, adapter.LogWarehouseRequirements{ChainID: 11155111})
-	_, err := w.FilterLogs(context.Background(), ethereum.FilterQuery{})
+	_, err := w.FilterLogs(context.Background(), ethereum.FilterQuery{}, nil)
 	require.NoError(t, err)
 }
 
@@ -235,7 +262,7 @@ func TestVerifiedLogWarehouse_PostVerificationOutageCoolsDown(t *testing.T) {
 	gomock.InOrder(
 		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),
 		inner.EXPECT().Head(gomock.Any()).Return(uint64(1), nil),
-		inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return(nil, &fakeRPCError{code: -32000, msg: "query returned more than 100000 results"}),
+		inner.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &fakeRPCError{code: -32000, msg: "query returned more than 100000 results"}),
 		inner.EXPECT().Head(gomock.Any()).Return(uint64(0), errors.New("dial tcp: connection refused")),
 		// cooldown: no RPC
 		inner.EXPECT().ChainID(gomock.Any()).Return(big.NewInt(1), nil),
@@ -245,7 +272,7 @@ func TestVerifiedLogWarehouse_PostVerificationOutageCoolsDown(t *testing.T) {
 
 	_, err := w.Head(context.Background())
 	require.NoError(t, err)
-	_, err = w.FilterLogs(context.Background(), ethereum.FilterQuery{})
+	_, err = w.FilterLogs(context.Background(), ethereum.FilterQuery{}, nil)
 	require.Error(t, err, "result cap surfaces to the caller")
 	_, err = w.Head(context.Background())
 	require.ErrorContains(t, err, "connection refused", "the warehouse answered the cap, so it stayed verified and the outage reached the inner call")
@@ -253,7 +280,7 @@ func TestVerifiedLogWarehouse_PostVerificationOutageCoolsDown(t *testing.T) {
 	now = now.Add(10 * time.Second)
 	_, err = w.Head(context.Background())
 	require.ErrorIs(t, err, adapter.ErrLogWarehouseUnverified, "inside the cooldown after an outage: no RPC")
-	_, err = w.FilterLogs(context.Background(), ethereum.FilterQuery{})
+	_, err = w.FilterLogs(context.Background(), ethereum.FilterQuery{}, nil)
 	require.ErrorIs(t, err, adapter.ErrLogWarehouseUnverified)
 
 	now = base.Add(31 * time.Second)

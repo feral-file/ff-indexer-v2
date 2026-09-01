@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rpc"
 	"go.uber.org/zap"
@@ -45,6 +46,11 @@ type LogWarehouseProbe struct {
 	// Query is sent as-is; it should be narrow (a single block) so the probe
 	// is cheap and cannot trip the warehouse result cap.
 	Query ethereum.FilterQuery
+	// ERC1155ID, when non-nil, is passed as the warehouse's erc1155Id filter so
+	// a probe can verify the warehouse actually applies it (an older build
+	// ignores the unknown field and answers the whole query, which the Accept
+	// then rejects). nil sends a standard filter.
+	ERC1155ID *common.Hash
 	// Accept reports whether the served logs prove the capability.
 	Accept func(logs []types.Log) bool
 }
@@ -230,7 +236,7 @@ func (w *VerifiedLogWarehouse) check(ctx context.Context) error {
 // does not cover the probe's block, so it cannot hold the shape either — while
 // any other error keeps the warehouse unverified.
 func (w *VerifiedLogWarehouse) runProbe(ctx context.Context, probe LogWarehouseProbe) error {
-	logs, err := w.inner.FilterLogs(ctx, probe.Query)
+	logs, err := w.inner.FilterLogs(ctx, probe.Query, probe.ERC1155ID)
 	switch {
 	case IsOutOfScope(err):
 		return fmt.Errorf("%w: probe %q refused: %w", ErrLogWarehouseProbeFailed, probe.Name, err)
@@ -253,13 +259,14 @@ func (w *VerifiedLogWarehouse) Head(ctx context.Context) (uint64, error) {
 	return head, err
 }
 
-// FilterLogs serves a filter once verified.
-func (w *VerifiedLogWarehouse) FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+// FilterLogs serves a filter once verified. erc1155ID is forwarded to the
+// warehouse's erc1155Id filter unchanged (see LogWarehouse.FilterLogs).
+func (w *VerifiedLogWarehouse) FilterLogs(ctx context.Context, query ethereum.FilterQuery, erc1155ID *common.Hash) ([]types.Log, error) {
 	gen, err := w.verify(ctx)
 	if err != nil {
 		return nil, err
 	}
-	logs, err := w.inner.FilterLogs(ctx, query)
+	logs, err := w.inner.FilterLogs(ctx, query, erc1155ID)
 	w.observe(ctx, gen, err)
 	return logs, err
 }

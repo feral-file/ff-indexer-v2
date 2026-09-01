@@ -67,8 +67,8 @@ func TestFilterLogsWithPagination_WarehouseServesWholeRange(t *testing.T) {
 	t.Parallel()
 	h := newRoutedHelper(t, 10_000)
 	h.warehouse.EXPECT().Head(gomock.Any()).Return(uint64(25_000_000), nil)
-	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery, _ *common.Hash) ([]types.Log, error) {
 			from, to := rangeOf(q)
 			require.Equal(t, uint64(0), from)
 			require.Equal(t, uint64(24_000_000), to)
@@ -82,6 +82,28 @@ func TestFilterLogsWithPagination_WarehouseServesWholeRange(t *testing.T) {
 	require.Equal(t, []types.Log{logAt(5, 1), logAt(23_999_999, 0)}, logs)
 }
 
+// TestFilterLogsWithPagination_ERC1155IDReachesWarehouse pins that
+// WithERC1155TokenID forwards the token id to the warehouse leg's FilterLogs
+// and only there: the vendor is never asked (strict mock), so a node never
+// sees the warehouse-only field.
+func TestFilterLogsWithPagination_ERC1155IDReachesWarehouse(t *testing.T) {
+	t.Parallel()
+	h := newRoutedHelper(t, 10_000)
+	want := common.BigToHash(big.NewInt(0x2a))
+	h.warehouse.EXPECT().Head(gomock.Any()).Return(uint64(25_000_000), nil)
+	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ ethereum.FilterQuery, id *common.Hash) ([]types.Log, error) {
+			require.NotNil(t, id, "the token id must reach the warehouse leg")
+			require.Equal(t, want, *id)
+			return []types.Log{logAt(5, 1)}, nil
+		})
+
+	logs, err := h.helper.FilterLogsWithPagination(context.Background(), transferQuery(0, 24_000_000),
+		helpers.WithERC1155TokenID(want))
+	require.NoError(t, err)
+	require.Equal(t, []types.Log{logAt(5, 1)}, logs)
+}
+
 // TestFilterLogsWithPagination_SplitsAtWarehouseHead pins the split: blocks up
 // to the head come from the warehouse in one call, blocks above it from the
 // vendor under the span cap, and the result is the concatenation in order.
@@ -90,8 +112,8 @@ func TestFilterLogsWithPagination_SplitsAtWarehouseHead(t *testing.T) {
 	h := newRoutedHelper(t, 10_000)
 	const head = uint64(1_000_000)
 	h.warehouse.EXPECT().Head(gomock.Any()).Return(head, nil)
-	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery, _ *common.Hash) ([]types.Log, error) {
 			from, to := rangeOf(q)
 			require.Equal(t, uint64(0), from)
 			require.Equal(t, head, to, "the warehouse leg ends exactly at the head")
@@ -151,12 +173,12 @@ func TestFilterLogsWithPagination_FallsThroughOnWarehouseFailure(t *testing.T) {
 		}},
 		{"scope refusal", func(w *mocks.MockLogWarehouse) {
 			w.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
-			w.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
+			w.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
 				Return(nil, fmt.Errorf("%w: blocks 0-1000 extend below the warehouse coverage start 500", ethadapter.ErrOutOfScope))
 		}},
 		{"transport error on eth_getLogs", func(w *mocks.MockLogWarehouse) {
 			w.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
-			w.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return(nil, context.DeadlineExceeded)
+			w.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, context.DeadlineExceeded)
 		}},
 	}
 	for _, tc := range cases {
@@ -189,8 +211,8 @@ func TestFilterLogsWithPagination_WarehouseResultCapBisects(t *testing.T) {
 	h := newRoutedHelper(t, 10_000)
 	h.warehouse.EXPECT().Head(gomock.Any()).Return(uint64(1_000), nil)
 	var served []blockRange
-	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery, _ *common.Hash) ([]types.Log, error) {
 			from, to := rangeOf(q)
 			if to-from > 300 {
 				return nil, errors.New("query returned more than 100000 results")
@@ -224,8 +246,8 @@ func TestFilterLogsWithPagination_WarehouseCallsBypassCallBudget(t *testing.T) {
 		LogWarehouse: warehouse,
 	})
 	warehouse.EXPECT().Head(gomock.Any()).Return(uint64(999), nil)
-	warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+	warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery, _ *common.Hash) ([]types.Log, error) {
 			from, to := rangeOf(q)
 			if to-from == 999 {
 				return nil, errors.New("query returned more than 100000 results")
@@ -276,7 +298,7 @@ func TestFilterLogsWithPagination_VendorFailureDropsWarehousePrefix(t *testing.T
 	t.Parallel()
 	h := newRoutedHelper(t, 10_000)
 	h.warehouse.EXPECT().Head(gomock.Any()).Return(uint64(100), nil)
-	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return([]types.Log{logAt(1, 0)}, nil)
+	h.warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).Return([]types.Log{logAt(1, 0)}, nil)
 	h.vendor.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).Return(nil, errors.New("execution aborted"))
 
 	logs, err := h.helper.FilterLogsWithPagination(context.Background(), transferQuery(0, 200))

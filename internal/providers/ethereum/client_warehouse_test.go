@@ -30,18 +30,55 @@ func TestLogWarehouseRequirements(t *testing.T) {
 		reqs, err := ethereum.LogWarehouseRequirements(domain.ChainEthereumMainnet)
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), reqs.ChainID)
-		require.Len(t, reqs.Probes, 1)
+		require.Len(t, reqs.Probes, 3)
 		probe := reqs.Probes[0]
 		punks := common.HexToAddress("0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb")
 		require.Equal(t, []common.Address{punks}, probe.Query.Addresses)
 		require.Equal(t, [][]common.Hash{{helpers.TransferEventSignature}}, probe.Query.Topics)
 		require.Equal(t, probe.Query.FromBlock, probe.Query.ToBlock, "a single-block probe")
 		require.Equal(t, int64(3_919_706), probe.Query.FromBlock.Int64())
+		require.Nil(t, probe.ERC1155ID, "the CryptoPunks probe sends a standard filter")
 
 		require.False(t, probe.Accept(nil), "no logs: the shape is missing")
 		require.False(t, probe.Accept([]types.Log{{Address: punks, Topics: make([]common.Hash, 4)}}), "a 4-topic Transfer is not the internal one")
 		require.False(t, probe.Accept([]types.Log{{Address: common.HexToAddress("0x1"), Topics: make([]common.Hash, 3)}}), "another emitter does not count")
 		require.True(t, probe.Accept([]types.Log{{Address: punks, Topics: make([]common.Hash, 3)}}))
+
+		// The erc1155Id capability probe: single block, storefront, TransferSingle,
+		// with the token id set, accepting only when every log carries that id.
+		idProbe := reqs.Probes[1]
+		require.Equal(t, "ERC-1155 erc1155Id filter", idProbe.Name)
+		require.Equal(t, []common.Address{common.HexToAddress("0x495f947276749Ce646f68AC8c248420045cb7b5e")}, idProbe.Query.Addresses)
+		require.Equal(t, [][]common.Hash{{helpers.ERC1155TransferSingleEventSignature}}, idProbe.Query.Topics)
+		require.Equal(t, idProbe.Query.FromBlock, idProbe.Query.ToBlock, "a single-block probe")
+		require.Equal(t, int64(14_045_001), idProbe.Query.FromBlock.Int64())
+		require.NotNil(t, idProbe.ERC1155ID, "the id must be sent so the probe tests the filter")
+		id := *idProbe.ERC1155ID
+		match := types.Log{Data: append(append([]byte{}, id.Bytes()...), make([]byte, 32)...)}
+		foreign := types.Log{Data: append(append([]byte{}, common.HexToHash("0x99").Bytes()...), make([]byte, 32)...)}
+		require.False(t, idProbe.Accept(nil), "empty: the filter dropped everything or is unsupported")
+		require.True(t, idProbe.Accept([]types.Log{match, match}), "the block's two matching logs")
+		require.False(t, idProbe.Accept([]types.Log{match}), "only one of the two matching logs: a partial index is rejected")
+		require.False(t, idProbe.Accept([]types.Log{match, foreign}), "a sibling token proves the filter was ignored")
+		require.False(t, idProbe.Accept([]types.Log{foreign}), "a foreign token id alone is rejected")
+		require.False(t, idProbe.Accept([]types.Log{{Data: []byte{0x01}}}), "a truncated data field is rejected")
+
+		// The URI arm probe: single block, a URI-emitting contract, URI topic,
+		// id set; URI carries the token id in topic1, not data.
+		uriProbe := reqs.Probes[2]
+		require.Equal(t, "ERC-1155 URI erc1155Id filter", uriProbe.Name)
+		require.Equal(t, [][]common.Hash{{helpers.ERC1155URIEventSignature}}, uriProbe.Query.Topics)
+		require.Equal(t, uriProbe.Query.FromBlock, uriProbe.Query.ToBlock, "a single-block probe")
+		require.Equal(t, int64(6_938_761), uriProbe.Query.FromBlock.Int64())
+		require.NotNil(t, uriProbe.ERC1155ID)
+		uid := *uriProbe.ERC1155ID
+		uriMatch := types.Log{Topics: []common.Hash{helpers.ERC1155URIEventSignature, uid}}
+		uriForeign := types.Log{Topics: []common.Hash{helpers.ERC1155URIEventSignature, common.HexToHash("0x99")}}
+		require.False(t, uriProbe.Accept(nil), "empty: dropped or unsupported")
+		require.True(t, uriProbe.Accept([]types.Log{uriMatch}), "the block's one matching URI")
+		require.False(t, uriProbe.Accept([]types.Log{uriMatch, uriMatch}), "more than the one expected URI is rejected")
+		require.False(t, uriProbe.Accept([]types.Log{uriMatch, uriForeign}), "a sibling URI proves the filter was ignored")
+		require.False(t, uriProbe.Accept([]types.Log{{Topics: []common.Hash{helpers.ERC1155URIEventSignature}}}), "a URI without topic1 is rejected")
 	})
 	t.Run("testnet needs only the chain id", func(t *testing.T) {
 		t.Parallel()
@@ -105,8 +142,8 @@ func TestFetchIngestionLogs_RoutesThroughWarehouse(t *testing.T) {
 	vendor := mocks.NewMockEthClient(ctrl)
 	wh := mocks.NewMockLogWarehouse(ctrl)
 	wh.EXPECT().Head(gomock.Any()).Return(uint64(1_010), nil)
-	wh.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, q goeth.FilterQuery) ([]types.Log, error) {
+	wh.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q goeth.FilterQuery, _ *common.Hash) ([]types.Log, error) {
 			require.Equal(t, uint64(1_000), q.FromBlock.Uint64())
 			require.Equal(t, uint64(1_009), q.ToBlock.Uint64())
 			require.Len(t, q.Topics, 1)

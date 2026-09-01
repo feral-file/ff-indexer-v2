@@ -46,6 +46,7 @@ go.work.sum
 
 # env file
 **/.env.local
+**/.env.local*
 config/.env.media.local
 config/.env.worker-media.local
 
@@ -58,3 +59,6 @@ config.yaml
 .idea/
 .vscode/
 .DS_Store
+
+# Local probe-audit artifacts (never committed)
+tools/probeaudit/
