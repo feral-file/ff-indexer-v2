@@ -57,7 +57,6 @@ Primary entity for tracking tokens across all supported blockchains.
 **Indexes**:
 - `idx_tokens_chain_contract_number` on (chain, contract_address, token_number)
 - `idx_tokens_current_owner` on (current_owner) WHERE current_owner IS NOT NULL
-- `idx_tokens_burned` on (burned) WHERE burned
 - `idx_tokens_created_at` on (created_at)
 - `idx_tokens_last_prov_timestamp_id` on (last_provenance_timestamp DESC NULLS LAST, id DESC) - for sorting by latest activity
 - `idx_tokens_viewable_last_prov_timestamp` on (is_viewable, last_provenance_timestamp DESC NULLS LAST, id DESC) - for filtered sorting
@@ -100,12 +99,6 @@ Stores original and enriched metadata for tokens.
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 
 **Indexes**:
-- `idx_token_metadata_enrichment_level` on (enrichment_level)
-- `idx_token_metadata_last_refreshed_at` on (last_refreshed_at)
-- `idx_token_metadata_artists` GIN on (artists) WHERE artists IS NOT NULL
-- `idx_token_metadata_publisher` GIN on (publisher) WHERE publisher IS NOT NULL
-- `idx_token_metadata_origin_json_gin` GIN on (origin_json)
-- `idx_token_metadata_latest_json_gin` GIN on (latest_json)
 - `idx_token_metadata_image_url_hash` on (image_url_hash) WHERE image_url IS NOT NULL
 - `idx_token_metadata_animation_url_hash` on (animation_url_hash) WHERE animation_url IS NOT NULL
 
@@ -136,10 +129,6 @@ Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, Super
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 
 **Indexes**:
-- `idx_enrichment_sources_vendor` on (vendor)
-- `idx_enrichment_sources_vendor_hash` on (vendor_hash) WHERE vendor_hash IS NOT NULL
-- `idx_enrichment_sources_artists` GIN on (artists) WHERE artists IS NOT NULL
-- `idx_enrichment_sources_vendor_json_gin` GIN on (vendor_json)
 - `idx_enrichment_sources_image_url_hash` on (image_url_hash) WHERE image_url IS NOT NULL
 - `idx_enrichment_sources_animation_url_hash` on (animation_url_hash) WHERE animation_url IS NOT NULL
 
@@ -164,7 +153,6 @@ Tracks ownership quantities for multi-edition tokens (ERC1155, FA2).
 **Indexes**:
 - `idx_balances_token_owner` on (token_id, owner_address)
 - `idx_balances_owner_address` on (owner_address)
-- `idx_balances_updated_at` on (updated_at)
 
 **Unique Constraints**:
 - `(token_id, owner_address)` (unique)
@@ -193,11 +181,6 @@ Reference mapping between original URLs and provider-hosted URLs with variants.
 
 **Indexes**:
 - `idx_media_assets_source_url` on (source_url)
-- `idx_media_assets_provider` on (provider)
-- `idx_media_assets_provider_asset_id` on (provider, provider_asset_id)
-- `idx_media_assets_created_at` on (created_at)
-- `idx_media_assets_variant_urls_gin` GIN on (variant_urls)
-- `idx_media_assets_provider_metadata_gin` GIN on (provider_metadata) WHERE provider_metadata IS NOT NULL
 
 **Unique Constraints**:
 - `(provider, provider_asset_id)` (unique)
@@ -326,18 +309,7 @@ Optional audit trail of blockchain events.
 
 **Indexes**:
 - `idx_provenance_events_token_id` on (token_id)
-- `idx_provenance_events_chain` on (chain)
-- `idx_provenance_events_event_type` on (event_type)
-- `idx_provenance_events_timestamp` on (timestamp)
-- `idx_provenance_events_tx_hash` on (tx_hash) WHERE tx_hash IS NOT NULL
-- `idx_provenance_events_block_number` on (block_number) WHERE block_number IS NOT NULL
-- `idx_provenance_events_raw` GIN on (raw)
-- `idx_provenance_events_from_address` on (from_address)
-- `idx_provenance_events_to_address` on (to_address)
-- `idx_provenance_events_token_id_from_address_timestamp` on (token_id, from_address, timestamp)
 - `idx_provenance_events_token_id_to_address_timestamp` on (token_id, to_address, timestamp)
-- `idx_provenance_events_id_text` on (CAST(id AS TEXT))
-- `idx_provenance_events_raw_gin` GIN on (raw)
 
 **Unique Constraints**:
 - `(chain, tx_hash, token_id, from_address, to_address, event_type)` - Allows multiple events in the same transaction for different tokens or address pairs
@@ -459,8 +431,6 @@ For owner-based indexing functionality with budgeted indexing mode support.
 
 **Indexes**:
 - `idx_watched_addresses_watching` on (watching, chain, address)
-- `idx_watched_addresses_chain` on (chain)
-- `idx_watched_addresses_last_queried_at` on (last_queried_at)
 
 **Primary Key**:
 - `(chain, address)`
@@ -532,7 +502,6 @@ Configuration and state management (cursors, version, etc.).
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 
 **Indexes**:
-- `idx_key_value_store_updated_at` on (updated_at)
 
 **Common Keys**:
 - `ethereum_mainnet_cursor` - Last **fully flushed** Ethereum mainnet block number at the block boundary (see ingestion runner in [`docs/architecture.md`](architecture.md#chain-ingestion)); combined with `start_block` override and monotonic flush semantics
@@ -679,9 +648,6 @@ Audit log of webhook delivery attempts with status tracking and response details
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 
 **Indexes**:
-- `idx_webhook_deliveries_status` on (delivery_status)
-- `idx_webhook_deliveries_event_id` on (event_id)
-- `idx_webhook_deliveries_client` on (client_id, created_at DESC)
 
 **Relationships**:
 - Many-to-one with `webhook_clients` (CASCADE DELETE)
@@ -844,10 +810,11 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 - `025_backfill.sql` - Operator-run recovery step, executed **after** the guard is disabled and workers restarted: enqueues `IndexTokenProvenances` for every token with `provenance_deferred_at` set. Requires the deployment's token queue as a psql parameter (`-v queue=<jobs.token_queue>`, default `token_index`) and fails loudly without it. Idempotent under `jobs_unique_key_active`; the file documents burst sizing (each token replays full history, ~0.7–1.3M Infura credits) and time-sliced execution. See the guard runbook in DEVELOPMENT.md.
 - `026.sql` - Adds the unique index `idx_address_indexing_jobs_job_id` on `address_indexing_jobs(job_id)` after deduplicating historical per-retry rows (newest row per `job_id` wins). One tracking row per queue job: closes the trigger-vs-worker create race that application-level checks cannot, since the partial active indexes only protect active rows. Run before deploying application code (standard ordering).
 - `029.sql` - Adds `address_scan_logs.block_timestamp` (BIGINT NOT NULL DEFAULT 0): the Unix block time carried on warehouse-served owner-scan logs (ff-indexer-v2 #144), so the replay's event parsing no longer pays a vendor `eth_getBlockByNumber` per distinct block for windows the log warehouse served. Vendor-served windows stage 0 and keep the block-provider fallback. Standard ordering: apply before deploying the image.
+- `030_drop_unused_indexes.sql` - Drops 35 indexes (~8.5 GB) that were unused on two axes: `pg_stat_user_indexes.idx_scan = 0` over the database's whole life (stats never reset) **and** no query path in `internal/{store,api,workflows,media,metadata}`. Includes two identical duplicate `GIN(raw)` indexes on `provenance_events` and the speculative JSONB GINs on `token_metadata`/`enrichment_sources`/`media_assets`. The matching `CREATE INDEX` statements are removed from `init_pg_db.sql`. **Must run with autocommit (outside a transaction): `DROP INDEX CONCURRENTLY` cannot run in a BEGIN/COMMIT block** (same as `017_dedup.sql`). Re-runnable (`IF EXISTS`) and reversible.
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data
-2. Use transactions for atomic migrations
+2. Use transactions for atomic migrations — **except** migrations using `CONCURRENTLY` (index create/drop) or per-batch commits, which must run in autocommit outside a transaction (e.g. `017_dedup.sql`, `030_drop_unused_indexes.sql`); a transaction-wrapping runner must disable wrapping for those files
 3. Add indexes concurrently for large tables
 4. Document breaking changes
 5. Provide rollback scripts if possible
