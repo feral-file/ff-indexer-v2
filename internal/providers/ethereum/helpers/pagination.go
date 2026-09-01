@@ -182,7 +182,12 @@ func WithERC1155TokenID(tokenID common.Hash) FilterOption {
 // so far together with the context error (callers such as TokenExists use
 // the partial result); any other vendor failure returns no logs at all, the
 // warehouse-served prefix included, so a caller can never mistake a partial
-// history for a complete one.
+// history for a complete one. When ToBlock is unset (latest), the chain tip is
+// resolved from the vendor (blockProvider.GetLatestBlock, a metered
+// HeaderByNumber on a cold cache) only AFTER the warehouse leg succeeds, solely
+// to bound the above-head vendor suffix — so a strict-mode warehouse failure on
+// an implicit-latest query (ERC-721/1155/generic provenance) never triggers a
+// vendor call.
 func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery, opts ...FilterOption) ([]types.Log, error) {
 	var fo filterOptions
 	for _, opt := range opts {
@@ -200,9 +205,17 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 		return h.ethClient.FilterLogs(timeoutCtx, query)
 	}
 
-	fromBlock, toBlock, err := h.resolveRange(timeoutCtx, query)
-	if err != nil {
-		return nil, err
+	fromBlock := uint64(0)
+	if query.FromBlock != nil {
+		fromBlock = query.FromBlock.Uint64()
+	}
+	// toBlock stays nil until the warehouse leg is done: nil means "latest",
+	// whose only source is the vendor, and the warehouse leg needs only its own
+	// head. See the doc comment.
+	var toBlock *uint64
+	if query.ToBlock != nil {
+		t := query.ToBlock.Uint64()
+		toBlock = &t
 	}
 
 	var allLogs []types.Log
@@ -214,33 +227,29 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 		}
 		allLogs, vendorFrom = served, next
 	}
-	if vendorFrom > toBlock {
+
+	// Resolve the chain tip only now — after any strict warehouse failure has
+	// already returned — solely to bound the above-head vendor suffix.
+	target := uint64(0)
+	if toBlock != nil {
+		target = *toBlock
+	} else {
+		latest, err := h.blockProvider.GetLatestBlock(timeoutCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get latest block: %w", err)
+		}
+		target = latest
+	}
+
+	if vendorFrom > target {
 		return allLogs, nil
 	}
 
-	vendorLogs, err := h.vendorWalk(ctx, timeoutCtx, query, vendorFrom, toBlock)
+	vendorLogs, err := h.vendorWalk(ctx, timeoutCtx, query, vendorFrom, target)
 	if err != nil && timeoutCtx.Err() == nil {
 		return nil, err
 	}
 	return append(allLogs, vendorLogs...), err
-}
-
-// resolveRange turns the query's optional bounds into a concrete block range:
-// a missing fromBlock is genesis, a missing toBlock is the vendor's latest
-// block (the chain tip, cached by the block provider).
-func (h *PaginationHelper) resolveRange(ctx context.Context, query ethereum.FilterQuery) (uint64, uint64, error) {
-	fromBlock := uint64(0)
-	if query.FromBlock != nil {
-		fromBlock = query.FromBlock.Uint64()
-	}
-	if query.ToBlock != nil {
-		return fromBlock, query.ToBlock.Uint64(), nil
-	}
-	latestBlockNum, err := h.blockProvider.GetLatestBlock(ctx)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to get latest block: %w", err)
-	}
-	return fromBlock, latestBlockNum, nil
 }
 
 // vendorWalk paginates [fromBlock, toBlock] against the vendor with adaptive

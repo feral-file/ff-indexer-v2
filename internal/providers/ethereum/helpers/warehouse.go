@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -17,9 +18,12 @@ import (
 
 // warehouseLeg serves the historical part of a log walk from the log
 // warehouse: blocks [from, min(to, head)] in one query, where head is the
-// warehouse head at the time of the call. It returns the logs and the first
-// block the vendor walk must still cover (to+1 when the warehouse covered the
-// whole range, so the vendor walk becomes a no-op).
+// warehouse head at the time of the call. to is a pointer: nil means the query
+// is implicit-latest, whose upper bound is the chain tip the caller has not
+// resolved yet — the warehouse then serves [from, head] (head <= tip always).
+// It returns the logs and the first block the vendor walk must still cover
+// (served+1: head+1 for an implicit-latest query, so the vendor covers only
+// (head, latest]).
 //
 // Reason: this is the routing split of ff-indexer-v2#130 Phase 2. Every
 // history query the indexer issues — owner scans, provenance, replays, the
@@ -46,7 +50,7 @@ import (
 // (a vendor cost backstop). The returned logs are in (block, log index) order,
 // as the warehouse guarantees and as the vendor leg appended after them
 // preserves, so no re-sort is needed.
-func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.FilterQuery, from, to uint64, erc1155ID *common.Hash) ([]types.Log, uint64, error) {
+func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.FilterQuery, from uint64, to *uint64, erc1155ID *common.Hash) ([]types.Log, uint64, error) {
 	head, err := h.guards.LogWarehouse.Head(ctx)
 	if err != nil {
 		return h.fallThrough(ctx, from, to, "head lookup", err)
@@ -57,7 +61,14 @@ func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.Filt
 		// normal path for every tip block.
 		return nil, from, nil
 	}
-	served := min(to, head)
+	// An implicit-latest query (to == nil) serves [from, head]: head is the last
+	// fully-stored block, always <= the chain tip, so min(latest, head) == head
+	// and the vendor takes (head, latest]. This is why the tip need not be
+	// resolved before the warehouse leg.
+	served := head
+	if to != nil {
+		served = min(*to, head)
+	}
 	logs, err := h.warehouseFetch(ctx, query, from, served, erc1155ID)
 	if err != nil {
 		// A single block whose logs exceed the warehouse result cap is a
@@ -74,7 +85,9 @@ func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.Filt
 		if errors.As(err, &overflow) && !h.guards.LogWarehouseVendorFallthrough {
 			return nil, from, err
 		}
-		return h.fallThrough(ctx, from, to, "eth_getLogs", err)
+		// The fetch covered [from, served] (concrete, even for implicit-latest).
+		servedTo := served
+		return h.fallThrough(ctx, from, &servedTo, "eth_getLogs", err)
 	}
 	logger.DebugCtx(ctx, "Log range served by the warehouse",
 		zap.Uint64("fromBlock", from), zap.Uint64("toBlock", served),
@@ -101,25 +114,32 @@ func (h *PaginationHelper) warehouseLeg(ctx context.Context, query ethereum.Filt
 //     to the vendor (next = from, no logs), logged at WARN. The credit guards
 //     still bound that walk. This is the original "never stall" policy, for
 //     deployments that prefer availability over cost.
-func (h *PaginationHelper) fallThrough(ctx context.Context, from, to uint64, stage string, err error) ([]types.Log, uint64, error) {
+func (h *PaginationHelper) fallThrough(ctx context.Context, from uint64, to *uint64, stage string, err error) ([]types.Log, uint64, error) {
 	if ctx.Err() != nil {
 		return nil, from, ctx.Err()
 	}
 	outOfScope := ethadapter.IsOutOfScope(err)
+	// to is nil for an implicit-latest query whose tip was never resolved (the
+	// warehouse head lookup failed first); render it as "latest" rather than a
+	// bogus numeric bound.
+	toStr := "latest"
+	if to != nil {
+		toStr = strconv.FormatUint(*to, 10)
+	}
 	if !h.guards.LogWarehouseVendorFallthrough {
 		// Stable message (cause and location as fields) so operators can alert on
 		// a fixed string, symmetric with the WARN fall-through line below.
 		logger.ErrorCtx(ctx, errors.New("log warehouse unavailable for range and vendor fall-through is disabled; failing the query"),
 			zap.String("stage", stage),
 			zap.Bool("outOfScope", outOfScope),
-			zap.Uint64("fromBlock", from), zap.Uint64("toBlock", to),
+			zap.Uint64("fromBlock", from), zap.String("toBlock", toStr),
 			zap.Error(err))
-		return nil, from, fmt.Errorf("log warehouse unavailable at %s for range [%d, %d] and vendor fall-through disabled: %w", stage, from, to, err)
+		return nil, from, fmt.Errorf("log warehouse unavailable at %s for range [%d, %s] and vendor fall-through disabled: %w", stage, from, toStr, err)
 	}
 	logger.WarnCtx(ctx, "Log warehouse unavailable for range, falling through to the vendor",
 		zap.String("stage", stage),
 		zap.Bool("outOfScope", outOfScope),
-		zap.Uint64("fromBlock", from), zap.Uint64("toBlock", to),
+		zap.Uint64("fromBlock", from), zap.String("toBlock", toStr),
 		zap.Error(err))
 	return nil, from, nil
 }

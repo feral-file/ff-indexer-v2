@@ -256,6 +256,83 @@ func TestFilterLogsWithPagination_StrictModeFailsInsteadOfFallingThrough(t *test
 	}
 }
 
+// TestFilterLogsWithPagination_StrictImplicitLatestFailsWithoutVendorTip pins
+// the no-vendor-call guarantee for the common implicit-latest query
+// (ERC-721/1155/generic provenance send a nil ToBlock): in strict mode a
+// warehouse head-lookup failure fails the query WITHOUT resolving the chain tip
+// (blockProvider.GetLatestBlock, a metered vendor HeaderByNumber on a cold
+// cache) and without any vendor eth_getLogs. Both the block provider and the
+// vendor are strict mocks with no expectations, so any call fails the test.
+func TestFilterLogsWithPagination_StrictImplicitLatestFailsWithoutVendorTip(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	vendor := mocks.NewMockEthClient(ctrl) // no FilterLogs expectation
+	warehouse := mocks.NewMockLogWarehouse(ctrl)
+	blockProvider := mocks.NewMockBlockProvider(ctrl) // no GetLatestBlock expectation
+	clock := mocks.NewMockClock(ctrl)
+	clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+	helper := helpers.NewGuardedPaginationHelper(vendor, clock, blockProvider, helpers.PaginationGuards{
+		SpanCap:      10_000,
+		LogWarehouse: warehouse,
+		// LogWarehouseVendorFallthrough left false: the strict default.
+	})
+	warehouse.EXPECT().Head(gomock.Any()).Return(uint64(0), errors.New("dial tcp: connection refused"))
+
+	// Implicit-latest query: ToBlock is nil, the case that used to resolve the
+	// tip (a vendor call) before the warehouse leg.
+	query := ethereum.FilterQuery{
+		FromBlock: big.NewInt(0),
+		Topics:    [][]common.Hash{{helpers.TransferEventSignature}},
+	}
+	logs, err := helper.FilterLogsWithPagination(context.Background(), query)
+	require.Error(t, err)
+	require.Nil(t, logs)
+	require.ErrorContains(t, err, "vendor fall-through disabled")
+	require.ErrorContains(t, err, "latest", "an unresolved tip renders as 'latest', not a bogus numeric bound")
+}
+
+// TestFilterLogsWithPagination_ImplicitLatestResolvesTipAfterWarehouse pins the
+// success path of the deferred tip: with a healthy warehouse and a nil ToBlock,
+// the warehouse serves [from, head], the chain tip is resolved once (after the
+// warehouse leg), and the vendor serves only the above-head suffix (head, tip].
+func TestFilterLogsWithPagination_ImplicitLatestResolvesTipAfterWarehouse(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	vendor := mocks.NewMockEthClient(ctrl)
+	warehouse := mocks.NewMockLogWarehouse(ctrl)
+	blockProvider := mocks.NewMockBlockProvider(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+	helper := helpers.NewGuardedPaginationHelper(vendor, clock, blockProvider, helpers.PaginationGuards{
+		SpanCap:      10_000,
+		LogWarehouse: warehouse,
+	})
+	const head = uint64(100)
+	warehouse.EXPECT().Head(gomock.Any()).Return(head, nil)
+	warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery, _ *common.Hash) ([]types.Log, error) {
+			from, to := rangeOf(q)
+			require.Equal(t, uint64(0), from)
+			require.Equal(t, head, to, "the warehouse leg ends at the head for an implicit-latest query")
+			return []types.Log{logAt(10, 0)}, nil
+		})
+	blockProvider.EXPECT().GetLatestBlock(gomock.Any()).Return(uint64(110), nil).Times(1)
+	vendor.EXPECT().FilterLogs(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+			from, to := rangeOf(q)
+			require.Equal(t, blockRange{head + 1, 110}, blockRange{from, to}, "vendor covers only the above-head suffix")
+			return []types.Log{logAt(105, 0)}, nil
+		})
+
+	query := ethereum.FilterQuery{
+		FromBlock: big.NewInt(0),
+		Topics:    [][]common.Hash{{helpers.TransferEventSignature}},
+	}
+	logs, err := helper.FilterLogsWithPagination(context.Background(), query)
+	require.NoError(t, err)
+	require.Equal(t, []types.Log{logAt(10, 0), logAt(105, 0)}, logs)
+}
+
 // TestFilterLogsWithPagination_StrictModeAboveHeadStillReachesVendor pins that
 // strict mode does not block the NORMAL above-head split: blocks above the
 // warehouse head are not a failure, so they still go to the vendor even with
