@@ -333,6 +333,41 @@ func TestFilterLogsWithPagination_ImplicitLatestResolvesTipAfterWarehouse(t *tes
 	require.Equal(t, []types.Log{logAt(10, 0), logAt(105, 0)}, logs)
 }
 
+// TestFilterLogsWithPagination_ImplicitLatestCapsWarehouseAtStaleTip pins that
+// the deferred tip does not let the warehouse over-serve: when the warehouse
+// head (101) sits above a stale/cached vendor tip (GetLatestBlock returns 100),
+// a warehouse log at block 101 is dropped because the query's resolved upper
+// bound is 100, and the vendor is never walked (strict mock, no FilterLogs).
+func TestFilterLogsWithPagination_ImplicitLatestCapsWarehouseAtStaleTip(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	vendor := mocks.NewMockEthClient(ctrl)
+	warehouse := mocks.NewMockLogWarehouse(ctrl)
+	blockProvider := mocks.NewMockBlockProvider(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+	helper := helpers.NewGuardedPaginationHelper(vendor, clock, blockProvider, helpers.PaginationGuards{
+		SpanCap:      10_000,
+		LogWarehouse: warehouse,
+	})
+	const head = uint64(101)
+	warehouse.EXPECT().Head(gomock.Any()).Return(head, nil)
+	warehouse.EXPECT().FilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery, _ *common.Hash) ([]types.Log, error) {
+			_, to := rangeOf(q)
+			require.Equal(t, head, to, "the warehouse leg fetches up to its head")
+			return []types.Log{logAt(50, 0), logAt(head, 0)}, nil // includes a log AT the head
+		})
+	// Stale/cached vendor tip behind the warehouse head.
+	blockProvider.EXPECT().GetLatestBlock(gomock.Any()).Return(uint64(100), nil)
+
+	query := ethereum.FilterQuery{FromBlock: big.NewInt(0), Topics: [][]common.Hash{{helpers.TransferEventSignature}}}
+	logs, err := helper.FilterLogsWithPagination(context.Background(), query)
+	require.NoError(t, err)
+	require.Equal(t, []types.Log{logAt(50, 0)}, logs,
+		"the block-101 log is above the resolved tip (100) and must be dropped")
+}
+
 // TestFilterLogsWithPagination_StrictModeAboveHeadStillReachesVendor pins that
 // strict mode does not block the NORMAL above-head split: blocks above the
 // warehouse head are not a failure, so they still go to the vendor even with

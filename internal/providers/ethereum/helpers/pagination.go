@@ -241,6 +241,17 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 		target = latest
 	}
 
+	// The warehouse leg ran before the tip was resolved, so on an implicit-latest
+	// query it may have served blocks above target: the warehouse head can sit
+	// ahead of a stale/cached vendor tip (BlockProvider deliberately serves a
+	// within-stale-window cached value on a failed refresh). The query asked for
+	// [from, target], so drop anything past it — a no-op unless the resolved tip
+	// came back behind the warehouse head. Explicit-ToBlock queries never
+	// over-serve: the warehouse leg already capped at min(ToBlock, head).
+	if len(allLogs) > 0 && vendorFrom > target+1 {
+		allLogs = logsAtOrBelow(allLogs, target)
+	}
+
 	if vendorFrom > target {
 		return allLogs, nil
 	}
@@ -250,6 +261,20 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 		return nil, err
 	}
 	return append(allLogs, vendorLogs...), err
+}
+
+// logsAtOrBelow returns the prefix of logs with BlockNumber <= maxBlock. The
+// warehouse returns logs in (block, index) order, so the result is a prefix and
+// this only trims a suffix. It caps the implicit-latest path where the warehouse
+// head can sit above a stale/cached vendor tip: the query's resolved upper bound
+// is maxBlock, so blocks past it must not leak into the result.
+func logsAtOrBelow(logs []types.Log, maxBlock uint64) []types.Log {
+	for i := range logs {
+		if logs[i].BlockNumber > maxBlock {
+			return logs[:i]
+		}
+	}
+	return logs
 }
 
 // vendorWalk paginates [fromBlock, toBlock] against the vendor with adaptive
