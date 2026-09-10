@@ -121,6 +121,7 @@ SSRF policy refusals are final and never trigger gateway fallback. DNS failures 
 | `transport` | transport-level fetch failure with no more specific entry (TLS, protocol, non-retryable connection errors) | probe |
 | `data_uri_invalid` | data: URI failed RFC 2397 parsing | data URI checker |
 | `unsupported_mime_type` | data: URI declared a mime type outside the supported set | data URI checker |
+| `gateway_retired` | a validated replacement for a healthy retired gateway could not be propagated; the original URL is persisted as broken | gateway migration |
 | `render_*` | **reserved for the L1 render probe** | render probe |
 
 `failure_reason` is NULL only for healthy and unknown rows: every broken verdict carries
