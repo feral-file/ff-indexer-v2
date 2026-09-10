@@ -1,6 +1,7 @@
 package types_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,9 +27,11 @@ func TestIsBrowserIPFSGateway(t *testing.T) {
 
 func TestIsIPFSGatewayURL_SubdomainPreservesReference(t *testing.T) {
 	const cid = "bafybeidhq4d52l3kozhe5upfl2bpu5smjcvrg7g3unf2hpzjvjfbb3wp3y"
-	for _, suffix := range []string{"", "/", "/art%20work/index.html?seed=a&seed=b#view", "?seed=1#view"} {
-		ok, reference := types.IsIPFSGatewayURL("https://" + cid + ".ipfs.inbrowser.link" + suffix)
-		require.True(t, ok)
-		require.Equal(t, cid+suffix, reference)
+	for _, suffix := range []string{"", "/", "/Art%2fwork/index.html?seed=AbC&seed=b#VIEW", "?seed=1#view", "?", "#"} {
+		for _, host := range []string{cid + ".ipfs.inbrowser.link", cid + ".IPFS.InBrowser.Link", strings.ToUpper(cid) + ".IpFs.InBrowser.Link:8443"} {
+			ok, reference := types.IsIPFSGatewayURL("https://" + host + suffix)
+			require.True(t, ok)
+			require.Equal(t, cid+suffix, reference)
+		}
 	}
 }

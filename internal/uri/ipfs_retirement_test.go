@@ -9,6 +9,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
@@ -21,6 +22,7 @@ func TestURLChecker_MigratesBrowserGatewayEvenWhenDirectFetchSucceeds(t *testing
 		"https://ipfs.io/ipfs/" + ref,
 		"https://dweb.link/ipfs/" + ref,
 		"https://" + cid + ".ipfs.inbrowser.link/frame%20one.gif?x=1&x=2#frame",
+		"https://" + cid + ".IPFS.InBrowser.Link/frame%20one.gif?x=1&x=2#frame",
 	} {
 		t.Run(source, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
@@ -44,6 +46,30 @@ func TestURLChecker_MigratesBrowserGatewayEvenWhenDirectFetchSucceeds(t *testing
 			require.Equal(t, "image/png", result.WorkingURLSniffed)
 		})
 	}
+}
+
+func TestURLChecker_HealthyRetiredGatewaySurvivesBlockedReplacements(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	client := mocks.NewMockHTTPClient(ctrl)
+	mio := mocks.NewMockIO(ctrl)
+	passthroughIO(mio)
+	const cid = "QmVJn8AG9x22BrbUaUj2CAQFtKMozSHyLvgV2X6X8dmtPw"
+	const source = "https://ipfs.io/ipfs/" + cid
+	client.EXPECT().GetResponseNoRetry(gomock.Any(), source, probeRangeHeader).
+		Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
+	client.EXPECT().GetResponseNoRetry(gomock.Any(), "https://ipfs.feralfile.com/ipfs/"+cid, probeRangeHeader).
+		Return(nil, ssrf.ErrBlocked)
+	checker := uri.NewURLChecker(client, mio, &uri.Config{
+		IPFSGateways: []string{"https://ipfs.feralfile.com"},
+	})
+	result := checker.Check(context.Background(), source)
+	require.Equal(t, uri.HealthStatusHealthy, result.Status)
+	require.Nil(t, result.WorkingURL)
+	require.Nil(t, result.Error)
+	require.Empty(t, result.FailureReason)
+	require.False(t, result.SSRFBlocked)
+	require.Equal(t, "image/png", result.ObservedContentType)
+	require.Equal(t, "image/png", result.SniffedContentType)
 }
 
 // Migration is conditional on a verified replacement. A temporary alternate

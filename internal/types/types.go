@@ -167,9 +167,16 @@ func IsIPFSGatewayURL(s string) (bool, string) {
 	// Browser redirects use CIDv1 subdomains. Keep the same full-reference
 	// contract so stored redirect targets can migrate without losing iteration
 	// parameters or a path inside an HTML artwork's directory.
-	subdomain := regexp.MustCompile(`^https?://(b[a-z2-7]{10,})\.ipfs\.[a-zA-Z0-9._-]+(?::[0-9]+)?([/?#].*)?$`)
-	if match := subdomain.FindStringSubmatch(s); len(match) == 3 {
-		return true, match[1] + match[2]
+	parsed, err := url.Parse(s)
+	if err != nil || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return false, ""
+	}
+	// DNS hostnames (including base32 CID labels) are case-insensitive. Keep
+	// the suffix byte-for-byte so path case, escaped bytes, and seeds survive.
+	subdomain := regexp.MustCompile(`^(b[a-z2-7]{10,})\.ipfs\.[a-z0-9._-]+(?::[0-9]+)?$`)
+	if match := subdomain.FindStringSubmatch(strings.ToLower(parsed.Host)); len(match) == 2 {
+		suffixStart := strings.Index(s, "://") + 3 + len(parsed.Host)
+		return true, match[1] + s[suffixStart:]
 	}
 	return false, ""
 }

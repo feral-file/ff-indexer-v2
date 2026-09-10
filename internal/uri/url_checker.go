@@ -451,6 +451,11 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		fallback := c.checkGatewayFallback(ctx, result, func(ctx context.Context, probe GatewayProbe) (string, error) {
 			return FindWorkingIPFSGateway(ctx, probe, cid, c.ipfsGateways)
 		})
+		if result.Status == HealthStatusHealthy && fallback.WorkingURL == nil {
+			// A blocked replacement says nothing about the already-validated
+			// source. Direct SSRF refusals still return before fallback above.
+			return result
+		}
 		if result.Status == HealthStatusHealthy && fallback.WorkingURL != nil {
 			// Promotion failure persists the original URL as broken. Give that
 			// failure its actual policy cause rather than inventing an HTTP error
