@@ -70,7 +70,10 @@ cause when promotion of an otherwise healthy retired URL fails. Default pools
 contain `ipfs.feralfile.com` plus fetching fallback `ipfs.filebase.io`; the owned
 gateway is cache-only. The sample configuration and deployment pools in
 `ff-deploy` match this policy. Existing rows migrate on their next health check
-or metadata rebuild.
+or metadata rebuild. If a rebuild cannot validate a replacement for a retired
+HTTP gateway, normalization returns an error before the metadata upsert. Existing
+metadata is preserved for a later retry; the generic URI fallback cannot restore
+the retired URL. This applies to both TZIP-21 and OpenSea-standard media fields.
 
 **The gateway-relative ref keeps its query and fragment.** `types.IsIPFSGatewayURL`
 returns the CID plus any path, query, or fragment, and fallback probes that whole ref.

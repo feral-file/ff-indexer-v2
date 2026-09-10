@@ -167,7 +167,7 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 	}
 
 	// Normalize the metadata based on OpenSea Metadata Standard
-	return r.normalizeOpenSeaMetadataStandard(ctx, tokenCID, metadata), nil
+	return r.normalizeOpenSeaMetadataStandard(ctx, tokenCID, metadata)
 }
 
 // isUnsignedFxhashPlaceholder reports whether TZIP-21 metadata is the static
@@ -212,7 +212,8 @@ func (r *resolver) resolveFA2MetadataFromBigMap(ctx context.Context, contractAdd
 	return metadata
 }
 
-// normalizeTZIP21Metadata normalizes the metadata follow the TZIP21 specs
+// normalizeTZIP21Metadata normalizes the metadata following the TZIP21 specs.
+// Failed retired-gateway replacement aborts normalization before any upsert.
 // https://tzip.tezosagora.org/proposal/tzip-21/
 func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.TokenCID, metadata map[string]interface{}) (*NormalizedMetadata, error) {
 	// Parse the token CID to get the chain ID
@@ -263,24 +264,15 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 	// Resolve the publisher from the token CID
 	publisher := r.resolvePublisher(ctx, tokenCID)
 
-	// Resolve the image and animation URLs
-	if displayUri != "" {
-		resolved, err := r.uriResolver.Resolve(ctx, displayUri)
-		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve display URI, fallback to default gateway", zap.Error(err), zap.String("displayUri", displayUri))
-			displayUri = domain.UriToGateway(displayUri)
-		} else {
-			displayUri = resolved
-		}
+	// Resolve both fields before producing metadata for the atomic upsert. A
+	// retired URL with no validated replacement must leave stored metadata alone.
+	displayUri, err := r.resolveMediaURI(ctx, displayUri)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve display URI: %w", err)
 	}
-	if artifactUri != "" {
-		resolved, err := r.uriResolver.Resolve(ctx, artifactUri)
-		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve artifact URI, fallback to default gateway", zap.Error(err), zap.String("artifactUri", artifactUri))
-			artifactUri = domain.UriToGateway(artifactUri)
-		} else {
-			artifactUri = resolved
-		}
+	artifactUri, err = r.resolveMediaURI(ctx, artifactUri)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve artifact URI: %w", err)
 	}
 
 	normalizedMetadata := &NormalizedMetadata{
@@ -299,9 +291,10 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 	return normalizedMetadata, nil
 }
 
-// normalizeOpenSeaMetadataStandard normalizes the metadata follow the OpenSea metadata standard
+// normalizeOpenSeaMetadataStandard normalizes OpenSea-standard metadata.
+// Failed retired-gateway replacement aborts normalization before any upsert.
 // https://docs.opensea.io/docs/metadata-standards
-func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCID domain.TokenCID, metadata map[string]interface{}) *NormalizedMetadata {
+func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCID domain.TokenCID, metadata map[string]interface{}) (*NormalizedMetadata, error) {
 	var image string
 	var animationURL string
 	var name string
@@ -328,24 +321,13 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 	// Resolve the publisher from the token CID
 	publisher := r.resolvePublisher(ctx, tokenCID)
 
-	// Resolve the image and animation URLs
-	if image != "" {
-		resolved, err := r.uriResolver.Resolve(ctx, image)
-		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve image URI, fallback to default gateway", zap.Error(err), zap.String("image", image))
-			image = domain.UriToGateway(image)
-		} else {
-			image = resolved
-		}
+	image, err := r.resolveMediaURI(ctx, image)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve image URI: %w", err)
 	}
-	if animationURL != "" {
-		resolved, err := r.uriResolver.Resolve(ctx, animationURL)
-		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve animation URL, fallback to default gateway", zap.Error(err), zap.String("animationURL", animationURL))
-			animationURL = domain.UriToGateway(animationURL)
-		} else {
-			animationURL = resolved
-		}
+	animationURL, err = r.resolveMediaURI(ctx, animationURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve animation URL: %w", err)
 	}
 
 	normalizedMetadata := &NormalizedMetadata{
@@ -361,7 +343,28 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 	// Detect mime type from animation_url or image_url
 	normalizedMetadata.MimeType = detectMimeType(ctx, r.httpClient, r.uriResolver, &normalizedMetadata.Animation, &normalizedMetadata.Image)
 
-	return normalizedMetadata
+	return normalizedMetadata, nil
+}
+
+// resolveMediaURI selects a normalized media URL without restoring retired hosts.
+// Reason: UriToGateway leaves HTTP URLs unchanged, so its generic fallback would
+// undo retirement during metadata rebuilds when no replacement validates.
+// Trade-offs: fail that rebuild and retry later, preserving existing metadata.
+// Constraints: only a validated replacement may migrate a retired gateway;
+// native IPFS and other URI failures retain their existing default fallback.
+func (r *resolver) resolveMediaURI(ctx context.Context, source string) (string, error) {
+	if source == "" {
+		return "", nil
+	}
+	resolved, err := r.uriResolver.Resolve(ctx, source)
+	if err == nil {
+		return resolved, nil
+	}
+	if types.IsBrowserIPFSGateway(source) {
+		return "", fmt.Errorf("no validated replacement for retired gateway: %w", err)
+	}
+	logger.WarnCtx(ctx, "failed to resolve media URI, fallback to default gateway", zap.Error(err), zap.String("uri", source))
+	return domain.UriToGateway(source), nil
 }
 
 // resolveArtistName resolves the artist from the metadata
