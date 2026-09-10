@@ -60,6 +60,17 @@ The same validated probe drives gateway selection (`FindWorking*Gateway`, used b
 the health checker's fallback and the URI resolver): a gateway "works" only if its
 content validates, so a directory listing can no longer be stored as a working URL.
 
+**Retiring browser gateways.** `ipfs.io`, `dweb.link`, and `inbrowser.link`
+(including their CID subdomains) are excluded from IPFS candidate pools: native
+fetches are throttled and browser navigations can open a gateway viewer. The
+resolver also repairs HTTP URLs on these hosts. Health checks attempt a validated
+replacement even when a direct fetch happens to succeed; an unavailable
+replacement preserves that direct verdict. `gateway_retired` is the diagnostic
+cause when promotion of an otherwise healthy retired URL fails. Default pools
+contain `ipfs.feralfile.com` plus fetching fallback `ipfs.filebase.io`; the owned
+gateway is cache-only. Deployment pools live in `ff-deploy` and must match this
+policy. Existing rows migrate on their next health check or metadata rebuild.
+
 **The gateway-relative ref keeps its query and fragment.** `types.IsIPFSGatewayURL`
 returns the CID plus any path, query, or fragment, and fallback probes that whole ref.
 A query directly after the CID (`…/ipfs/<cid>?fxhash=x`) must keep the URL recognized:

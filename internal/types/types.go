@@ -164,6 +164,13 @@ func IsIPFSGatewayURL(s string) (bool, string) {
 		return true, cid
 	}
 
+	// Browser redirects use CIDv1 subdomains. Keep the same full-reference
+	// contract so stored redirect targets can migrate without losing iteration
+	// parameters or a path inside an HTML artwork's directory.
+	subdomain := regexp.MustCompile(`^https?://(b[a-z2-7]{10,})\.ipfs\.[a-zA-Z0-9._-]+(?::[0-9]+)?([/?#].*)?$`)
+	if match := subdomain.FindStringSubmatch(s); len(match) == 3 {
+		return true, match[1] + match[2]
+	}
 	return false, ""
 }
 

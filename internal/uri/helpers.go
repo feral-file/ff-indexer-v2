@@ -12,6 +12,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // OnChFSGatewayRef derives the gateway-relative reference for an OnChFS gateway URL: the
@@ -184,6 +185,15 @@ func findWorkingGateway(ctx context.Context, probe GatewayProbe, candidateURLs [
 // retried. The entry point is probe-verified before it is returned, so this can never
 // invent a URL that does not serve.
 func FindWorkingIPFSGateway(ctx context.Context, probe GatewayProbe, ref string, gateways []string) (string, error) {
+	// Even stale deployment config must not let a browser-only gateway win the
+	// parallel race during an interval when its non-browser probe returns 200.
+	mediaGateways := make([]string, 0, len(gateways))
+	for _, gateway := range gateways {
+		if !types.IsBrowserIPFSGateway(gateway) {
+			mediaGateways = append(mediaGateways, gateway)
+		}
+	}
+	gateways = mediaGateways
 	url, sawDirectoryListing, err := findWorkingGateway(ctx, probe, candidateURLs(gateways, "%s/ipfs/%s", ref), "IPFS", ref)
 	if err == nil || !sawDirectoryListing {
 		return url, err

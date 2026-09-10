@@ -432,8 +432,10 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		return result
 	}
 
-	// 3. If healthy, return immediately
-	if result.Status == HealthStatusHealthy {
+	// 3. Retiring public gateways can pass a native probe while redirecting
+	// browser playback to their viewer. Try a validated replacement even during
+	// successful intervals; otherwise existing library URLs never migrate.
+	if result.Status == HealthStatusHealthy && !types.IsBrowserIPFSGateway(url) {
 		return result
 	}
 
@@ -445,10 +447,17 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 
 	// Check if it's an IPFS gateway URL - resolve with CID
 	if isIPFS, cid := types.IsIPFSGatewayURL(url); isIPFS {
-		logger.InfoCtx(ctx, "Direct check failed, trying IPFS gateway resolution", zap.String("url", url), zap.String("cid", cid))
-		return c.checkGatewayFallback(ctx, result, func(ctx context.Context, probe GatewayProbe) (string, error) {
+		logger.InfoCtx(ctx, "Checking alternative IPFS gateways", zap.String("url", url), zap.String("cid", cid))
+		fallback := c.checkGatewayFallback(ctx, result, func(ctx context.Context, probe GatewayProbe) (string, error) {
 			return FindWorkingIPFSGateway(ctx, probe, cid, c.ipfsGateways)
 		})
+		if result.Status == HealthStatusHealthy && fallback.WorkingURL != nil {
+			// Promotion failure persists the original URL as broken. Give that
+			// failure its actual policy cause rather than inventing an HTTP error
+			// or leaving its reason NULL. No replacement keeps the direct verdict.
+			fallback.FailureReason = FailureGatewayRetired
+		}
+		return fallback
 	}
 
 	// Check if it's an Arweave gateway URL - resolve with tx ID

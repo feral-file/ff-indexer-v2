@@ -2294,15 +2294,15 @@ func TestEnhancer_Enhance_Objkt_URIResolverFallback(t *testing.T) {
 	// Mock URI resolver and HTTP client for MIME type detection (using fallback gateway)
 	mocks.uriResolver.
 		EXPECT().
-		Resolve(gomock.Any(), "https://ipfs.io/ipfs/QmTest456").
-		Return("https://ipfs.io/ipfs/QmTest456", nil)
+		Resolve(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmTest456").
+		Return("https://ipfs.filebase.io/ipfs/QmTest456", nil)
 	mocks.httpClient.
 		EXPECT().
-		Head(gomock.Any(), "https://ipfs.io/ipfs/QmTest456").
+		Head(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmTest456").
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialBytes(gomock.Any(), "https://ipfs.io/ipfs/QmTest456", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmTest456", gomock.Any()).
 		Return([]byte("fake data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -2310,8 +2310,8 @@ func TestEnhancer_Enhance_Objkt_URIResolverFallback(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	// Verify that fallback default gateway URLs are used when URI resolver fails
-	assert.Equal(t, "https://ipfs.io/ipfs/QmTest123", *result.ImageURL)
-	assert.Equal(t, "https://ipfs.io/ipfs/QmTest456", *result.AnimationURL)
+	assert.Equal(t, "https://ipfs.filebase.io/ipfs/QmTest123", *result.ImageURL)
+	assert.Equal(t, "https://ipfs.filebase.io/ipfs/QmTest456", *result.AnimationURL)
 }
 
 // TestEnhancer_Enhance_OpenSea_GetCollectionTransientErrorDoesNotBlockNFTEnrichment verifies

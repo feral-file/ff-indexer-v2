@@ -64,7 +64,7 @@ func passthroughIO(mockIO *mocks.MockIO) {
 
 func defaultConfig() *uri.Config {
 	return &uri.Config{
-		IPFSGateways:        []string{"https://ipfs.io"},
+		IPFSGateways:        []string{"https://ipfs.filebase.io"},
 		ArweaveGateways:     []string{"https://arweave.net"},
 		OnChFSGateways:      []string{"https://onchfs.fxhash2.xyz"},
 		KnownBadPageMarkers: []string{"504 gateway time-out"},
@@ -445,11 +445,11 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusNotFound, "", nil, nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid),
+			expectedURL:    strPtr("https://ipfs.filebase.io/ipfs/" + cid),
 		},
 		{
 			// Regression (PR #118 review F1): a transient direct failure must still hand
@@ -465,11 +465,11 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusTooManyRequests, "", nil, nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid),
+			expectedURL:    strPtr("https://ipfs.filebase.io/ipfs/" + cid),
 			expectedReason: uri.FailureHTTPStatus,
 		},
 		{
@@ -481,14 +481,14 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid+"/index.html", probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"/index.html", probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", htmlArtworkDoc(), nil), nil)
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid + "/index.html"),
+			expectedURL:    strPtr("https://ipfs.filebase.io/ipfs/" + cid + "/index.html"),
 		},
 		{
 			name: "directory CID with no index.html entry point is not rescued (feral-file#3482)",
@@ -499,10 +499,10 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid+"/index.html", probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"/index.html", probeRangeHeader).
 					Return(httpResp(http.StatusNotFound, "", nil, nil), nil)
 			},
 			expectedStatus: uri.HealthStatusBroken,
@@ -517,14 +517,14 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid+"?fxhash=oo123", probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid+"?fxhash=oo123", probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"?fxhash=oo123", probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid+"/index.html?fxhash=oo123", probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"/index.html?fxhash=oo123", probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", htmlArtworkDoc(), nil), nil)
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid + "/index.html?fxhash=oo123"),
+			expectedURL:    strPtr("https://ipfs.filebase.io/ipfs/" + cid + "/index.html?fxhash=oo123"),
 		},
 		{
 			name: "query-bearing directory ref heals with the query preserved (fxhash shape)",
@@ -537,14 +537,14 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid+"/?fxhash=oo123", probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid+"/?fxhash=oo123", probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"/?fxhash=oo123", probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid+"/index.html?fxhash=oo123", probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"/index.html?fxhash=oo123", probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", htmlArtworkDoc(), nil), nil)
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid + "/index.html?fxhash=oo123"),
+			expectedURL:    strPtr("https://ipfs.filebase.io/ipfs/" + cid + "/index.html?fxhash=oo123"),
 		},
 		{
 			name: "IPFS fallback with retryable gateway errors keeps the direct broken result, not transient",
@@ -555,7 +555,7 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusNotFound, "", nil, nil), nil)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 					Return(nil, &mockRetryableError{})
 			},
 			expectedStatus: uri.HealthStatusBroken,
@@ -710,7 +710,7 @@ func TestURLChecker_ssrfBlocked_onGatewayProbe(t *testing.T) {
 		GetResponseNoRetry(gomock.Any(), directURL, probeRangeHeader).
 		Return(httpResp(http.StatusNotFound, "", nil, nil), nil)
 	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+		GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 		Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked))
 
 	checker := uri.NewURLChecker(mockHTTP, mockIO, defaultConfig())
@@ -756,7 +756,7 @@ func TestGatewayFallbackPreservesDirectDiagnostics(t *testing.T) {
 		GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
 		Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+		GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 		Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
 
 	checker := uri.NewURLChecker(mockHTTP, mockIO, defaultConfig())
@@ -764,7 +764,7 @@ func TestGatewayFallbackPreservesDirectDiagnostics(t *testing.T) {
 
 	assert.Equal(t, uri.HealthStatusHealthy, result.Status)
 	require.NotNil(t, result.WorkingURL)
-	assert.Equal(t, "https://ipfs.io/ipfs/"+cid, *result.WorkingURL)
+	assert.Equal(t, "https://ipfs.filebase.io/ipfs/"+cid, *result.WorkingURL)
 	assert.Equal(t, uri.FailureDirectoryListing, result.FailureReason,
 		"direct probe's diagnosis must survive fallback success")
 	assert.Equal(t, "text/html", result.ObservedContentType)

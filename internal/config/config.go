@@ -1087,7 +1087,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// URI
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 
-	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
+	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.feralfile.com", domain.DEFAULT_IPFS_GATEWAY})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
 	v.SetDefault("uri.probe_max_bytes", 32*1024)
 	v.SetDefault("uri.known_bad_page_markers", []string{})

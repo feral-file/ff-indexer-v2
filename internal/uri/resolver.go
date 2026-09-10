@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // DefaultProbeMaxBytes is the default size of the validated probe window. 32KB is enough
@@ -94,6 +95,14 @@ func (r *resolver) Resolve(ctx context.Context, uri string) (string, error) {
 	// Handle OnChFS URLs
 	if hash, ok := strings.CutPrefix(uri, "onchfs://"); ok {
 		return FindWorkingOnChFSGateway(ctx, r.probe.gatewayProbe, hash, r.config.OnChFSGateways)
+	}
+
+	// Vendor metadata may already contain an HTTP gateway URL. Treat a retired
+	// gateway like its original IPFS reference rather than returning it verbatim.
+	if types.IsBrowserIPFSGateway(uri) {
+		if ok, ref := types.IsIPFSGatewayURL(uri); ok {
+			return FindWorkingIPFSGateway(ctx, r.probe.gatewayProbe, ref, r.config.IPFSGateways)
+		}
 	}
 
 	// Regular HTTP(S) URL

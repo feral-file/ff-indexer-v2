@@ -64,6 +64,8 @@ const (
 	// MediaFailureKnownErrorPage indicates the body matched a configured known-bad page
 	// marker (gateway error pages served with HTTP 200).
 	MediaFailureKnownErrorPage MediaFailureReason = "known_error_page"
+	// MediaFailureGatewayRetired identifies failed promotion off a browser-only gateway.
+	MediaFailureGatewayRetired MediaFailureReason = "gateway_retired"
 	// MediaFailureZeroLength indicates an empty body or Content-Length: 0.
 	MediaFailureZeroLength MediaFailureReason = "zero_length"
 	// MediaFailureTruncated indicates the body ended before the declared Content-Length.
