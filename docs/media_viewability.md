@@ -74,6 +74,10 @@ or metadata rebuild. If a rebuild cannot validate a replacement for a retired
 HTTP gateway, normalization returns an error before the metadata upsert. Existing
 metadata is preserved for a later retry; the generic URI fallback cannot restore
 the retired URL. This applies to both TZIP-21 and OpenSea-standard media fields.
+Vendor enrichment applies the same policy before persistence: failed replacement
+returns an error before any enrichment upsert, preserving the entire existing
+record (whose media takes display precedence) for the next refresh. A gateway
+outage can therefore also delay other new vendor facts until that retry.
 
 **The gateway-relative ref keeps its query and fragment.** `types.IsIPFSGatewayURL`
 returns the CID plus any path, query, or fragment, and fallback probes that whole ref.

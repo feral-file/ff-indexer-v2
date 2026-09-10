@@ -941,21 +941,21 @@ func TestEnhancer_Enhance_FXHash(t *testing.T) {
 	mocks.uriResolver.
 		EXPECT().
 		Resolve(gomock.Any(), displayURI).
-		Return("https://ipfs.io/ipfs/QmDisplay123", nil)
+		Return("https://ipfs.filebase.io/ipfs/QmDisplay123", nil)
 
 	// MIME type detection resolves the already-resolved image URL and fetches its bytes.
 	// fxhash tokens have no AnimationURL so the image URL is used for detection.
 	mocks.uriResolver.
 		EXPECT().
-		Resolve(gomock.Any(), "https://ipfs.io/ipfs/QmDisplay123").
-		Return("https://ipfs.io/ipfs/QmDisplay123", nil)
+		Resolve(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmDisplay123").
+		Return("https://ipfs.filebase.io/ipfs/QmDisplay123", nil)
 	mocks.httpClient.
 		EXPECT().
-		Head(gomock.Any(), "https://ipfs.io/ipfs/QmDisplay123").
+		Head(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmDisplay123").
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialBytes(gomock.Any(), "https://ipfs.io/ipfs/QmDisplay123", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmDisplay123", gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -967,7 +967,7 @@ func TestEnhancer_Enhance_FXHash(t *testing.T) {
 	require.NotNil(t, result.Name)
 	assert.Equal(t, "Anticyclone #42", *result.Name)
 	require.NotNil(t, result.ImageURL)
-	assert.Equal(t, "https://ipfs.io/ipfs/QmDisplay123", *result.ImageURL)
+	assert.Equal(t, "https://ipfs.filebase.io/ipfs/QmDisplay123", *result.ImageURL)
 	require.Len(t, result.Artists, 1)
 	assert.Equal(t, "Ciphrd", result.Artists[0].Name)
 	expectedDID := domain.NewDID(walletAddr, domain.ChainTezosMainnet)
@@ -1025,7 +1025,7 @@ func TestEnhancer_Enhance_FXHash_ZeroSupply(t *testing.T) {
 	vendorJSON := []byte(`{"iteration":"1"}`)
 	mocks.json.EXPECT().Marshal(gentk).Return(vendorJSON, nil)
 
-	resolvedURL := "https://ipfs.io/ipfs/QmDisplay"
+	resolvedURL := "https://ipfs.filebase.io/ipfs/QmDisplay"
 	mocks.uriResolver.EXPECT().Resolve(gomock.Any(), displayURI).Return(resolvedURL, nil)
 	// MIME type detection re-resolves and probes the image URL.
 	mocks.uriResolver.EXPECT().Resolve(gomock.Any(), resolvedURL).Return(resolvedURL, nil)
@@ -1104,11 +1104,11 @@ func TestEnhancer_Enhance_FXHash_NullFallback(t *testing.T) {
 	m.uriResolver.
 		EXPECT().
 		Resolve(gomock.Any(), displayURI).
-		Return("https://ipfs.io/ipfs/QmDisplay123", nil)
+		Return("https://ipfs.filebase.io/ipfs/QmDisplay123", nil)
 	m.uriResolver.
 		EXPECT().
 		Resolve(gomock.Any(), artifactURI).
-		Return("https://ipfs.io/ipfs/QmArtifact456", nil)
+		Return("https://ipfs.filebase.io/ipfs/QmArtifact456", nil)
 
 	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
 
@@ -1337,11 +1337,11 @@ func TestEnhancer_Enhance_Objkt(t *testing.T) {
 	mocks.uriResolver.
 		EXPECT().
 		Resolve(gomock.Any(), displayURI).
-		Return("https://ipfs.io/ipfs/QmDisplay123", nil)
+		Return("https://ipfs.filebase.io/ipfs/QmDisplay123", nil)
 	mocks.uriResolver.
 		EXPECT().
 		Resolve(gomock.Any(), artifactURI).
-		Return("https://ipfs.io/ipfs/QmArtifact456", nil)
+		Return("https://ipfs.filebase.io/ipfs/QmArtifact456", nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
 
@@ -1354,9 +1354,9 @@ func TestEnhancer_Enhance_Objkt(t *testing.T) {
 	assert.NotNil(t, result.Description)
 	assert.Equal(t, "A generative artwork", *result.Description)
 	assert.NotNil(t, result.ImageURL)
-	assert.Equal(t, "https://ipfs.io/ipfs/QmDisplay123", *result.ImageURL)
+	assert.Equal(t, "https://ipfs.filebase.io/ipfs/QmDisplay123", *result.ImageURL)
 	assert.NotNil(t, result.AnimationURL)
-	assert.Equal(t, "https://ipfs.io/ipfs/QmArtifact456", *result.AnimationURL)
+	assert.Equal(t, "https://ipfs.filebase.io/ipfs/QmArtifact456", *result.AnimationURL)
 	assert.NotNil(t, result.MimeType)
 	assert.Equal(t, mime, *result.MimeType)
 	assert.Len(t, result.Artists, 1)

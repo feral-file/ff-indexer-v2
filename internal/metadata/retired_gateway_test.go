@@ -5,9 +5,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
@@ -47,6 +50,33 @@ func TestResolver_RetiredGatewayFailure(t *testing.T) {
 			assert.ErrorIs(t, err, assert.AnError)
 			assert.Nil(t, result, "failed normalization must leave existing persisted metadata untouched")
 			assert.Equal(t, source, data[field], "the original vendor metadata remains intact")
+		})
+	}
+}
+
+// TestEnhancer_RetiredGatewayFailure verifies that enrichment after a failed
+// normalization cannot emit an upsert that overwrites migrated enrichment.
+func TestEnhancer_RetiredGatewayFailure(t *testing.T) {
+	for _, vendor := range []string{"objkt", "opensea"} {
+		t.Run(vendor, func(t *testing.T) {
+			m := setupTestEnhancer(t)
+			source := "https://ipfs.io/ipfs/QmVJn8AG9x22BrbUaUj2CAQFtKMozSHyLvgV2X6X8dmtPw"
+			name := "SUNRISE"
+			cid := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1LjmAdYQCLBjwv4S2oFkEzyHVkomAf5MrW", "15422")
+			if vendor == "objkt" {
+				token := &objkt.Token{Name: &name, DisplayURI: &source, ArtifactURI: &source}
+				m.objktClient.EXPECT().GetToken(gomock.Any(), gomock.Any(), "15422").Return(token, nil)
+				m.json.EXPECT().Marshal(token).Return([]byte(`{"name":"SUNRISE"}`), nil)
+			} else {
+				cid = domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "15422")
+				token := &opensea.NFTMetadata{Name: &name, ImageURL: &source, DisplayAnimationURL: &source}
+				m.openseaClient.EXPECT().GetNFT(gomock.Any(), gomock.Any(), "15422").Return(token, nil)
+				m.json.EXPECT().Marshal(token).Return([]byte(`{"name":"SUNRISE"}`), nil)
+			}
+			m.uriResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Return("", assert.AnError).AnyTimes()
+			result, err := m.enhancer.Enhance(context.Background(), cid, nil)
+			assert.ErrorIs(t, err, assert.AnError)
+			assert.Nil(t, result, "keep the entire existing enrichment record on resolution failure")
 		})
 	}
 }

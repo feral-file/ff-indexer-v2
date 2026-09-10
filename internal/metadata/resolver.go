@@ -266,11 +266,11 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 
 	// Resolve both fields before producing metadata for the atomic upsert. A
 	// retired URL with no validated replacement must leave stored metadata alone.
-	displayUri, err := r.resolveMediaURI(ctx, displayUri)
+	displayUri, err := resolveMediaURI(ctx, r.uriResolver, displayUri)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve display URI: %w", err)
 	}
-	artifactUri, err = r.resolveMediaURI(ctx, artifactUri)
+	artifactUri, err = resolveMediaURI(ctx, r.uriResolver, artifactUri)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve artifact URI: %w", err)
 	}
@@ -321,11 +321,11 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 	// Resolve the publisher from the token CID
 	publisher := r.resolvePublisher(ctx, tokenCID)
 
-	image, err := r.resolveMediaURI(ctx, image)
+	image, err := resolveMediaURI(ctx, r.uriResolver, image)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve image URI: %w", err)
 	}
-	animationURL, err = r.resolveMediaURI(ctx, animationURL)
+	animationURL, err = resolveMediaURI(ctx, r.uriResolver, animationURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve animation URL: %w", err)
 	}
@@ -344,27 +344,6 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 	normalizedMetadata.MimeType = detectMimeType(ctx, r.httpClient, r.uriResolver, &normalizedMetadata.Animation, &normalizedMetadata.Image)
 
 	return normalizedMetadata, nil
-}
-
-// resolveMediaURI selects a normalized media URL without restoring retired hosts.
-// Reason: UriToGateway leaves HTTP URLs unchanged, so its generic fallback would
-// undo retirement during metadata rebuilds when no replacement validates.
-// Trade-offs: fail that rebuild and retry later, preserving existing metadata.
-// Constraints: only a validated replacement may migrate a retired gateway;
-// native IPFS and other URI failures retain their existing default fallback.
-func (r *resolver) resolveMediaURI(ctx context.Context, source string) (string, error) {
-	if source == "" {
-		return "", nil
-	}
-	resolved, err := r.uriResolver.Resolve(ctx, source)
-	if err == nil {
-		return resolved, nil
-	}
-	if types.IsBrowserIPFSGateway(source) {
-		return "", fmt.Errorf("no validated replacement for retired gateway: %w", err)
-	}
-	logger.WarnCtx(ctx, "failed to resolve media URI, fallback to default gateway", zap.Error(err), zap.String("uri", source))
-	return domain.UriToGateway(source), nil
 }
 
 // resolveArtistName resolves the artist from the metadata
