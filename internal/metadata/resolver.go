@@ -106,6 +106,10 @@ func (r *resolver) RawHash(metadata *NormalizedMetadata) ([]byte, []byte, error)
 	return hash[:], metadataJSON, nil
 }
 
+// Resolve normalizes authoritative metadata for a token, refreshing stale FA2
+// placeholders from their big-map URI when available. Retirement failures must
+// reach the caller so no cached placeholder can overwrite stored signed metadata;
+// unrelated refresh failures retain the existing cached-metadata fallback.
 func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*NormalizedMetadata, error) {
 	chainID, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
@@ -142,7 +146,11 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 		// placeholder, re-resolve from the big map, which is the on-chain
 		// source of truth.
 		if isUnsignedFxhashPlaceholder(metadata) {
-			if fresh := r.resolveFA2MetadataFromBigMap(ctx, contractAddress, tokenNumber); fresh != nil {
+			fresh, err := r.resolveFA2MetadataFromBigMap(ctx, contractAddress, tokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("failed to refresh FA2 metadata: %w", err)
+			}
+			if fresh != nil {
 				metadata = fresh
 			}
 		}
@@ -167,7 +175,7 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 	}
 
 	// Normalize the metadata based on OpenSea Metadata Standard
-	return r.normalizeOpenSeaMetadataStandard(ctx, tokenCID, metadata), nil
+	return r.normalizeOpenSeaMetadataStandard(ctx, tokenCID, metadata)
 }
 
 // isUnsignedFxhashPlaceholder reports whether TZIP-21 metadata is the static
@@ -184,10 +192,12 @@ func isUnsignedFxhashPlaceholder(metadata map[string]interface{}) bool {
 }
 
 // resolveFA2MetadataFromBigMap re-resolves token metadata from the contract's
-// token_metadata big map, bypassing TzKT's cached snapshot. Returns nil when
-// the authoritative document can't be found or fetched, in which case callers
-// keep the cached metadata.
-func (r *resolver) resolveFA2MetadataFromBigMap(ctx context.Context, contractAddress string, tokenNumber string) map[string]interface{} {
+// token_metadata big map, bypassing TzKT's cached snapshot.
+// Reason: a swallowed retirement error lets a stale placeholder replace signed
+// metadata already in storage. Constraints: preserve the classified error chain.
+// Trade-off: unrelated lookup/fetch failures still return (nil, nil), retaining
+// the existing cached fallback; retirement failures abort this refresh attempt.
+func (r *resolver) resolveFA2MetadataFromBigMap(ctx context.Context, contractAddress string, tokenNumber string) (map[string]interface{}, error) {
 	metadataURI, err := r.tzClient.GetTokenMetadataURI(ctx, contractAddress, tokenNumber)
 	if err != nil || metadataURI == "" {
 		logger.WarnCtx(ctx, "Failed to read token_metadata big map URI, keeping TzKT cached metadata",
@@ -195,24 +205,28 @@ func (r *resolver) resolveFA2MetadataFromBigMap(ctx context.Context, contractAdd
 			zap.String("tokenNumber", tokenNumber),
 			zap.Error(err),
 		)
-		return nil
+		return nil, nil
 	}
 
 	metadata, err := r.fetchMetadataFromURI(ctx, metadataURI)
 	if err != nil {
+		if errors.Is(err, uri.ErrRetiredGatewayReplacement) {
+			return nil, err
+		}
 		logger.WarnCtx(ctx, "Failed to fetch metadata from big map URI, keeping TzKT cached metadata",
 			zap.String("contractAddress", contractAddress),
 			zap.String("tokenNumber", tokenNumber),
 			zap.String("metadataURI", metadataURI),
 			zap.Error(err),
 		)
-		return nil
+		return nil, nil
 	}
 
-	return metadata
+	return metadata, nil
 }
 
-// normalizeTZIP21Metadata normalizes the metadata follow the TZIP21 specs
+// normalizeTZIP21Metadata normalizes the metadata following the TZIP21 specs.
+// Failed retired-gateway replacement aborts normalization before any upsert.
 // https://tzip.tezosagora.org/proposal/tzip-21/
 func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.TokenCID, metadata map[string]interface{}) (*NormalizedMetadata, error) {
 	// Parse the token CID to get the chain ID
@@ -263,24 +277,15 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 	// Resolve the publisher from the token CID
 	publisher := r.resolvePublisher(ctx, tokenCID)
 
-	// Resolve the image and animation URLs
-	if displayUri != "" {
-		resolved, err := r.uriResolver.Resolve(ctx, displayUri)
-		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve display URI, fallback to default gateway", zap.Error(err), zap.String("displayUri", displayUri))
-			displayUri = domain.UriToGateway(displayUri)
-		} else {
-			displayUri = resolved
-		}
+	// Resolve both fields before producing metadata for the atomic upsert. A
+	// retired URL with no validated replacement must leave stored metadata alone.
+	displayUri, err := resolveMediaURI(ctx, r.uriResolver, displayUri)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve display URI: %w", err)
 	}
-	if artifactUri != "" {
-		resolved, err := r.uriResolver.Resolve(ctx, artifactUri)
-		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve artifact URI, fallback to default gateway", zap.Error(err), zap.String("artifactUri", artifactUri))
-			artifactUri = domain.UriToGateway(artifactUri)
-		} else {
-			artifactUri = resolved
-		}
+	artifactUri, err = resolveMediaURI(ctx, r.uriResolver, artifactUri)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve artifact URI: %w", err)
 	}
 
 	normalizedMetadata := &NormalizedMetadata{
@@ -299,9 +304,10 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 	return normalizedMetadata, nil
 }
 
-// normalizeOpenSeaMetadataStandard normalizes the metadata follow the OpenSea metadata standard
+// normalizeOpenSeaMetadataStandard normalizes OpenSea-standard metadata.
+// Failed retired-gateway replacement aborts normalization before any upsert.
 // https://docs.opensea.io/docs/metadata-standards
-func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCID domain.TokenCID, metadata map[string]interface{}) *NormalizedMetadata {
+func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCID domain.TokenCID, metadata map[string]interface{}) (*NormalizedMetadata, error) {
 	var image string
 	var animationURL string
 	var name string
@@ -328,24 +334,13 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 	// Resolve the publisher from the token CID
 	publisher := r.resolvePublisher(ctx, tokenCID)
 
-	// Resolve the image and animation URLs
-	if image != "" {
-		resolved, err := r.uriResolver.Resolve(ctx, image)
-		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve image URI, fallback to default gateway", zap.Error(err), zap.String("image", image))
-			image = domain.UriToGateway(image)
-		} else {
-			image = resolved
-		}
+	image, err := resolveMediaURI(ctx, r.uriResolver, image)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve image URI: %w", err)
 	}
-	if animationURL != "" {
-		resolved, err := r.uriResolver.Resolve(ctx, animationURL)
-		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve animation URL, fallback to default gateway", zap.Error(err), zap.String("animationURL", animationURL))
-			animationURL = domain.UriToGateway(animationURL)
-		} else {
-			animationURL = resolved
-		}
+	animationURL, err = resolveMediaURI(ctx, r.uriResolver, animationURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve animation URL: %w", err)
 	}
 
 	normalizedMetadata := &NormalizedMetadata{
@@ -361,7 +356,7 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 	// Detect mime type from animation_url or image_url
 	normalizedMetadata.MimeType = detectMimeType(ctx, r.httpClient, r.uriResolver, &normalizedMetadata.Animation, &normalizedMetadata.Image)
 
-	return normalizedMetadata
+	return normalizedMetadata, nil
 }
 
 // resolveArtistName resolves the artist from the metadata

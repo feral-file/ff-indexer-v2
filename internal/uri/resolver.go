@@ -2,15 +2,23 @@ package uri
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // DefaultProbeMaxBytes is the default size of the validated probe window. 32KB is enough
 // for every container-header check and for directory-listing/error-page markers, while
 // keeping a full-corpus sweep's bandwidth bounded.
 const DefaultProbeMaxBytes = 32 * 1024
+
+// ErrRetiredGatewayReplacement marks a retired HTTP gateway without a validated
+// replacement. Callers must preserve stored metadata and enrichment for retry,
+// rather than treating this as missing metadata and selecting a generic vendor.
+var ErrRetiredGatewayReplacement = errors.New("no validated replacement for retired gateway")
 
 // Config holds configuration for the URI resolver and URL checker
 type Config struct {
@@ -57,6 +65,8 @@ type Resolver interface {
 	// (application/x-directory): it is retried once with its index.html entry point, so
 	// directory artworks resolve to their playable document (feral-file#3482)
 	// If no gateway serves valid content, it returns an error
+	// Retired HTTP URLs wrap ErrRetiredGatewayReplacement on failure, including
+	// unsupported address forms such as IPNS that cannot be rewritten by CID.
 	Resolve(ctx context.Context, uri string) (string, error)
 }
 
@@ -80,6 +90,9 @@ func NewResolver(httpClient adapter.HTTPClient, io adapter.IO, config *Config) R
 	}
 }
 
+// Resolve selects validated gateways for content-addressed and retired URLs.
+// A retired URL without a validated equivalent returns a classified error so
+// callers preserve stored data instead of falling back to generic vendor media.
 func (r *resolver) Resolve(ctx context.Context, uri string) (string, error) {
 	// Handle IPFS URLs
 	if cid, ok := strings.CutPrefix(uri, "ipfs://"); ok {
@@ -94,6 +107,20 @@ func (r *resolver) Resolve(ctx context.Context, uri string) (string, error) {
 	// Handle OnChFS URLs
 	if hash, ok := strings.CutPrefix(uri, "onchfs://"); ok {
 		return FindWorkingOnChFSGateway(ctx, r.probe.gatewayProbe, hash, r.config.OnChFSGateways)
+	}
+
+	// Vendor metadata may already contain an HTTP gateway URL. Treat a retired
+	// gateway like its original IPFS reference rather than returning it verbatim.
+	if types.IsBrowserIPFSGateway(uri) {
+		ok, ref := types.IsIPFSGatewayURL(uri)
+		if !ok {
+			return "", fmt.Errorf("%w: unsupported gateway address", ErrRetiredGatewayReplacement)
+		}
+		resolved, err := FindWorkingIPFSGateway(ctx, r.probe.gatewayProbe, ref, r.config.IPFSGateways)
+		if err != nil {
+			return "", fmt.Errorf("%w: %w", ErrRetiredGatewayReplacement, err)
+		}
+		return resolved, nil
 	}
 
 	// Regular HTTP(S) URL

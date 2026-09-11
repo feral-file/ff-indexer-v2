@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.uber.org/zap"
@@ -10,6 +11,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
+	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
@@ -55,7 +57,10 @@ func (w *coreWorkflows) IndexMetadataUpdate(ctx context.Context, event *domain.B
 	return nil
 }
 
-// IndexTokenMetadata indexes token metadata
+// IndexTokenMetadata indexes metadata, enrichment, and media health.
+// Retirement failures stop the attempt before publisher context is lost and a
+// generic vendor can overwrite preserved enrichment. Other fetch failures and
+// vendor-only tokens retain their existing enrichment path.
 func (w *coreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
 	logger.InfoCtx(ctx, "Indexing token metadata", zap.String("tokenCID", tokenCID.String()))
 
@@ -73,6 +78,11 @@ func (w *coreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Error(err),
 		)
+		if errors.Is(err, uri.ErrRetiredGatewayReplacement) {
+			// Leave metadata, enrichment, viewability, and notifications intact
+			// for retry; nil metadata here does not mean vendor-only metadata.
+			return err
+		}
 		// Log the error but don't fail the workflow
 	}
 

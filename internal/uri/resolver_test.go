@@ -59,13 +59,13 @@ func TestResolver_Resolve(t *testing.T) {
 			name: "IPFS URI resolves to gateway serving valid content",
 			uri:  "ipfs://" + cid,
 			config: &uri.Config{
-				IPFSGateways: []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
+				IPFSGateways: []string{"https://ipfs.filebase.io", "https://gateway.pinata.cloud"},
 			},
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
 				passthroughIO(mio)
 				// First gateway 404s so only the second can win (deterministic outcome).
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusNotFound, "", nil, nil), nil).
 					AnyTimes()
 				m.EXPECT().
@@ -79,13 +79,13 @@ func TestResolver_Resolve(t *testing.T) {
 			name: "IPFS URI: gateway serving a directory listing is not selected (feral-file#3482)",
 			uri:  "ipfs://" + cid,
 			config: &uri.Config{
-				IPFSGateways: []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
+				IPFSGateways: []string{"https://ipfs.filebase.io", "https://gateway.pinata.cloud"},
 			},
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
 				passthroughIO(mio)
 				// First gateway 200s a directory listing — previously this won on bare HEAD.
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil).
 					AnyTimes()
 				m.EXPECT().
@@ -99,37 +99,37 @@ func TestResolver_Resolve(t *testing.T) {
 			name: "IPFS directory CID resolves to its index.html entry point (feral-file#3482)",
 			uri:  "ipfs://" + cid,
 			config: &uri.Config{
-				IPFSGateways: []string{"https://ipfs.io"},
+				IPFSGateways: []string{"https://ipfs.filebase.io"},
 			},
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
 				passthroughIO(mio)
 				// Every gateway serves a listing for the bare CID: the ref is a directory,
 				// so selection retries the directory's index.html entry point.
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil).
 					AnyTimes()
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid+"/index.html", probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"/index.html", probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", htmlArtworkDoc(), nil), nil).
 					AnyTimes()
 			},
-			expected: "https://ipfs.io/ipfs/" + cid + "/index.html",
+			expected: "https://ipfs.filebase.io/ipfs/" + cid + "/index.html",
 		},
 		{
 			name: "IPFS directory CID with no index.html entry point stays unresolved",
 			uri:  "ipfs://" + cid,
 			config: &uri.Config{
-				IPFSGateways: []string{"https://ipfs.io"},
+				IPFSGateways: []string{"https://ipfs.filebase.io"},
 			},
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
 				passthroughIO(mio)
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil).
 					AnyTimes()
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid+"/index.html", probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"/index.html", probeRangeHeader).
 					Return(httpResp(http.StatusNotFound, "", nil, nil), nil).
 					AnyTimes()
 			},

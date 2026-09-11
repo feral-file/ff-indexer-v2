@@ -146,10 +146,7 @@ budgeted_indexing_default_daily_quota: 10
 
 uri:
   ipfs_gateways:
-    - https://ipfs.io
-    - https://cloudflare-ipfs.com
     - https://ipfs.feralfile.com
-    - https://dweb.link
     - https://ipfs.filebase.io
   arweave_gateways:
     - https://arweave.net
@@ -197,10 +194,7 @@ media_health_sweeper:
   # section above (gateways, probe_max_bytes, known_bad_page_markers).
   uri:
     ipfs_gateways:
-      - https://ipfs.io
-      - https://cloudflare-ipfs.com
       - https://ipfs.feralfile.com
-      - https://dweb.link
       - https://ipfs.filebase.io
     arweave_gateways:
       - https://arweave.net

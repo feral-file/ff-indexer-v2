@@ -78,7 +78,9 @@ func moderationStatusFromVendorSpam(spam bool) schema.ModerationStatus {
 //
 //go:generate mockgen -source=enhancer.go -destination=../mocks/metadata_enhancer.go -package=mocks -mock_names=Enhancer=MockMetadataEnhancer
 type Enhancer interface {
-	// Enhance enhances metadata from vendor APIs based on the token CID and returns enriched data
+	// Enhance enriches metadata from vendors and retires browser-gateway media.
+	// A failed retired-gateway replacement aborts enrichment before its upsert,
+	// preserving the entire existing enrichment record for a later retry.
 	Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *NormalizedMetadata) (*EnhancedMetadata, error)
 
 	// VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
@@ -127,7 +129,9 @@ func (e *enhancer) VendorJsonHash(metadata *EnhancedMetadata) ([]byte, error) {
 	return hash[:], nil
 }
 
-// Enhance enhances metadata from vendor APIs based on the token CID
+// Enhance enriches metadata from vendors and retires browser-gateway media.
+// A failed retired-gateway replacement aborts enrichment before its upsert,
+// preserving the entire existing enrichment record for a later retry.
 func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *NormalizedMetadata) (*EnhancedMetadata, error) {
 	chain, _, contractAddress, tokenNumber := tokenCID.Parse()
 
@@ -186,6 +190,14 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 		default:
 			// No enhancement available
 			return nil, nil
+		}
+	}
+
+	// Vendors can provide direct HTTP URLs without the per-vendor URI resolver.
+	// Apply retirement before MIME detection or any enrichment upsert.
+	if enhancedMetadata != nil {
+		if err := e.resolveRetiredMedia(ctx, enhancedMetadata); err != nil {
+			return nil, err
 		}
 	}
 
@@ -448,13 +460,11 @@ func (e *enhancer) enhanceFxhash(ctx context.Context, contractAddress, tokenNumb
 	// fxhash generative tokens do not produce a static artifact URI; display_uri
 	// is the preview image generated at mint time.
 	if !types.StringNilOrEmpty(gentk.DisplayURI) {
-		resolved, err := e.uriResolver.Resolve(ctx, *gentk.DisplayURI)
-		if err != nil {
-			logger.WarnCtx(ctx, "failed to resolve fxhash display URI, fallback to default gateway", zap.Error(err), zap.String("displayURI", *gentk.DisplayURI))
-			url := domain.UriToGateway(*gentk.DisplayURI)
-			enhanced.ImageURL = &url
-		} else {
+		resolved, err := resolveMediaURI(ctx, e.uriResolver, *gentk.DisplayURI)
+		if err == nil {
 			enhanced.ImageURL = &resolved
+		} else {
+			return nil, fmt.Errorf("failed to replace retired vendor media URI: %w", err)
 		}
 	}
 
@@ -554,25 +564,21 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 
 	// Set display_uri as image (this is the main display image)
 	if !types.StringNilOrEmpty(token.DisplayURI) {
-		resolved, err := e.uriResolver.Resolve(ctx, *token.DisplayURI)
-		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve display URI, fallback to default gateway", zap.Error(err), zap.String("displayURI", *token.DisplayURI))
-			url := domain.UriToGateway(*token.DisplayURI)
-			enhanced.ImageURL = &url
-		} else {
+		resolved, err := resolveMediaURI(ctx, e.uriResolver, *token.DisplayURI)
+		if err == nil {
 			enhanced.ImageURL = &resolved
+		} else {
+			return nil, fmt.Errorf("failed to replace retired vendor media URI: %w", err)
 		}
 	}
 
 	// Set artifact_uri as animation_url (this is the actual artwork/animation)
 	if !types.StringNilOrEmpty(token.ArtifactURI) {
-		resolved, err := e.uriResolver.Resolve(ctx, *token.ArtifactURI)
-		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve artifact URI, fallback to default gateway", zap.Error(err), zap.String("artifactURI", *token.ArtifactURI))
-			url := domain.UriToGateway(*token.ArtifactURI)
-			enhanced.AnimationURL = &url
-		} else {
+		resolved, err := resolveMediaURI(ctx, e.uriResolver, *token.ArtifactURI)
+		if err == nil {
 			enhanced.AnimationURL = &resolved
+		} else {
+			return nil, fmt.Errorf("failed to replace retired vendor media URI: %w", err)
 		}
 	}
 

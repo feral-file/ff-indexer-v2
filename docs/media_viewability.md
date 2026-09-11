@@ -60,6 +60,51 @@ The same validated probe drives gateway selection (`FindWorking*Gateway`, used b
 the health checker's fallback and the URI resolver): a gateway "works" only if its
 content validates, so a directory listing can no longer be stored as a working URL.
 
+**Retiring browser gateways.** `ipfs.io`, `dweb.link`, and `inbrowser.link`
+(including their case-insensitive CID subdomains) are excluded from IPFS candidate pools: native
+fetches are throttled and browser navigations can open a gateway viewer. The
+resolver also repairs HTTP URLs on these hosts. For supported CID addresses,
+health checks attempt a validated replacement even when a direct fetch succeeds;
+an unavailable replacement preserves that direct verdict. Unsupported retired
+addresses (IPNS, malformed CID paths/subdomains, userinfo, or a bare gateway root) cannot
+migrate through the CID resolver: a successful native probe returns
+`broken`/`gateway_retired`, with its content observations retained. Their existing
+probe failures keep their specific causes, including transient errors that are
+never persisted and final SSRF refusals. These URLs need a corrected source before
+they can become healthy; stored metadata is retained, but viewability can fall
+until a usable media URL is supplied. `gateway_retired` also diagnoses failed
+promotion of an otherwise healthy retired URL. Default pools
+contain `ipfs.feralfile.com` plus fetching fallback `ipfs.filebase.io`; the owned
+gateway is cache-only. The shipped `config/.env` (loaded by local startup and
+Docker Compose, overriding YAML and Viper defaults), sample YAML configuration,
+and deployment pools in `ff-deploy` match this policy. Existing rows migrate on their next health check
+or metadata rebuild. If a rebuild cannot validate a replacement for a retired
+HTTP gateway, normalization returns an error before the metadata upsert. Existing
+metadata is preserved for a later retry; the generic URI fallback cannot restore
+the retired URL. This applies to both TZIP-21 and OpenSea-standard media fields.
+Vendor enrichment applies the same policy before persistence: failed replacement
+returns an error before any enrichment upsert, preserving the entire existing
+record (whose media takes display precedence) for the next refresh. A gateway
+outage can therefore also delay other new vendor facts until that retry.
+
+Retired-gateway replacement failures carry `uri.ErrRetiredGatewayReplacement`
+through metadata normalization and executor error wrapping. `IndexTokenMetadata`
+returns that error before enrichment, viewability updates, notifications, or child
+media jobs: missing normalized metadata after a failed replacement must not erase
+known-publisher context and let a generic vendor overwrite preserved enrichment.
+Vendor-only tokens and unrelated metadata-fetch failures still use the existing
+vendor enrichment path. Unsupported retired gateway addresses, including IPNS
+paths/subdomains and unrecognized CID forms, return the same replacement error;
+they cannot be returned as a successfully resolved URL or persisted by a rebuild.
+Retirement follows the actual hostname even when a URL contains user information;
+the CID resolver rejects those userinfo forms without forwarding credentials.
+
+The optional FA2 big-map refresh follows the same error policy. If TzKT still
+returns an unsigned fxhash placeholder and the authoritative metadata URI fails
+retirement, the classified error escapes the refresh and stops indexing before
+the placeholder can overwrite stored signed metadata. Unrelated big-map lookup,
+URI resolution, and HTTP fetch failures retain the existing cached fallback.
+
 **The gateway-relative ref keeps its query and fragment.** `types.IsIPFSGatewayURL`
 returns the CID plus any path, query, or fragment, and fallback probes that whole ref.
 A query directly after the CID (`…/ipfs/<cid>?fxhash=x`) must keep the URL recognized:
@@ -109,6 +154,7 @@ SSRF policy refusals are final and never trigger gateway fallback. DNS failures 
 | `transport` | transport-level fetch failure with no more specific entry (TLS, protocol, non-retryable connection errors) | probe |
 | `data_uri_invalid` | data: URI failed RFC 2397 parsing | data URI checker |
 | `unsupported_mime_type` | data: URI declared a mime type outside the supported set | data URI checker |
+| `gateway_retired` | an otherwise healthy retired address has no supported CID form, or its validated replacement could not be propagated; the original URL is persisted as broken | gateway retirement |
 | `render_*` | **reserved for the L1 render probe** | render probe |
 
 `failure_reason` is NULL only for healthy and unknown rows: every broken verdict carries

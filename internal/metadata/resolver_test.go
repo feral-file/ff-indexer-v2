@@ -918,15 +918,15 @@ func TestResolver_Resolve_URIResolverFallback(t *testing.T) {
 	// Mock URI resolver and HTTP client for MIME type detection (using fallback gateway URL)
 	mocks.uriResolver.
 		EXPECT().
-		Resolve(gomock.Any(), "https://ipfs.io/ipfs/QmArtifact").
-		Return("https://ipfs.io/ipfs/QmArtifact", nil)
+		Resolve(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmArtifact").
+		Return("https://ipfs.filebase.io/ipfs/QmArtifact", nil)
 	mocks.httpClient.
 		EXPECT().
-		Head(gomock.Any(), "https://ipfs.io/ipfs/QmArtifact").
+		Head(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmArtifact").
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialBytes(gomock.Any(), "https://ipfs.io/ipfs/QmArtifact", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmArtifact", gomock.Any()).
 		Return([]byte("fake artifact data"), nil)
 
 	// Mock registry lookup for publisher resolution
@@ -955,6 +955,6 @@ func TestResolver_Resolve_URIResolverFallback(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	// Verify that fallback default gateway URLs are used when URI resolver fails
-	assert.Equal(t, "https://ipfs.io/ipfs/QmDisplay", result.Image)
-	assert.Equal(t, "https://ipfs.io/ipfs/QmArtifact", result.Animation)
+	assert.Equal(t, "https://ipfs.filebase.io/ipfs/QmDisplay", result.Image)
+	assert.Equal(t, "https://ipfs.filebase.io/ipfs/QmArtifact", result.Animation)
 }

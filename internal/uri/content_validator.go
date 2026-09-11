@@ -33,6 +33,8 @@ const (
 	FailureDirectoryListing FailureReason = "directory_listing"
 	// FailureKnownErrorPage indicates the body matched a configured known-bad page marker.
 	FailureKnownErrorPage FailureReason = "known_error_page"
+	// FailureGatewayRetired indicates a browser-only gateway awaiting replacement.
+	FailureGatewayRetired FailureReason = "gateway_retired"
 	// FailureZeroLength indicates an empty body.
 	FailureZeroLength FailureReason = "zero_length"
 	// FailureTruncated indicates the body ended before the declared length.
