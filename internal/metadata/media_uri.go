@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.uber.org/zap"
@@ -15,7 +16,8 @@ import (
 // resolveMediaURI selects a normalized media URL without restoring retired hosts.
 // Reason: UriToGateway leaves HTTP URLs unchanged, so its generic fallback would
 // undo retirement during metadata rebuilds when no replacement validates.
-// Trade-offs: fail that rebuild and retry later, preserving existing metadata.
+// Trade-offs: fail that rebuild and retry later, preserving existing metadata
+// and enrichment. The typed retirement error survives normalization wrappers.
 // Constraints: only a validated replacement may migrate a retired gateway;
 // native IPFS and other URI failures retain their existing default fallback.
 func resolveMediaURI(ctx context.Context, resolver uri.Resolver, source string) (string, error) {
@@ -26,8 +28,11 @@ func resolveMediaURI(ctx context.Context, resolver uri.Resolver, source string) 
 	if err == nil {
 		return resolved, nil
 	}
-	if types.IsBrowserIPFSGateway(source) {
-		return "", fmt.Errorf("no validated replacement for retired gateway: %w", err)
+	if types.IsBrowserIPFSGateway(source) && !errors.Is(err, uri.ErrRetiredGatewayReplacement) {
+		err = fmt.Errorf("%w: %w", uri.ErrRetiredGatewayReplacement, err)
+	}
+	if errors.Is(err, uri.ErrRetiredGatewayReplacement) {
+		return "", err
 	}
 	logger.WarnCtx(ctx, "failed to resolve media URI, fallback to default gateway", zap.Error(err), zap.String("uri", source))
 	return domain.UriToGateway(source), nil

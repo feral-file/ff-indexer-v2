@@ -79,6 +79,16 @@ returns an error before any enrichment upsert, preserving the entire existing
 record (whose media takes display precedence) for the next refresh. A gateway
 outage can therefore also delay other new vendor facts until that retry.
 
+Retired-gateway replacement failures carry `uri.ErrRetiredGatewayReplacement`
+through metadata normalization and executor error wrapping. `IndexTokenMetadata`
+returns that error before enrichment, viewability updates, notifications, or child
+media jobs: missing normalized metadata after a failed replacement must not erase
+known-publisher context and let a generic vendor overwrite preserved enrichment.
+Vendor-only tokens and unrelated metadata-fetch failures still use the existing
+vendor enrichment path. Unsupported retired gateway addresses, including IPNS
+paths/subdomains and unrecognized CID forms, return the same replacement error;
+they cannot be returned as a successfully resolved URL or persisted by a rebuild.
+
 **The gateway-relative ref keeps its query and fragment.** `types.IsIPFSGatewayURL`
 returns the CID plus any path, query, or fragment, and fallback probes that whole ref.
 A query directly after the CID (`…/ipfs/<cid>?fxhash=x`) must keep the URL recognized:

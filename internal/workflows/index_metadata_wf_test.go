@@ -192,10 +192,12 @@ func TestIndexTokenMetadata_FetchMetadataError(t *testing.T) {
 	stubJqAnyEnqueue(f.MockJQ)
 
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	vendorURL := "https://example.com/vendor-image.gif"
 	f.Exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tokenCID).Return(nil, errors.New("failed to fetch metadata"))
-	f.Exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tokenCID, gomock.Any()).Return(nil, nil)
-	f.Exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+	f.Exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tokenCID, (*metadata.NormalizedMetadata)(nil)).
+		Return(&metadata.EnhancedMetadata{ImageURL: &vendorURL}, nil)
+	f.Exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tokenCID.String(), []string{vendorURL}).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: true, HealthyURLs: []string{vendorURL}}, nil)
 
 	err := f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil)
 	require.NoError(t, err, "metadata fetch error is non-fatal for the workflow")
@@ -305,10 +307,12 @@ func TestIndexTokenMetadata_NilMetadata(t *testing.T) {
 	defer f.Ctrl.Finish()
 	stubJqAnyEnqueue(f.MockJQ)
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	vendorURL := "https://example.com/vendor-only.gif"
 	f.Exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tokenCID).Return(nil, nil)
-	f.Exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tokenCID, (*metadata.NormalizedMetadata)(nil)).Return(nil, nil)
-	f.Exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+	f.Exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tokenCID, (*metadata.NormalizedMetadata)(nil)).
+		Return(&metadata.EnhancedMetadata{ImageURL: &vendorURL}, nil)
+	f.Exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tokenCID.String(), []string{vendorURL}).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: true, HealthyURLs: []string{vendorURL}}, nil)
 
 	require.NoError(t, f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil))
 }
