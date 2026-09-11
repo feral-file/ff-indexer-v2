@@ -13,6 +13,7 @@ func TestIsBrowserIPFSGateway(t *testing.T) {
 	for _, source := range []string{
 		"https://ipfs.io/ipfs/example", "https://dweb.link/", "https://inbrowser.link/",
 		"https://bafyexample.ipfs.inbrowser.link/", "https://IPFS.IO./ipfs/example",
+		"https://bafyexample.ipfs.inbrowser.link./", "https://bafyexample.IPFS.InBrowser.Link.:8443/",
 	} {
 		require.True(t, types.IsBrowserIPFSGateway(source), source)
 	}
@@ -28,10 +29,14 @@ func TestIsBrowserIPFSGateway(t *testing.T) {
 func TestIsIPFSGatewayURL_SubdomainPreservesReference(t *testing.T) {
 	const cid = "bafybeidhq4d52l3kozhe5upfl2bpu5smjcvrg7g3unf2hpzjvjfbb3wp3y"
 	for _, suffix := range []string{"", "/", "/Art%2fwork/index.html?seed=AbC&seed=b#VIEW", "?seed=1#view", "?", "#"} {
-		for _, host := range []string{cid + ".ipfs.inbrowser.link", cid + ".IPFS.InBrowser.Link", strings.ToUpper(cid) + ".IpFs.InBrowser.Link:8443"} {
+		for _, host := range []string{
+			cid + ".ipfs.inbrowser.link", cid + ".IPFS.InBrowser.Link",
+			strings.ToUpper(cid) + ".IpFs.InBrowser.Link:8443",
+			cid + ".ipfs.inbrowser.link.", strings.ToUpper(cid) + ".IpFs.InBrowser.Link.:8443",
+		} {
 			ok, reference := types.IsIPFSGatewayURL("https://" + host + suffix)
-			require.True(t, ok)
-			require.Equal(t, cid+suffix, reference)
+			require.True(t, ok, host+suffix)
+			require.Equal(t, cid+suffix, reference, host+suffix)
 		}
 	}
 }

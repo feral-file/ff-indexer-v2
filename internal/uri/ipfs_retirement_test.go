@@ -3,6 +3,7 @@ package uri_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,8 @@ func TestURLChecker_MigratesBrowserGatewayEvenWhenDirectFetchSucceeds(t *testing
 		"https://dweb.link/ipfs/" + ref,
 		"https://" + cid + ".ipfs.inbrowser.link/frame%20one.gif?x=1&x=2#frame",
 		"https://" + cid + ".IPFS.InBrowser.Link/frame%20one.gif?x=1&x=2#frame",
+		"https://" + cid + ".ipfs.inbrowser.link./frame%20one.gif?x=1&x=2#frame",
+		"https://" + strings.ToUpper(cid) + ".IPFS.InBrowser.Link.:8443/frame%20one.gif?x=1&x=2#frame",
 	} {
 		t.Run(source, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
@@ -45,6 +48,32 @@ func TestURLChecker_MigratesBrowserGatewayEvenWhenDirectFetchSucceeds(t *testing
 			require.Equal(t, "gateway_retired", result.FailureReason.String())
 			require.Equal(t, "image/png", result.WorkingURLSniffed)
 		})
+	}
+}
+
+// Absolute DNS names must migrate through the resolver with the exact artwork
+// suffix, including empty query/fragment delimiters and an explicit source port.
+func TestResolver_MigratesAbsoluteCIDSubdomainsPreservingReference(t *testing.T) {
+	const cid = "bafybeidhq4d52l3kozhe5upfl2bpu5smjcvrg7g3unf2hpzjvjfbb3wp3y"
+	for _, host := range []string{cid + ".ipfs.inbrowser.link.", strings.ToUpper(cid) + ".IPFS.InBrowser.Link.:8443"} {
+		for _, suffix := range []string{"", "/frame%20one.gif?x=1&x=2#frame", "?", "#"} {
+			t.Run(host+suffix, func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				client := mocks.NewMockHTTPClient(ctrl)
+				mio := mocks.NewMockIO(ctrl)
+				passthroughIO(mio)
+				target := "https://ipfs.filebase.io/ipfs/" + cid + suffix
+				client.EXPECT().GetResponseNoRetry(gomock.Any(), target, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
+				resolver := uri.NewResolver(client, mio, &uri.Config{
+					IPFSGateways: []string{"https://ipfs.io", "https://ipfs.filebase.io"},
+				})
+
+				resolved, err := resolver.Resolve(context.Background(), "https://"+host+suffix)
+				require.NoError(t, err)
+				require.Equal(t, target, resolved)
+			})
+		}
 	}
 }
 
