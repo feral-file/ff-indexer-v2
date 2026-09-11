@@ -106,6 +106,10 @@ func (r *resolver) RawHash(metadata *NormalizedMetadata) ([]byte, []byte, error)
 	return hash[:], metadataJSON, nil
 }
 
+// Resolve normalizes authoritative metadata for a token, refreshing stale FA2
+// placeholders from their big-map URI when available. Retirement failures must
+// reach the caller so no cached placeholder can overwrite stored signed metadata;
+// unrelated refresh failures retain the existing cached-metadata fallback.
 func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*NormalizedMetadata, error) {
 	chainID, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
@@ -142,7 +146,11 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 		// placeholder, re-resolve from the big map, which is the on-chain
 		// source of truth.
 		if isUnsignedFxhashPlaceholder(metadata) {
-			if fresh := r.resolveFA2MetadataFromBigMap(ctx, contractAddress, tokenNumber); fresh != nil {
+			fresh, err := r.resolveFA2MetadataFromBigMap(ctx, contractAddress, tokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("failed to refresh FA2 metadata: %w", err)
+			}
+			if fresh != nil {
 				metadata = fresh
 			}
 		}
@@ -184,10 +192,12 @@ func isUnsignedFxhashPlaceholder(metadata map[string]interface{}) bool {
 }
 
 // resolveFA2MetadataFromBigMap re-resolves token metadata from the contract's
-// token_metadata big map, bypassing TzKT's cached snapshot. Returns nil when
-// the authoritative document can't be found or fetched, in which case callers
-// keep the cached metadata.
-func (r *resolver) resolveFA2MetadataFromBigMap(ctx context.Context, contractAddress string, tokenNumber string) map[string]interface{} {
+// token_metadata big map, bypassing TzKT's cached snapshot.
+// Reason: a swallowed retirement error lets a stale placeholder replace signed
+// metadata already in storage. Constraints: preserve the classified error chain.
+// Trade-off: unrelated lookup/fetch failures still return (nil, nil), retaining
+// the existing cached fallback; retirement failures abort this refresh attempt.
+func (r *resolver) resolveFA2MetadataFromBigMap(ctx context.Context, contractAddress string, tokenNumber string) (map[string]interface{}, error) {
 	metadataURI, err := r.tzClient.GetTokenMetadataURI(ctx, contractAddress, tokenNumber)
 	if err != nil || metadataURI == "" {
 		logger.WarnCtx(ctx, "Failed to read token_metadata big map URI, keeping TzKT cached metadata",
@@ -195,21 +205,24 @@ func (r *resolver) resolveFA2MetadataFromBigMap(ctx context.Context, contractAdd
 			zap.String("tokenNumber", tokenNumber),
 			zap.Error(err),
 		)
-		return nil
+		return nil, nil
 	}
 
 	metadata, err := r.fetchMetadataFromURI(ctx, metadataURI)
 	if err != nil {
+		if errors.Is(err, uri.ErrRetiredGatewayReplacement) {
+			return nil, err
+		}
 		logger.WarnCtx(ctx, "Failed to fetch metadata from big map URI, keeping TzKT cached metadata",
 			zap.String("contractAddress", contractAddress),
 			zap.String("tokenNumber", tokenNumber),
 			zap.String("metadataURI", metadataURI),
 			zap.Error(err),
 		)
-		return nil
+		return nil, nil
 	}
 
-	return metadata
+	return metadata, nil
 }
 
 // normalizeTZIP21Metadata normalizes the metadata following the TZIP21 specs.

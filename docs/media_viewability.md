@@ -99,6 +99,12 @@ they cannot be returned as a successfully resolved URL or persisted by a rebuild
 Retirement follows the actual hostname even when a URL contains user information;
 the CID resolver rejects those userinfo forms without forwarding credentials.
 
+The optional FA2 big-map refresh follows the same error policy. If TzKT still
+returns an unsigned fxhash placeholder and the authoritative metadata URI fails
+retirement, the classified error escapes the refresh and stops indexing before
+the placeholder can overwrite stored signed metadata. Unrelated big-map lookup,
+URI resolution, and HTTP fetch failures retain the existing cached fallback.
+
 **The gateway-relative ref keeps its query and fragment.** `types.IsIPFSGatewayURL`
 returns the CID plus any path, query, or fragment, and fallback probes that whole ref.
 A query directly after the CID (`…/ipfs/<cid>?fxhash=x`) must keep the URL recognized:
