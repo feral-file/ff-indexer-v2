@@ -68,8 +68,9 @@ replacement even when a direct fetch happens to succeed; an unavailable
 replacement preserves that direct verdict. `gateway_retired` is the diagnostic
 cause when promotion of an otherwise healthy retired URL fails. Default pools
 contain `ipfs.feralfile.com` plus fetching fallback `ipfs.filebase.io`; the owned
-gateway is cache-only. The sample configuration and deployment pools in
-`ff-deploy` match this policy. Existing rows migrate on their next health check
+gateway is cache-only. The shipped `config/.env` (loaded by local startup and
+Docker Compose, overriding YAML and Viper defaults), sample YAML configuration,
+and deployment pools in `ff-deploy` match this policy. Existing rows migrate on their next health check
 or metadata rebuild. If a rebuild cannot validate a replacement for a retired
 HTTP gateway, normalization returns an error before the metadata upsert. Existing
 metadata is preserved for a later retry; the generic URI fallback cannot restore
