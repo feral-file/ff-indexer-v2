@@ -22,7 +22,8 @@ import (
 type HealthStatus string
 
 const (
-	// HealthStatusHealthy indicates the URL is accessible and its content validates.
+	// HealthStatusHealthy indicates the URL is accessible, its content validates,
+	// and its address passes the gateway retirement policy.
 	//
 	// This is a point-in-time sample, not a per-request playback guarantee: an origin that
 	// fails intermittently can pass a check and still fail a viewer's next request. Both the
@@ -34,7 +35,8 @@ const (
 	// as a playback SLA without revisiting MediaHealthStatus semantics and viewability — see
 	// docs/constraints.md and #76.
 	HealthStatusHealthy HealthStatus = "healthy"
-	// HealthStatusBroken indicates the URL is not accessible or serves invalid content
+	// HealthStatusBroken indicates the URL is inaccessible, serves invalid content,
+	// or uses an unsupported address on a retired browser gateway.
 	HealthStatusBroken HealthStatus = "broken"
 	// HealthStatusTransientError indicates a temporary error that should be retried.
 	//
@@ -54,8 +56,9 @@ type HealthCheckResult struct {
 	Error       *string // Error message if broken
 	SSRFBlocked bool    // True when ssrf.ErrBlocked refused the fetch (policy); false for DNS (ErrResolutionFailed) or transport errors
 
-	// FailureReason is the machine-readable broken cause ("" when healthy/transient or
-	// when the failure is an unclassified transport error).
+	// FailureReason is the machine-readable probe or policy failure. Transient
+	// verdicts carry it without persistence; healthy fallbacks can also retain the
+	// direct cause for callers that fail to propagate the replacement URL.
 	FailureReason FailureReason
 	// ObservedContentType is the normalized Content-Type header from the probe ("" when
 	// the fetch never returned headers).
@@ -397,8 +400,12 @@ func NewURLChecker(httpClient adapter.HTTPClient, io adapter.IO, config *Config)
 	}
 }
 
-// Check performs a health check on a URL
-// This checker only handles HTTP/HTTPS URLs, not URI schemes like ipfs://, ar://, onchfs://
+// Check validates HTTP/HTTPS content and applies the gateway retirement policy.
+// Reason: native probes can succeed on retired gateways whose browser playback
+// opens a viewer. Constraints: supported CID URLs keep a healthy direct verdict
+// when replacements fail, and transient errors/SSRF refusals retain their meaning.
+// Trade-off: unsupported retired addresses require a corrected source URL before
+// they can pass health checks; automatic IPNS migration is not supported.
 func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	// Validate that this is an HTTP/HTTPS URL. Both pre-fetch rejections carry a
 	// FailureReason: they are persisted broken verdicts, and a reasonless broken row is
@@ -463,6 +470,20 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 			fallback.FailureReason = FailureGatewayRetired
 		}
 		return fallback
+	}
+
+	// A retired address without a supported CID cannot migrate on a later retry.
+	// Do not persist a healthy native probe as proof of playback eligibility, or
+	// reinterpret its path as another protocol. Keep existing probe failures,
+	// especially transient errors that callers deliberately never persist.
+	if types.IsBrowserIPFSGateway(url) {
+		if result.Status == HealthStatusHealthy {
+			errMsg := "retired IPFS gateway has an unsupported gateway address"
+			result.Status = HealthStatusBroken
+			result.Error = &errMsg
+			result.FailureReason = FailureGatewayRetired
+		}
+		return result
 	}
 
 	// Check if it's an Arweave gateway URL - resolve with tx ID

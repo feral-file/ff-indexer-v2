@@ -152,6 +152,8 @@ func TestResolver_RejectsUnsupportedRetiredGatewayURLs(t *testing.T) {
 		"https://example.ipns.dweb.link/art.html",
 		"https://inbrowser.link/ipfs/not-a-cid/art.html",
 		"https://ipfs.io/",
+		"https://user@ipfs.io/ipns/example.org/art.html",
+		"https://user@ipfs.io/ipfs/QmVJn8AG9x22BrbUaUj2CAQFtKMozSHyLvgV2X6X8dmtPw",
 	} {
 		t.Run(source, func(t *testing.T) {
 			ctrl := gomock.NewController(t)

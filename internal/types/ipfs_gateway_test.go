@@ -14,13 +14,15 @@ func TestIsBrowserIPFSGateway(t *testing.T) {
 		"https://ipfs.io/ipfs/example", "https://dweb.link/", "https://inbrowser.link/",
 		"https://bafyexample.ipfs.inbrowser.link/", "https://IPFS.IO./ipfs/example",
 		"https://bafyexample.ipfs.inbrowser.link./", "https://bafyexample.IPFS.InBrowser.Link.:8443/",
+		"https://user@ipfs.io/", "https://user:fixture@IPFS.IO.:8443/ipns/example.org",
+		"https://user@bafyexample.ipfs.inbrowser.link/",
 	} {
 		require.True(t, types.IsBrowserIPFSGateway(source), source)
 	}
 	for _, source := range []string{
 		"https://ipfs.feralfile.com/ipfs/example", "https://ipfs.filebase.io/ipfs/example",
 		"https://notipfs.io/", "https://ipfs.io.example/", "https://ipfs.io@example.com/",
-		"https://user@ipfs.io/", "ipfs://example", "file://ipfs.io/", "://",
+		"https://user@ipfs.io.example/", "ipfs://example", "file://ipfs.io/", "://",
 	} {
 		require.False(t, types.IsBrowserIPFSGateway(source), source)
 	}
