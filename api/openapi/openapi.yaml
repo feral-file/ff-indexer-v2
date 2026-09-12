@@ -142,14 +142,14 @@ paths:
           example: "eip155:1:erc721:0xabc123:1234"
         - name: expand
           in: query
-          description: Comma-separated list of expansions to include
+          description: Repeat the query parameter for each expansion, e.g. `?expand=display&expand=media_asset`.
           schema:
             type: array
             items:
               type: string
               enum: [metadata, owners, provenance_events, enrichment_source, display, media_asset]
           style: form
-          explode: false
+          explode: true
           example: ["display", "media_asset"]
         - name: owners.limit
           in: query
@@ -467,7 +467,7 @@ paths:
         - name: expand
           in: query
           description: |
-            Comma-separated list of expansions to include.
+            Repeat the query parameter for each expansion, e.g. `?expand=display&expand=media_asset`.
             Note: owners and provenance_events expansions return first 20 items per token without pagination support.
             Use GET /api/v1/tokens/{cid} for paginated results.
           schema:
@@ -476,7 +476,7 @@ paths:
               type: string
               enum: [metadata, owners, owner_provenances, provenance_events, enrichment_source, display, media_asset]
           style: form
-          explode: false
+          explode: true
           example: ["display", "media_asset"]
       responses:
         '200':
@@ -712,13 +712,14 @@ paths:
             default: asc
         - name: expand
           in: query
+          description: Repeat the query parameter for each expansion, e.g. `?expand=display&expand=media_asset`.
           schema:
             type: array
             items:
               type: string
               enum: [metadata, owners, owner_provenances, provenance_events, enrichment_source, display, media_asset]
           style: form
-          explode: false
+          explode: true
         - name: include_moderated
           in: query
           description: |

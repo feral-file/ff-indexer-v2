@@ -23,11 +23,11 @@ import (
 //go:generate mockgen -source=handler.go -destination=../../mocks/api_handler.go -package=mocks -mock_names=Handler=MockAPIHandler
 type Handler interface {
 	// GetToken retrieves a single token by its CID
-	// GET /api/v1/tokens/:cid?expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
+	// GET /api/v1/tokens/:cid?expand=owners&expand=provenance_events&expand=enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
 	GetToken(c *gin.Context)
 
 	// ListTokens retrieves tokens with optional filters
-	// GET /api/v1/tokens?owner=<address1>,<address2>&chain=<chain1>,<chain2>&contract_address=<contract_address1>,<contract_address2>&token_number=<number1>,<number2>&token_id=<id1>,<id2>&token_cid=<cid1>,<cid2>&release_id=<id>&limit=<limit>&offset=<offset>&expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
+	// GET /api/v1/tokens?owner=<address1>&owner=<address2>&chain=<chain1>&chain=<chain2>&contract_address=<contract_address1>&contract_address=<contract_address2>&token_number=<number1>&token_number=<number2>&token_id=<id1>&token_id=<id2>&token_cid=<cid1>&token_cid=<cid2>&release_id=<id>&limit=<limit>&offset=<offset>&expand=owners&expand=provenance_events&expand=enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
 	ListTokens(c *gin.Context)
 
 	// ListReleases retrieves releases filtered by vendor and/or vendor_release_id
@@ -35,7 +35,7 @@ type Handler interface {
 	ListReleases(c *gin.Context)
 
 	// GetRelease retrieves a release by internal id with mint-ordered member tokens
-	// GET /api/v1/releases/:id?limit=<limit>&offset=<offset>&sort_order=<order>&expand=...
+	// GET /api/v1/releases/:id?limit=<limit>&offset=<offset>&sort_order=<order>&expand=metadata&expand=display
 	GetRelease(c *gin.Context)
 
 	// TriggerTokenIndexing triggers indexing for tokens by CIDs (open, no authentication required)

@@ -127,7 +127,8 @@ Design rules:
 
 ### REST `expand`
 
-- Comma-separated list (OpenAPI `style: form`, `explode: false` for array serialization).
+- Repeat the query parameter for each expansion: `?expand=metadata&expand=display` (OpenAPI `style: form`, `explode: true`). This applies to token detail, token lists, and release members.
+- Comma-separated values such as `?expand=metadata,display` are invalid and return HTTP **422**.
 - Allowed values are **closed enums** per endpoint; adding a value is a **minor** API change if optional.
 - **`media_asset` / `media_assets`:** Behavior is **compositional** — it depends on which source expansions are requested (`metadata`, `enrichment_source`, `display`). New combinations must be documented to avoid surprising empty results.
 
