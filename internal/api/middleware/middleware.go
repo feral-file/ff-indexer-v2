@@ -4,41 +4,14 @@ import (
 	"errors"
 	"time"
 
-	"github.com/getsentry/sentry-go"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
-// SentryMiddleware creates a sentry hub and attaches it to the context
-// This enables sentry scope tracking per request
-func SentryMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Create a new hub for this request
-		hub := sentry.CurrentHub().Clone()
-
-		// Attach request context to hub
-		hub.Scope().SetRequest(c.Request)
-
-		// Set user context if available
-		hub.Scope().SetContext("http", map[string]interface{}{
-			"method":      c.Request.Method,
-			"url":         c.Request.URL.String(),
-			"remote_addr": c.ClientIP(),
-		})
-
-		// Push hub to context
-		ctx := sentry.SetHubOnContext(c.Request.Context(), hub)
-		c.Request = c.Request.WithContext(ctx)
-
-		c.Next()
-	}
-}
-
 // RequestContextComponent wraps the request context with logger.WithComponent so each
 // handler and downstream logger.InfoCtx/ErrorCtx call includes the component field.
-// Run it after SentryMiddleware so the Sentry hub remains an ancestor of the new context.
 func RequestContextComponent(component string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := logger.WithComponent(c.Request.Context(), component)
@@ -58,7 +31,6 @@ func Logger() gin.HandlerFunc {
 
 		duration := time.Since(start)
 
-		// Use context-aware logger for breadcrumbs (Info level)
 		logger.InfoCtx(c.Request.Context(), "API request",
 			zap.String("method", c.Request.Method),
 			zap.String("path", path),
@@ -76,7 +48,6 @@ func Recovery() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if err := recover(); err != nil {
-				// Use context-aware logger for errors (Error level sends to sentry)
 				logger.ErrorCtx(c.Request.Context(), errors.New("API panic recovered"), zap.Any("error", err))
 				c.AbortWithStatusJSON(500, gin.H{
 					"error": "Internal server error",

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -55,12 +54,10 @@ func run() int {
 	defer stop()
 
 	err = logger.Initialize(logger.Config{
-		Debug:           cfg.Debug,
-		SentryDSN:       cfg.SentryDSN,
-		BreadcrumbLevel: zapcore.InfoLevel,
-		Tags: map[string]string{
-			"service": "ff-indexer",
-		},
+		Debug:               cfg.Debug,
+		CloudflareStreamURL: cfg.Logging.CloudflareStreamURL,
+		CloudflareAPIToken:  cfg.Logging.CloudflareAPIToken,
+		Environment:         cfg.Logging.Environment,
 	})
 	if err != nil {
 		panic(fmt.Sprintf("Failed to initialize logger: %v", err))

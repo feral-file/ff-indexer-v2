@@ -114,7 +114,7 @@ func (h *registryHandler) call(ctx context.Context, payload []byte, j adapter.JS
 		if r := recover(); r != nil {
 			// Reason: Reflective invokes can panic on bad arity or bugs in handlers; without recovery
 			// the worker goroutine dies and the job stays "running". Log with job-scoped ctx so
-			// zapsentry/Sentry sees the hub from ContextWithSentryJobHandler (see worker.executeJob).
+			// stdout and Cloudflare records retain the correlation fields (see worker.executeJob).
 			logger.ErrorCtx(ctx, fmt.Errorf("job handler panic: %v", r), zap.Any("panic", r))
 			err = fmt.Errorf("jobs: handler panic: %v", r)
 		}

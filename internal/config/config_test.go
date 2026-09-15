@@ -298,6 +298,8 @@ FF_INDEXER_ETHEREUM_RPC_URL=https://rpc.example.com
 FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://ws.example.com
 FF_INDEXER_TEZOS_API_URL=https://api.tzkt.io
 FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
+FF_INDEXER_LOGGING_CLOUDFLARE_API_TOKEN=stream-token
+FF_INDEXER_LOGGING_ENVIRONMENT=staging
 FF_INDEXER_RENDER_PROBE_NO_EVIDENCE_RECHECK_INTERVAL=42h
 FF_INDEXER_RENDER_PROBE_CONFIRM_SETTLE_MS=31000
 `
@@ -329,6 +331,8 @@ database:
 	assert.Equal(t, "require", cfg.Database.SSLMode)
 	assert.Equal(t, "https://api.tzkt.io", cfg.Tezos.APIURL)
 	assert.Equal(t, "wss://ws.tzkt.io", cfg.Tezos.WebSocketURL)
+	assert.Equal(t, "stream-token", cfg.Logging.CloudflareAPIToken)
+	assert.Equal(t, "staging", cfg.Logging.Environment)
 	// Every render_probe knob must be reachable from environment-only deployments:
 	// bindAllEnvVars is an explicit allowlist, so a key left off it silently ignores
 	// its env var (bot finding on #138 — no_evidence_recheck_interval was unbound,
@@ -337,6 +341,35 @@ database:
 		"render_probe.no_evidence_recheck_interval must be bound in bindAllEnvVars")
 	assert.Equal(t, 31000, cfg.RenderProbe.ConfirmSettleMs,
 		"render_probe.confirm_settle_ms must be bound in bindAllEnvVars")
+}
+
+func TestLoadAppConfig_RejectsCloudflareLoggingWithoutEnvironment(t *testing.T) {
+	t.Parallel()
+
+	cfg := &AppConfig{
+		Logging: LoggingConfig{
+			CloudflareStreamURL: "https://stream-id.ingest.cloudflare.com",
+			CloudflareAPIToken:  "stream-token",
+		},
+	}
+
+	err := validateLoggingConfig(&cfg.Logging)
+	require.EqualError(t, err, "logging.environment is required when Cloudflare log streaming is enabled")
+}
+
+func TestLoadAppConfig_RejectsNonCloudflareLoggingEndpoint(t *testing.T) {
+	t.Parallel()
+
+	cfg := &AppConfig{
+		Logging: LoggingConfig{
+			CloudflareStreamURL: "https://stream-id.ingest.cloudflare.com.attacker.example",
+			CloudflareAPIToken:  "stream-token",
+			Environment:         "production",
+		},
+	}
+
+	err := validateLoggingConfig(&cfg.Logging)
+	require.EqualError(t, err, "logging.cloudflare_stream_url must be an HTTPS Cloudflare Stream endpoint, got \"https://stream-id.ingest.cloudflare.com.attacker.example\"")
 }
 
 func TestLoadAppConfig_FxhashRateLimiterFromEnv(t *testing.T) {
