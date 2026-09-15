@@ -4,13 +4,11 @@ go 1.25.0
 
 require (
 	github.com/99designs/gqlgen v0.17.81
-	github.com/TheZeroSlave/zapsentry v1.23.0
 	github.com/alitto/pond/v2 v2.5.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cloudflare/cloudflare-go v0.116.0
 	github.com/ethereum/go-ethereum v1.16.5
 	github.com/gabriel-vasile/mimetype v1.4.9
-	github.com/getsentry/sentry-go v0.36.0
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.2.0

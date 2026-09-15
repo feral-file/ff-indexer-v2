@@ -85,7 +85,7 @@ func (w *mediaWorkflows) RenderMediaProbe(ctx context.Context, url string) error
 // IndexMediaWorkflow handles media processing for a single URL.
 //
 // Reason: Media jobs should still fail when processing cannot finish so operators can inspect
-// jobs.last_error, but expected third-party source timeouts should not page engineers through Sentry.
+// jobs.last_error, while expected third-party source timeouts stay at warning severity.
 // Trade-offs: Known source-fetch timeouts are warning logs; unexpected failures remain error logs.
 // Constraints: Returning the original error preserves the worker's failed-job behavior.
 func (w *mediaWorkflows) IndexMediaWorkflow(ctx context.Context, url string) error {
@@ -104,9 +104,9 @@ func (w *mediaWorkflows) IndexMediaWorkflow(ctx context.Context, url string) err
 
 // logMediaIndexFailure records a failed media job at the appropriate operational severity.
 //
-// Reason: Sentry should capture unexpected application failures, not routine source gateway
-// timeouts from externally hosted media. Trade-offs: The job still fails and stores last_error,
-// so operators retain a durable signal without one Sentry event per unavailable media URL.
+// Reason: routine source gateway timeouts should remain distinguishable from unexpected
+// application failures. Trade-offs: the job still fails and stores last_error, while the
+// stdout and Cloudflare records use warning severity instead of error severity.
 func logMediaIndexFailure(ctx context.Context, url string, err error) {
 	if isExpectedMediaSourceTimeout(err) {
 		logger.WarnCtx(ctx,
@@ -127,8 +127,8 @@ func logMediaIndexFailure(ctx context.Context, url string, err error) {
 // isExpectedMediaSourceTimeout reports whether err is a known media-source fetch timeout.
 //
 // Reason: Probe and transform both fetch externally hosted media and wrap HTTP failures with stable
-// source-fetch markers. Combining those markers with context.DeadlineExceeded limits Sentry
-// suppression to external media fetches instead of every possible media workflow deadline, such as
+// source-fetch markers. Combining those markers with context.DeadlineExceeded limits warning
+// classification to external media fetches instead of every possible media workflow deadline, such as
 // database or provider API timeouts.
 func isExpectedMediaSourceTimeout(err error) bool {
 	if !errors.Is(err, context.DeadlineExceeded) {

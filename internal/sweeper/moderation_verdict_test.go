@@ -383,8 +383,8 @@ func TestModerationVerdictSweeper_NoAPIKey_DisablesSourceAfterFirstHit(t *testin
 // HTTP request, so neither the rate limiter nor the vendor call bounds a retry —
 // only the cycle's own sleep does, and unlike the media health sweeper it mirrors,
 // this sweeper sleeps even on that error path rather than returning immediately.
-// A database blip would otherwise pin a core and flood Sentry for the length of
-// the outage.
+// A database blip would otherwise pin a core and flood the application logs for
+// the length of the outage.
 func TestModerationVerdictSweeper_StoreError_DoesNotHotLoop(t *testing.T) {
 	tm := setupTestModerationSweeper(t)
 	defer tearDownTestModerationSweeper(tm)

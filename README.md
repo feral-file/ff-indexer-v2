@@ -80,6 +80,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 - **[Token Moderation](docs/token_moderation.md)** - Vendor-moderated spam filtering: verdict model, sweeper scheduling, read-path filtering
 - **[Database Schema](docs/schema.md)** - Complete database schema and migration notes
 - **[Development Guide](DEVELOPMENT.md)** - Local development setup, seed data, and scripts
+- **[Cloudflare log streaming](docs/cloudflare_log_streaming.md)** - stdout plus the shared authenticated application-log Stream
 - **[Contributing Guide](CONTRIBUTING.md)** - Setup, linting, testing, and PR process
 - **[Roadmap](roadmap.md)** - Planned features and future improvements
 
@@ -93,6 +94,10 @@ All of the following run inside the **`ff-indexer`** process (goroutines) by def
 - **API server** — REST and GraphQL
 - **Sweeper (media)** — Media URL health checks
 - **Sweeper (moderation)** — Re-checks OpenSea/objkt moderation verdicts on a per-row schedule so late takedowns and appealed reversals converge; see [Token Moderation](docs/token_moderation.md)
+
+Application logs always go to stdout. Deployments can also batch the same
+structured records to the shared authenticated Cloudflare Pipeline Stream; see
+[Cloudflare application-log streaming](docs/cloudflare_log_streaming.md).
 
 ## Job queue
 

@@ -102,7 +102,30 @@ FF_INDEXER_VIDEO_PROCESSING_ENABLED=false
 # API authentication
 FF_INDEXER_AUTH_JWT_PUBLIC_KEY=YOUR_JWT_PUBKEY_PEM
 FF_INDEXER_AUTH_API_KEYS=YOUR_AUTH_API_KEYS
+
+# Optional remote application logs (stdout remains enabled without these)
+FF_INDEXER_LOGGING_CLOUDFLARE_API_TOKEN=YOUR_PIPELINES_SEND_TOKEN
+FF_INDEXER_LOGGING_ENVIRONMENT=production
 ```
+
+### Application logging
+
+Every application log is written to stdout. When
+`FF_INDEXER_LOGGING_CLOUDFLARE_API_TOKEN` is set, the logger also batches NDJSON
+to the shared `application_logs_stream` using the trusted-service contract in
+the sibling `ff-logging` repository. The token needs the account-level
+`Pipelines Send` permission. Use a producer-specific token so it can be rotated
+without affecting other services.
+
+`FF_INDEXER_LOGGING_ENVIRONMENT` is required when remote streaming is enabled.
+The Stream URL defaults to the current shared endpoint and can be overridden
+with `FF_INDEXER_LOGGING_CLOUDFLARE_STREAM_URL`. The service field is always
+`ff-indexer`. Structured Zap fields are stored as JSON inside the schema's
+string `message` field. The logger does not redact content and never writes log
+files. Remote delivery is memory-only and best effort; queue or network
+failures are printed to stderr while stdout logging continues. See
+[`docs/cloudflare_log_streaming.md`](docs/cloudflare_log_streaming.md) for the
+batching and failure contract.
 
 **Example**: Mixing YAML and environment variables
 - Use `config.yaml` for most settings (version controlled)

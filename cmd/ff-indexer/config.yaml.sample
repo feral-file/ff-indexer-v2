@@ -3,7 +3,11 @@
 # Copy to config/config.yaml or pass -config path. Environment overrides: FF_INDEXER_* (see internal/config).
 
 debug: true
-sentry_dsn: ""
+logging:
+  # Remote streaming is disabled while cloudflare_api_token is empty.
+  cloudflare_stream_url: "https://d4dd4a42ca4c473cb5bfc9e2f5fca1ca.ingest.cloudflare.com"
+  cloudflare_api_token: ""
+  environment: "development"
 
 server:
   host: 0.0.0.0
