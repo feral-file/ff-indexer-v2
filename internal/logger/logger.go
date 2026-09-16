@@ -2,10 +2,9 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"time"
 
-	"github.com/TheZeroSlave/zapsentry"
-	"github.com/getsentry/sentry-go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -13,8 +12,8 @@ import (
 var (
 	// log is the global zap logger instance
 	log *zap.Logger
-	// sentryClient is the global sentry client
-	sentryClient *sentry.Client
+	// remoteSender owns the optional Cloudflare Stream delivery queue.
+	remoteSender *cloudflareSender
 )
 
 // componentKey is the context key type for storing component names
@@ -38,114 +37,93 @@ func WithComponent(ctx context.Context, component string) context.Context {
 
 // Config holds logger configuration
 type Config struct {
-	Debug           bool
-	SentryDSN       string
-	SentryClient    *sentry.Client
-	BreadcrumbLevel zapcore.Level
-	Tags            map[string]string
+	Debug               bool
+	CloudflareStreamURL string
+	CloudflareAPIToken  string
+	Environment         string
 }
 
-// Initialize initializes the logger with sentry integration
-func Initialize(cfg Config) error {
-	// Create zap config based on debug flag
-	var zapConfig zap.Config
-	if cfg.Debug {
-		zapConfig = zap.NewDevelopmentConfig()
+// consoleConfig returns Zap's normal encoder configuration with application logs
+// explicitly routed to stdout. Logger-internal failures remain on stderr.
+func consoleConfig(debug bool) zap.Config {
+	var cfg zap.Config
+	if debug {
+		cfg = zap.NewDevelopmentConfig()
 	} else {
-		zapConfig = zap.NewProductionConfig()
+		cfg = zap.NewProductionConfig()
 	}
-	zapConfig.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
-	zapConfig.EncoderConfig.EncodeTime = zapcore.RFC3339TimeEncoder
-	if cfg.Debug {
-		zapConfig.Level = zap.NewAtomicLevelAt(zapcore.DebugLevel)
+	cfg.OutputPaths = []string{"stdout"}
+	cfg.ErrorOutputPaths = []string{"stderr"}
+	// Preserve every local log line. Zap's production default samples repeated
+	// messages, which would make stdout less complete than the Cloudflare copy.
+	cfg.Sampling = nil
+	cfg.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
+	cfg.EncoderConfig.EncodeTime = zapcore.RFC3339TimeEncoder
+	if debug {
+		cfg.Level = zap.NewAtomicLevelAt(zapcore.DebugLevel)
 	}
+	return cfg
+}
 
-	// Build base logger
+// Initialize configures stdout logging and the optional Cloudflare Stream tee.
+func Initialize(cfg Config) error {
+	zapConfig := consoleConfig(cfg.Debug)
 	baseLogger, err := zapConfig.Build()
 	if err != nil {
 		return err
 	}
-
-	// Setup sentry client if DSN is provided
-	if cfg.SentryDSN != "" {
-		if cfg.SentryClient == nil {
-			sentryClient, err = sentry.NewClient(sentry.ClientOptions{
-				Dsn:   cfg.SentryDSN,
-				Debug: cfg.Debug,
-			})
-			if err != nil {
-				return err
-			}
-		} else {
-			sentryClient = cfg.SentryClient
-		}
-
-		// Configure zapsentry
-		breadcrumbLevel := cfg.BreadcrumbLevel
-		if breadcrumbLevel == zapcore.InvalidLevel {
-			breadcrumbLevel = zapcore.InfoLevel // Default to Info level for breadcrumbs
-		}
-
-		zapsentryCfg := zapsentry.Configuration{
-			Level:             zapcore.ErrorLevel, // Send errors to sentry
-			EnableBreadcrumbs: true,
-			BreadcrumbLevel:   breadcrumbLevel,
-			Tags:              cfg.Tags,
-		}
-
-		// Create zapsentry core
-		core, err := zapsentry.NewCore(zapsentryCfg, zapsentry.NewSentryClientFromClient(sentryClient))
-		if err != nil {
-			return err
-		}
-
-		// Attach sentry core to logger
-		log = zapsentry.AttachCoreToLogger(core, baseLogger)
-	} else {
-		log = baseLogger
+	log = baseLogger
+	remoteSender = nil
+	if cfg.CloudflareAPIToken != "" {
+		remoteSender = newCloudflareSender(cloudflareSenderConfig{
+			streamURL:   cfg.CloudflareStreamURL,
+			apiToken:    cfg.CloudflareAPIToken,
+			service:     "ff-indexer",
+			environment: cfg.Environment,
+		})
+		remoteCore := newCloudflareCore(zapConfig.Level, remoteSender)
+		log = baseLogger.WithOptions(
+			zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+				return zapcore.NewTee(core, remoteCore)
+			}),
+			zap.WithFatalHook(cloudflareFatalHook{sender: remoteSender}),
+		)
 	}
-
+	// Keep package-global Zap calls from bypassing stdout and the remote tee.
+	zap.ReplaceGlobals(log)
 	return nil
 }
 
-// Flush flushes any buffered sentry events
+// Flush waits for Cloudflare records already accepted into memory to be sent.
 func Flush(timeout time.Duration) {
-	if sentryClient != nil {
-		sentryClient.Flush(timeout)
+	if remoteSender == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := remoteSender.flush(ctx); err != nil {
+		remoteSender.report(fmt.Errorf("flush: %w", err))
 	}
 }
 
-// FromContext returns a logger with sentry scope and component field from context
-// This should be used when you have a context with sentry hub or component information
+// FromContext returns a logger enriched with fields attached to ctx.
 func FromContext(ctx context.Context) *zap.Logger {
 	base := log
 	if base == nil {
-		// Tests and code paths before Initialize must not nil-deref; Sentry scope still attaches when hub is on ctx.
+		// Tests and code paths before Initialize must not nil-deref.
 		base = zap.NewNop()
 	}
 	if ctx == nil {
 		return base
 	}
 
-	// Extract component from context
+	logger := base
 	component, _ := ctx.Value(componentKey{}).(string)
-
-	// Extract Sentry hub from context (if present)
-	hub := sentry.GetHubFromContext(ctx)
-
-	var logger *zap.Logger
-	if hub != nil {
-		// Attach the hub's scope directly to the logger
-		// This ensures breadcrumbs and events use the correct scope from the context
-		logger = base.With(zapsentry.NewScopeFromScope(hub.Scope()))
-	} else {
-		// Fallback: use zapsentry.Context for trace linking (even if no hub in context)
-		logger = base.With(zapsentry.Context(ctx))
-	}
-
-	// Add component field for service identification
 	if component != "" {
 		logger = logger.With(zap.String("component", component))
+	}
+	if fields, ok := ctx.Value(fieldsKey{}).([]zap.Field); ok {
+		logger = logger.With(fields...)
 	}
 
 	return logger

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -55,12 +54,10 @@ func run() int {
 	defer stop()
 
 	err = logger.Initialize(logger.Config{
-		Debug:           cfg.Debug,
-		SentryDSN:       cfg.SentryDSN,
-		BreadcrumbLevel: zapcore.InfoLevel,
-		Tags: map[string]string{
-			"service": "ff-indexer",
-		},
+		Debug:               cfg.Debug,
+		CloudflareStreamURL: cfg.Logging.CloudflareStreamURL,
+		CloudflareAPIToken:  cfg.Logging.CloudflareAPIToken,
+		Environment:         cfg.Logging.Environment,
 	})
 	if err != nil {
 		panic(fmt.Sprintf("Failed to initialize logger: %v", err))
@@ -72,7 +69,8 @@ func run() int {
 	// Postgres (writer + optional read replica).
 	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
 	if err != nil {
-		logger.FatalCtx(rootCtx, "Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
+		fields := append([]zap.Field{zap.Error(err)}, databaseConnectionLogFields(cfg.Database)...)
+		logger.FatalCtx(rootCtx, "Failed to connect to database", fields...)
 	}
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -251,6 +249,21 @@ func run() int {
 	}
 
 	return 0
+}
+
+// databaseConnectionLogFields returns connection metadata safe for local and
+// remote logs.
+//
+// Reason: a PostgreSQL DSN contains the database password and must not be sent
+// to the shared Cloudflare log stream. Trade-offs: operators lose the complete
+// DSN in failure logs but retain enough location data to identify the target.
+// Constraints: never add credentials or a value derived from Password here.
+func databaseConnectionLogFields(database config.DatabaseConfig) []zap.Field {
+	return []zap.Field{
+		zap.String("database_host", database.Host),
+		zap.Int("database_port", database.Port),
+		zap.String("database_name", database.DBName),
+	}
 }
 
 type waitGroup interface {

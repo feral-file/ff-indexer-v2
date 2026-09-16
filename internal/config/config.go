@@ -22,8 +22,14 @@ import (
 
 // BaseConfig holds base configuration
 type BaseConfig struct {
-	Debug     bool   `mapstructure:"debug"`
-	SentryDSN string `mapstructure:"sentry_dsn"`
+	Debug bool `mapstructure:"debug"`
+}
+
+// LoggingConfig controls the optional Cloudflare Pipeline Stream copy of logs.
+type LoggingConfig struct {
+	CloudflareStreamURL string `mapstructure:"cloudflare_stream_url"`
+	CloudflareAPIToken  string `mapstructure:"cloudflare_api_token"`
+	Environment         string `mapstructure:"environment"`
 }
 
 // URIConfig holds URI resolver configuration
@@ -530,6 +536,7 @@ type SSRFAllowlistConfig struct {
 // AppConfig is the configuration for the single-process ff-indexer binary.
 type AppConfig struct {
 	BaseConfig             `mapstructure:",squash"`
+	Logging                LoggingConfig            `mapstructure:"logging"`
 	Server                 ServerConfig             `mapstructure:"server"`
 	Database               DatabaseConfig           `mapstructure:"database"`
 	Auth                   AuthConfig               `mapstructure:"auth"`
@@ -578,7 +585,8 @@ type AppConfig struct {
 
 // LoadAppConfig loads unified configuration for cmd/ff-indexer.
 func LoadAppConfig(configFile string, envPath string) (*AppConfig, error) {
-	v := configureViper("ff-indexer", configFile, envPath)
+	v, restoreEnvironment := configureViper("ff-indexer", configFile, envPath)
+	defer restoreEnvironment()
 	applyAppConfigDefaults(v)
 
 	if err := v.ReadInConfig(); err != nil {
@@ -595,10 +603,45 @@ func LoadAppConfig(configFile string, envPath string) (*AppConfig, error) {
 	if err := ValidateRequiredConfigValues(&cfg); err != nil {
 		return nil, err
 	}
+	if err := validateLoggingConfig(&cfg.Logging); err != nil {
+		return nil, err
+	}
 	if err := validateSecurityConfig(&cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// validateLoggingConfig rejects partial or unsafe remote logging settings.
+//
+// Reason: the bearer token grants Pipeline ingestion and must never be sent to
+// an arbitrary host after a typo or malicious config change. Trade-offs: local
+// test servers cannot be configured through AppConfig; sender unit tests inject
+// them below this validation boundary. Constraints: an empty token disables the
+// remote sink, while enabled endpoints must match Cloudflare's Stream host form.
+func validateLoggingConfig(cfg *LoggingConfig) error {
+	if cfg.CloudflareAPIToken == "" {
+		return nil
+	}
+	if strings.TrimSpace(cfg.CloudflareAPIToken) == "" {
+		return errors.New("logging.cloudflare_api_token must not be blank")
+	}
+	if strings.TrimSpace(cfg.Environment) == "" {
+		return errors.New("logging.environment is required when Cloudflare log streaming is enabled")
+	}
+	parsed, err := neturl.Parse(cfg.CloudflareStreamURL)
+	if err != nil || parsed == nil {
+		return fmt.Errorf("logging.cloudflare_stream_url must be an HTTPS Cloudflare Stream endpoint, got %q", cfg.CloudflareStreamURL)
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	validHost := strings.HasSuffix(hostname, ".ingest.cloudflare.com") &&
+		strings.TrimSuffix(hostname, ".ingest.cloudflare.com") != ""
+	if parsed.Scheme != "https" || !validHost || parsed.User != nil ||
+		parsed.Port() != "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		(parsed.Path != "" && parsed.Path != "/") {
+		return fmt.Errorf("logging.cloudflare_stream_url must be an HTTPS Cloudflare Stream endpoint, got %q", cfg.CloudflareStreamURL)
+	}
+	return nil
 }
 
 func validateSecurityConfig(cfg *AppConfig) error {
@@ -1013,6 +1056,7 @@ func (a *AppConfig) ToSweeperConfig() *SweeperConfig {
 func applyAppConfigDefaults(v *viper.Viper) {
 	// Base / API
 	v.SetDefault("debug", false)
+	v.SetDefault("logging.cloudflare_stream_url", "https://d4dd4a42ca4c473cb5bfc9e2f5fca1ca.ingest.cloudflare.com")
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("server.read_timeout", 10)
@@ -1184,11 +1228,11 @@ func applyAppConfigDefaults(v *viper.Viper) {
 }
 
 // configureViper returns a viper instance with the config file and environment variables set
-func configureViper(service string, configFile string, envPath string) *viper.Viper {
+func configureViper(service string, configFile string, envPath string) (*viper.Viper, func()) {
 	v := viper.New()
 
 	// Load environment variables
-	loadEnv(envPath, service)
+	restoreEnvironment := loadEnv(envPath, service)
 
 	// Set config file
 	if configFile != "" {
@@ -1212,7 +1256,7 @@ func configureViper(service string, configFile string, envPath string) *viper.Vi
 
 	// Explicitly bind all environment variables
 	bindAllEnvVars(v)
-	return v
+	return v, restoreEnvironment
 }
 
 // bindAllEnvVars explicitly binds all possible environment variables
@@ -1221,7 +1265,9 @@ func bindAllEnvVars(v *viper.Viper) {
 	// Common config keys
 	commonKeys := []string{
 		"debug",
-		"sentry_dsn",
+		"logging.cloudflare_stream_url",
+		"logging.cloudflare_api_token",
+		"logging.environment",
 		// Database
 		"database.host",
 		"database.port",
@@ -1399,8 +1445,15 @@ func bindAllEnvVars(v *viper.Viper) {
 	}
 }
 
-// loadEnv loads environment variables from the config directory
-func loadEnv(envPath string, service string) {
+// loadEnv loads layered environment files without replacing variables supplied
+// by the process environment. It returns a cleanup that removes file values from
+// the process after Viper has read them.
+//
+// Reason: deployment-injected values are the documented highest-precedence
+// configuration source. Trade-offs: environment files are temporarily reflected
+// in the process because Viper reads bound variables lazily. Constraints: later
+// files still override earlier files, and every mutation is restored by cleanup.
+func loadEnv(envPath string, service string) func() {
 	// Always try shared base first, then local, then optional per-service local.
 	envFiles := []string{".env", ".env.local"}
 	if service != "" {
@@ -1412,10 +1465,38 @@ func loadEnv(envPath string, service string) {
 		envPath = "config/"
 	}
 
-	// Create candidates list
+	original := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, found := strings.Cut(entry, "=")
+		if found {
+			original[key] = value
+		}
+	}
+	loadedKeys := make(map[string]struct{})
 	for _, envFile := range envFiles {
 		candidate := filepath.Join(envPath, envFile)
+		values, err := godotenv.Read(candidate)
+		if err == nil {
+			for key := range values {
+				loadedKeys[key] = struct{}{}
+			}
+		}
 		_ = godotenv.Overload(candidate) // Overload lets later files override earlier ones
+		for key := range loadedKeys {
+			if value, existed := original[key]; existed {
+				_ = os.Setenv(key, value)
+			}
+		}
+	}
+
+	return func() {
+		for key := range loadedKeys {
+			if value, existed := original[key]; existed {
+				_ = os.Setenv(key, value)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		}
 	}
 }
 

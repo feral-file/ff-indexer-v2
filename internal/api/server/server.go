@@ -72,8 +72,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Create Gin router
 	router := gin.New()
 
-	// Setup middleware - SentryMiddleware should be first to enable context-based logging
-	router.Use(middleware.SentryMiddleware())
+	// Attach the HTTP component before recovery and request logging.
 	router.Use(middleware.RequestContextComponent(logger.ComponentHTTPServer))
 	router.Use(middleware.Recovery())
 	router.Use(middleware.Logger())

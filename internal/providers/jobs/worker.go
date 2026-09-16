@@ -309,15 +309,15 @@ func (w *Worker) executeJob(parent context.Context, job *schema.Job) error {
 	if parent == nil {
 		parent = context.Background()
 	}
-	// Scope Sentry (and zapsentry via FromContext) to this job only, before cancel/job-id wiring.
-	dispatchCtx := logger.ContextWithSentryJobHandler(parent, job.ID, job.Kind, w.config.Queue)
+	// Attach stable job correlation fields before cancel/job-id wiring.
+	dispatchCtx := logger.ContextWithJob(parent, job.ID, job.Kind, w.config.Queue)
 	workCtx, jobCancel := context.WithCancel(WithJobID(dispatchCtx, job.ID))
 	defer jobCancel()
 	w.addInflight(job.ID, jobCancel)
 	defer w.removeInflight(job.ID)
 
 	err := w.registry.Dispatch(workCtx, job)
-	// stickyCtx carries the job Sentry hub so persistence errors after dispatch are traceable.
+	// dispatchCtx retains job fields so persistence errors after dispatch are traceable.
 	return w.finishWithOutcome(context.WithoutCancel(dispatchCtx), job, err, parent)
 }
 
