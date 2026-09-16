@@ -343,6 +343,50 @@ database:
 		"render_probe.confirm_settle_ms must be bound in bindAllEnvVars")
 }
 
+func TestLoadAppConfig_PreservesInjectedCloudflareLoggingSettings(t *testing.T) {
+	t.Setenv("FF_INDEXER_LOGGING_CLOUDFLARE_API_TOKEN", "injected-token")
+	t.Setenv("FF_INDEXER_LOGGING_ENVIRONMENT", "production")
+	debugValue, debugExisted := os.LookupEnv("FF_INDEXER_DEBUG")
+	require.NoError(t, os.Unsetenv("FF_INDEXER_DEBUG"))
+	t.Cleanup(func() {
+		if debugExisted {
+			require.NoError(t, os.Setenv("FF_INDEXER_DEBUG", debugValue))
+		} else {
+			require.NoError(t, os.Unsetenv("FF_INDEXER_DEBUG"))
+		}
+	})
+
+	envDir := t.TempDir()
+	baseEnv := `FF_INDEXER_DEBUG=false
+FF_INDEXER_LOGGING_CLOUDFLARE_API_TOKEN=
+FF_INDEXER_LOGGING_ENVIRONMENT=development
+`
+	require.NoError(t, os.WriteFile(filepath.Join(envDir, ".env"), []byte(baseEnv), 0600))
+	localEnv := "FF_INDEXER_DEBUG=true\n"
+	require.NoError(t, os.WriteFile(filepath.Join(envDir, ".env.local"), []byte(localEnv), 0600))
+
+	configPath := filepath.Join(envDir, "config.yaml")
+	configFile := `
+database:
+  host: localhost
+  dbname: ff_indexer
+ethereum:
+  rpc_url: https://rpc.example.com
+  websocket_url: wss://ws.example.com
+tezos:
+  websocket_url: wss://ws.tzkt.io
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(configFile), 0600))
+
+	cfg, err := LoadAppConfig(configPath, envDir)
+	require.NoError(t, err)
+	assert.Equal(t, "injected-token", cfg.Logging.CloudflareAPIToken)
+	assert.Equal(t, "production", cfg.Logging.Environment)
+	assert.True(t, cfg.Debug, "later local files must still override the base environment file")
+	_, debugStillSet := os.LookupEnv("FF_INDEXER_DEBUG")
+	assert.False(t, debugStillSet, "file-loaded variables must be removed after configuration is read")
+}
+
 func TestLoadAppConfig_RejectsCloudflareLoggingWithoutEnvironment(t *testing.T) {
 	t.Parallel()
 

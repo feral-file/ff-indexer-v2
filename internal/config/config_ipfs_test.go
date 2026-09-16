@@ -20,7 +20,15 @@ func TestLoadAppConfig_ShippedIPFSGatewayPool(t *testing.T) {
 	values, err := godotenv.Unmarshal(string(baseEnv))
 	require.NoError(t, err)
 	for key := range values {
-		t.Setenv(key, "")
+		value, existed := os.LookupEnv(key)
+		require.NoError(t, os.Unsetenv(key))
+		t.Cleanup(func() {
+			if existed {
+				require.NoError(t, os.Setenv(key, value))
+			} else {
+				require.NoError(t, os.Unsetenv(key))
+			}
+		})
 	}
 
 	envDir := t.TempDir()

@@ -585,7 +585,8 @@ type AppConfig struct {
 
 // LoadAppConfig loads unified configuration for cmd/ff-indexer.
 func LoadAppConfig(configFile string, envPath string) (*AppConfig, error) {
-	v := configureViper("ff-indexer", configFile, envPath)
+	v, restoreEnvironment := configureViper("ff-indexer", configFile, envPath)
+	defer restoreEnvironment()
 	applyAppConfigDefaults(v)
 
 	if err := v.ReadInConfig(); err != nil {
@@ -1227,11 +1228,11 @@ func applyAppConfigDefaults(v *viper.Viper) {
 }
 
 // configureViper returns a viper instance with the config file and environment variables set
-func configureViper(service string, configFile string, envPath string) *viper.Viper {
+func configureViper(service string, configFile string, envPath string) (*viper.Viper, func()) {
 	v := viper.New()
 
 	// Load environment variables
-	loadEnv(envPath, service)
+	restoreEnvironment := loadEnv(envPath, service)
 
 	// Set config file
 	if configFile != "" {
@@ -1255,7 +1256,7 @@ func configureViper(service string, configFile string, envPath string) *viper.Vi
 
 	// Explicitly bind all environment variables
 	bindAllEnvVars(v)
-	return v
+	return v, restoreEnvironment
 }
 
 // bindAllEnvVars explicitly binds all possible environment variables
@@ -1444,8 +1445,15 @@ func bindAllEnvVars(v *viper.Viper) {
 	}
 }
 
-// loadEnv loads environment variables from the config directory
-func loadEnv(envPath string, service string) {
+// loadEnv loads layered environment files without replacing variables supplied
+// by the process environment. It returns a cleanup that removes file values from
+// the process after Viper has read them.
+//
+// Reason: deployment-injected values are the documented highest-precedence
+// configuration source. Trade-offs: environment files are temporarily reflected
+// in the process because Viper reads bound variables lazily. Constraints: later
+// files still override earlier files, and every mutation is restored by cleanup.
+func loadEnv(envPath string, service string) func() {
 	// Always try shared base first, then local, then optional per-service local.
 	envFiles := []string{".env", ".env.local"}
 	if service != "" {
@@ -1457,10 +1465,38 @@ func loadEnv(envPath string, service string) {
 		envPath = "config/"
 	}
 
-	// Create candidates list
+	original := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, found := strings.Cut(entry, "=")
+		if found {
+			original[key] = value
+		}
+	}
+	loadedKeys := make(map[string]struct{})
 	for _, envFile := range envFiles {
 		candidate := filepath.Join(envPath, envFile)
+		values, err := godotenv.Read(candidate)
+		if err == nil {
+			for key := range values {
+				loadedKeys[key] = struct{}{}
+			}
+		}
 		_ = godotenv.Overload(candidate) // Overload lets later files override earlier ones
+		for key := range loadedKeys {
+			if value, existed := original[key]; existed {
+				_ = os.Setenv(key, value)
+			}
+		}
+	}
+
+	return func() {
+		for key := range loadedKeys {
+			if value, existed := original[key]; existed {
+				_ = os.Setenv(key, value)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		}
 	}
 }
 
