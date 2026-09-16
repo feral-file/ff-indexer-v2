@@ -54,6 +54,9 @@ func consoleConfig(debug bool) zap.Config {
 	}
 	cfg.OutputPaths = []string{"stdout"}
 	cfg.ErrorOutputPaths = []string{"stderr"}
+	// Preserve every local log line. Zap's production default samples repeated
+	// messages, which would make stdout less complete than the Cloudflare copy.
+	cfg.Sampling = nil
 	cfg.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
 	cfg.EncoderConfig.EncodeTime = zapcore.RFC3339TimeEncoder
 	if debug {

@@ -629,10 +629,13 @@ func validateLoggingConfig(cfg *LoggingConfig) error {
 		return errors.New("logging.environment is required when Cloudflare log streaming is enabled")
 	}
 	parsed, err := neturl.Parse(cfg.CloudflareStreamURL)
+	if err != nil || parsed == nil {
+		return fmt.Errorf("logging.cloudflare_stream_url must be an HTTPS Cloudflare Stream endpoint, got %q", cfg.CloudflareStreamURL)
+	}
 	hostname := strings.ToLower(parsed.Hostname())
 	validHost := strings.HasSuffix(hostname, ".ingest.cloudflare.com") &&
 		strings.TrimSuffix(hostname, ".ingest.cloudflare.com") != ""
-	if err != nil || parsed.Scheme != "https" || !validHost || parsed.User != nil ||
+	if parsed.Scheme != "https" || !validHost || parsed.User != nil ||
 		parsed.Port() != "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
 		(parsed.Path != "" && parsed.Path != "/") {
 		return fmt.Errorf("logging.cloudflare_stream_url must be an HTTPS Cloudflare Stream endpoint, got %q", cfg.CloudflareStreamURL)

@@ -372,6 +372,21 @@ func TestLoadAppConfig_RejectsNonCloudflareLoggingEndpoint(t *testing.T) {
 	require.EqualError(t, err, "logging.cloudflare_stream_url must be an HTTPS Cloudflare Stream endpoint, got \"https://stream-id.ingest.cloudflare.com.attacker.example\"")
 }
 
+func TestLoadAppConfig_RejectsMalformedCloudflareLoggingEndpoint(t *testing.T) {
+	t.Parallel()
+
+	cfg := &AppConfig{
+		Logging: LoggingConfig{
+			CloudflareStreamURL: "https://%zz.ingest.cloudflare.com",
+			CloudflareAPIToken:  "stream-token",
+			Environment:         "production",
+		},
+	}
+
+	err := validateLoggingConfig(&cfg.Logging)
+	require.EqualError(t, err, "logging.cloudflare_stream_url must be an HTTPS Cloudflare Stream endpoint, got \"https://%zz.ingest.cloudflare.com\"")
+}
+
 func TestLoadAppConfig_FxhashRateLimiterFromEnv(t *testing.T) {
 	tmpDir := t.TempDir()
 
