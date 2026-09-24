@@ -224,7 +224,7 @@ Migrations are stored in `db/migrations/`. Apply migrations:
 psql -h localhost -U postgres -d ff_indexer -f db/migrations/001.sql
 ```
 
-**Autocommit-only migrations:** most migrations are transactional, but files using `CONCURRENTLY` (index create/drop) or per-batch commits **must run outside a transaction** — apply them with a plain `psql -f` in autocommit, and if you use a runner that auto-wraps files in `BEGIN/COMMIT`, disable wrapping for these. Current examples: `017_dedup.sql` and `030_drop_unused_indexes.sql` (35 `DROP INDEX CONCURRENTLY IF EXISTS`, no lock, re-runnable). See each file's header.
+**Autocommit-only migrations:** most migrations are transactional, but files using `CONCURRENTLY` (index create/drop) or per-batch commits **must run outside a transaction** — apply them with a plain `psql -f` in autocommit, and if you use a runner that auto-wraps files in `BEGIN/COMMIT`, disable wrapping for these. Current examples: `017_dedup.sql`, `030_drop_unused_indexes.sql` (35 `DROP INDEX CONCURRENTLY IF EXISTS`, no lock, re-runnable) and `031.sql` (one `CREATE INDEX CONCURRENTLY IF NOT EXISTS`, no lock, re-runnable). See each file's header.
 
 **⚠️ CRITICAL: Migration ordering for deployments**
 

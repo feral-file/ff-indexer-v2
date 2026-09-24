@@ -3260,6 +3260,8 @@ func nullableString(s *string) interface{} {
 // selection until a much later sweep. The replaced URL's failure diagnostics are always
 // cleared: they describe a different URL's probe.
 //
+// Constraint: the source-table UPDATEs must keep the "<url> IS NOT NULL" predicate next to
+// the hash match so the partial *_url_hash indexes apply; see the comment at step 2.
 // Constraint: promotion never overrides an active render gate on the target URL. A
 // fallback gateway is only known to serve valid bytes; L1 may already have confirmed
 // that those bytes render blank or as a directory listing, and promoting onto it as
@@ -3309,8 +3311,12 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 		}
 
 		// 2. Update token_metadata.image_url
+		// The *_url_hash indexes are partial on "<url> IS NOT NULL" (migration 007), so every
+		// WHERE below repeats that predicate: without it the planner cannot use the index and
+		// sequentially scans the table (592k seq scans on prod before this, ~2.5 s per UPDATE
+		// under load). A NULL url has no hash to match, so the extra predicate changes nothing.
 		if err := tx.Model(&schema.TokenMetadata{}).
-			Where("image_url_hash = ?", oldHash).
+			Where("image_url_hash = ? AND image_url IS NOT NULL", oldHash).
 			Updates(map[string]interface{}{
 				"image_url":      newURL,
 				"image_url_hash": newHash,
@@ -3320,7 +3326,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 
 		// 3. Update token_metadata.animation_url
 		if err := tx.Model(&schema.TokenMetadata{}).
-			Where("animation_url_hash = ?", oldHash).
+			Where("animation_url_hash = ? AND animation_url IS NOT NULL", oldHash).
 			Updates(map[string]interface{}{
 				"animation_url":      newURL,
 				"animation_url_hash": newHash,
@@ -3330,7 +3336,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 
 		// 4. Update enrichment_sources.image_url
 		if err := tx.Model(&schema.EnrichmentSource{}).
-			Where("image_url_hash = ?", oldHash).
+			Where("image_url_hash = ? AND image_url IS NOT NULL", oldHash).
 			Updates(map[string]interface{}{
 				"image_url":      newURL,
 				"image_url_hash": newHash,
@@ -3340,7 +3346,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 
 		// 5. Update enrichment_sources.animation_url
 		if err := tx.Model(&schema.EnrichmentSource{}).
-			Where("animation_url_hash = ?", oldHash).
+			Where("animation_url_hash = ? AND animation_url IS NOT NULL", oldHash).
 			Updates(map[string]interface{}{
 				"animation_url":      newURL,
 				"animation_url_hash": newHash,

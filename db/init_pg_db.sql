@@ -515,6 +515,10 @@ CREATE INDEX idx_token_events_created_id ON token_events(created_at ASC, id ASC)
 -- Index for broadcast events by token_id (optimizes JOIN with balances table for scalability)
 CREATE INDEX idx_token_events_token_created ON token_events(token_id, created_at ASC, id ASC) WHERE owner_address IS NULL;
 
+-- Ownership-event replay delete in UpsertToken (token_id + event_type IN ('acquired','released')).
+-- Neither partial index above applies to that predicate; without this the delete seq-scans (migration 031).
+CREATE INDEX idx_token_events_token_event ON token_events(token_id, event_type);
+
 -- One acquired/released event per token-owner-transfer (tx_hash in metadata); idempotent ingestion
 CREATE UNIQUE INDEX token_events_ownership_unique
 ON token_events (token_id, owner_address, event_type, (metadata->>'tx_hash'))
