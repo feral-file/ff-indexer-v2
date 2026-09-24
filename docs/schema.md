@@ -18,7 +18,7 @@ The database includes the following main tables:
 - `token_metadata` - NFT metadata (name, description, media, attributes, etc.)
 - `enrichment_sources` - Additional data sources enriching token information
 - `balances` - Current token ownership balances (multi-edition tokens)
-- `token_events` - Unified log for collection sync (`acquired` / `released` / metadata / viewability / moderation status); ownership rows with `metadata.tx_hash` are unique per `(token_id, owner_address, event_type, tx_hash)` via `token_events_ownership_unique`
+- `token_events` - Unified log for collection sync (`acquired` / `released` / metadata / viewability / moderation status); ownership rows with `metadata.tx_hash` are unique per `(token_id, owner_address, event_type, tx_hash)` via `token_events_ownership_unique`; `idx_token_events_token_event` on (token_id, event_type) serves the ownership-event replay delete in `UpsertToken` (migration 031)
 - `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `token_media_health` - Health status of token media URLs
@@ -102,6 +102,8 @@ Stores original and enriched metadata for tokens.
 - `idx_token_metadata_image_url_hash` on (image_url_hash) WHERE image_url IS NOT NULL
 - `idx_token_metadata_animation_url_hash` on (animation_url_hash) WHERE animation_url IS NOT NULL
 
+These are partial indexes: a query that filters on the hash must also assert the matching `<url> IS NOT NULL`, otherwise the planner falls back to a sequential scan (`UpdateMediaURLAndPropagate` does this).
+
 **Relationships**:
 - One-to-one with `tokens`
 
@@ -131,6 +133,8 @@ Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, Super
 **Indexes**:
 - `idx_enrichment_sources_image_url_hash` on (image_url_hash) WHERE image_url IS NOT NULL
 - `idx_enrichment_sources_animation_url_hash` on (animation_url_hash) WHERE animation_url IS NOT NULL
+
+Partial indexes, same rule as `token_metadata`: hash lookups must also assert the matching `<url> IS NOT NULL`.
 
 **Relationships**:
 - One-to-one with `tokens`
