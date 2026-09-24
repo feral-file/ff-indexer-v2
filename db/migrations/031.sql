@@ -19,8 +19,31 @@
 --
 -- LOCKING: CONCURRENTLY takes no exclusive lock and is safe under traffic. Like
 -- 017_dedup.sql and 030_drop_unused_indexes.sql it must run in autocommit mode
--- (no BEGIN/COMMIT wrapper); IF NOT EXISTS makes it re-runnable. Apply before or
--- after deploying application code; nothing in the code depends on it.
+-- (no BEGIN/COMMIT wrapper). Apply before or after deploying application code;
+-- nothing in the code depends on it.
+--
+-- RE-RUNNABILITY: an interrupted CREATE INDEX CONCURRENTLY (cancel, crash, lock
+-- timeout) leaves an INVALID index behind under this name, and a bare
+-- CREATE INDEX ... IF NOT EXISTS would then skip with a notice and report success
+-- while the delete stays on the sequential-scan path. Step 1 below therefore
+-- drops the index first, but only when it exists AND is invalid, so a re-run heals
+-- an interrupted build and never rebuilds a valid index. \gexec is a psql
+-- meta-command that runs each row of the preceding query as SQL, so this file
+-- must be applied with psql (the documented `psql -f` path), not another runner.
+-- Step 3 prints the final validity so the operator sees `t` before deploying.
 
+-- Step 1: drop a leftover INVALID index from an interrupted build (no-op otherwise).
+SELECT format('DROP INDEX CONCURRENTLY %I', c.relname)
+FROM pg_index i
+JOIN pg_class c ON c.oid = i.indexrelid
+WHERE c.relname = 'idx_token_events_token_event' AND NOT i.indisvalid \gexec
+
+-- Step 2: build the index without blocking writers.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_token_events_token_event
     ON token_events (token_id, event_type);
+
+-- Step 3: verify. Must print indisvalid = t; if it prints f, re-run this file.
+SELECT c.relname, i.indisvalid
+FROM pg_index i
+JOIN pg_class c ON c.oid = i.indexrelid
+WHERE c.relname = 'idx_token_events_token_event';
