@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -344,6 +345,39 @@ func TestPenalize_HonoredByRequestAlreadyQueued(t *testing.T) {
 
 	elapsed := <-done
 	assert.GreaterOrEqual(t, elapsed, 600*time.Millisecond, "released during the penalty")
+}
+
+// Review round 2: callers already queued when a penalty lands must be re-paced by the
+// bucket after it ends, not released together at the pause deadline.
+func TestPenalize_QueuedCallersArePacedAfterPause(t *testing.T) {
+	l := newHostLimiter(t, map[string]config.RateLimitConfig{
+		"p": {RequestsPerSecond: 10, Burst: 1, MaxQueueTime: 5 * time.Second, Hosts: []string{"p.example"}},
+	})
+	_, err := l.WaitHost(context.Background(), "p.example") // drain the burst
+	require.NoError(t, err)
+
+	const n = 5
+	start := time.Now()
+	released := make(chan time.Duration, n)
+	for range n {
+		go func() {
+			_, err := l.WaitHost(context.Background(), "p.example") // reservations at ~100..500ms
+			assert.NoError(t, err)
+			released <- time.Since(start)
+		}()
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	l.Penalize("p", 600*time.Millisecond)
+
+	times := make([]time.Duration, 0, n)
+	for range n {
+		times = append(times, <-released)
+	}
+	slices.Sort(times)
+	assert.GreaterOrEqual(t, times[0], 600*time.Millisecond, "released during the penalty")
+	// Re-paced at 10/s with burst 1: n releases span at least (n-1)*100ms.
+	assert.GreaterOrEqual(t, times[n-1]-times[0], 350*time.Millisecond, "queued callers released as a burst: %v", times)
 }
 
 // Review F2: a redirect hop queued behind the host limiter must fail as a limiter wait

@@ -227,20 +227,30 @@ func (l *localLimiter) providerForHost(host string) (string, bool) {
 }
 
 // wait takes a token and honors any Penalize pause, including one installed while this
-// request was queued for its token: a request is only released once a token is held and
-// no pause is active. ctx is the caller's context and queueCtx the same context bounded
-// by max_queue_time: expiry of queueCtx alone is our own queue budget running out and is
-// reported as ErrQueueTimeout.
+// request was queued for its token. A token obtained under a pause is treated as stale:
+// the caller waits the pause out and queues for a fresh token, so everyone who was queued
+// when a 429 arrived is re-paced by the bucket afterwards instead of being released as
+// one burst at the pause deadline. ctx is the caller's context and queueCtx the same
+// context bounded by max_queue_time: expiry of queueCtx alone is our own queue budget
+// running out and is reported as ErrQueueTimeout.
 func (p *providerLimiter) wait(ctx, queueCtx context.Context) error {
-	if err := p.waitPause(ctx, queueCtx); err != nil {
-		return err
+	for {
+		if err := p.waitPause(ctx, queueCtx); err != nil {
+			return err
+		}
+		if err := p.limiter.Wait(queueCtx); err != nil {
+			return p.waitErr(ctx)
+		}
+		if !p.paused() {
+			return nil
+		}
 	}
-	if err := p.limiter.Wait(queueCtx); err != nil {
-		return p.waitErr(ctx)
-	}
-	// Another caller may have hit a 429 while we were queued; the token we hold stays
-	// spent, but the request must not go out during the pause.
-	return p.waitPause(ctx, queueCtx)
+}
+
+// paused reports whether a Penalize pause is currently active.
+func (p *providerLimiter) paused() bool {
+	until := p.pausedUntil.Load()
+	return until != 0 && time.Now().UnixNano() < until
 }
 
 // waitPause blocks until no Penalize pause is active, failing fast when the pause
