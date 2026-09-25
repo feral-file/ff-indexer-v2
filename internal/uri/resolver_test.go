@@ -56,6 +56,12 @@ func TestResolver_Resolve(t *testing.T) {
 			expected: "https://example.com/path/to/resource",
 		},
 		{
+			name:     "retired Feral File CDN URL moves to the new origin without probing",
+			uri:      "https://cdn.feralfileassets.com/previews/abc/123/?edition_number=1",
+			config:   defaultConfig(),
+			expected: "https://cdn.artworks.feralfile.io/previews/abc/123/index.html?edition_number=1",
+		},
+		{
 			name: "IPFS URI resolves to gateway serving valid content",
 			uri:  "ipfs://" + cid,
 			config: &uri.Config{
