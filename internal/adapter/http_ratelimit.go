@@ -150,9 +150,11 @@ func parseRetryAfter(v string, now time.Time) (time.Duration, bool) {
 		return 0, false
 	}
 	var d time.Duration
-	if secs, err := strconv.Atoi(v); err == nil {
-		if secs < 0 {
-			return 0, false
+	if secs, err := strconv.ParseUint(v, 10, 64); err == nil || errors.Is(err, strconv.ErrRange) {
+		// Cap before converting: time.Duration(secs)*time.Second overflows for huge
+		// values, and an all-digit value too large for uint64 (ErrRange) is huge too.
+		if err != nil || secs > uint64(maxRetryAfter/time.Second) {
+			return maxRetryAfter, true
 		}
 		d = time.Duration(secs) * time.Second
 	} else if at, err := http.ParseTime(v); err == nil {

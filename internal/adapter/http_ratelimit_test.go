@@ -73,11 +73,17 @@ func TestParseRetryAfter(t *testing.T) {
 		{"6", 6 * time.Second, true}, // Cloudflare 1015
 		{" 0 ", 0, true},
 		{"3600", maxRetryAfter, true}, // capped
+		{"30", maxRetryAfter, true},
+		{"31", maxRetryAfter, true},
+		{"9223372037", maxRetryAfter, true},              // overflows time.Duration if converted before capping
+		{"99999999999999999999999", maxRetryAfter, true}, // beyond uint64
 		{now.Add(10 * time.Second).Format(http.TimeFormat), 10 * time.Second, true},
 		{now.Add(-time.Minute).Format(http.TimeFormat), 0, true},
 		{"", 0, false},
 		{"-1", 0, false},
 		{"soon", 0, false},
+		{"+5", 0, false},
+		{"1.5", 0, false},
 	}
 	for _, tt := range tests {
 		got, ok := parseRetryAfter(tt.in, now)
