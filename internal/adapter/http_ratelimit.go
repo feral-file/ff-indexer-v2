@@ -27,6 +27,10 @@ const (
 	maxRetryAfter = 30 * time.Second
 	// defaultRateLimitPause is applied to a mapped provider on a 429 without Retry-After.
 	defaultRateLimitPause = 2 * time.Second
+	// minRateLimitPause floors the provider pause on any 429. Cloudflare's 1015 counts
+	// Retry-After down to 0 at the end of its window while still answering 429; honoring
+	// that literally would install no pause and let every worker keep hitting the limit.
+	minRateLimitPause = time.Second
 )
 
 // HostRateLimiter paces outbound requests by destination host. ratelimit.Limiter
@@ -131,6 +135,7 @@ func (t *rateLimitRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		if !ok {
 			pause = defaultRateLimitPause
 		}
+		pause = max(pause, minRateLimitPause)
 		logger.WarnCtx(req.Context(), "rate limited by remote, pausing provider",
 			zap.String("provider", provider),
 			zap.String("host", req.URL.Host),

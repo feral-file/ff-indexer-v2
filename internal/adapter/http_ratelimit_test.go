@@ -114,6 +114,9 @@ func TestRateLimitRoundTripper_429PausesMappedProvider(t *testing.T) {
 	}{
 		{"uses Retry-After", "6", 6 * time.Second},
 		{"defaults without Retry-After", "", defaultRateLimitPause},
+		// Seen live from Cloudflare 1015 at the end of its window: still a 429, must still pause.
+		{"floors Retry-After 0", "0", minRateLimitPause},
+		{"floors an HTTP-date already passed", "Thu, 01 Jan 2026 00:00:00 GMT", minRateLimitPause},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
