@@ -49,8 +49,14 @@ type Limiter interface {
 	Do(ctx context.Context, providerName string, fn Func) (interface{}, error)
 
 	// WaitHost blocks until the provider mapped to host has capacity and returns that
-	// provider's name. Unmapped hosts return "" immediately. Fails with ErrQueueTimeout
-	// after the provider's max_queue_time, or with ctx's error if ctx ends first.
+	// provider's name. Unmapped hosts return "" immediately.
+	//
+	// It fails with ErrQueueTimeout whenever the request cannot be admitted in time,
+	// whether the bound is the provider's max_queue_time or a shorter deadline already on
+	// ctx: the wait fails fast when it cannot fit, before ctx expires, and in both cases the
+	// remote was never contacted, so the refusal must read as transient to callers (a raw
+	// context.DeadlineExceeded would be classified as a broken URL by health checks).
+	// ctx's own error is returned only once ctx is actually done (canceled or expired).
 	WaitHost(ctx context.Context, host string) (string, error)
 
 	// Penalize pauses all of a provider's traffic (Do and WaitHost) for d, e.g. after a
@@ -231,8 +237,9 @@ func (l *localLimiter) providerForHost(host string) (string, bool) {
 // the caller waits the pause out and queues for a fresh token, so everyone who was queued
 // when a 429 arrived is re-paced by the bucket afterwards instead of being released as
 // one burst at the pause deadline. ctx is the caller's context and queueCtx the same
-// context bounded by max_queue_time: expiry of queueCtx alone is our own queue budget
-// running out and is reported as ErrQueueTimeout.
+// context bounded by max_queue_time. Any admission failure while ctx is still live —
+// queueCtx expiring, or a wait that cannot fit a deadline (ctx's or the queue budget's) —
+// is reported as ErrQueueTimeout; see Limiter.WaitHost.
 func (p *providerLimiter) wait(ctx, queueCtx context.Context) error {
 	for {
 		if err := p.waitPause(ctx, queueCtx); err != nil {

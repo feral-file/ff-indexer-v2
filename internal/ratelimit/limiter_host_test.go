@@ -123,6 +123,26 @@ func TestWaitHost_QueueTimeoutIsSentinel(t *testing.T) {
 	assert.Less(t, time.Since(start), 40*time.Millisecond)
 }
 
+// A caller deadline too short for the wait is an admission refusal, not a caller error:
+// the request was never sent, so it must stay distinguishable from a real timeout (health
+// checks classify context.DeadlineExceeded as broken, ErrQueueTimeout as transient).
+func TestWaitHost_CallerDeadlineTooShortIsQueueTimeout(t *testing.T) {
+	l := newHostLimiter(t, map[string]config.RateLimitConfig{
+		"slow": {RequestsPerSecond: 1, Burst: 1, MaxQueueTime: time.Minute, Hosts: []string{"slow.example"}},
+	})
+	_, err := l.WaitHost(context.Background(), "slow.example")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err = l.WaitHost(ctx, "slow.example")
+	require.ErrorIs(t, err, ratelimit.ErrQueueTimeout)
+	assert.NotErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, time.Since(start), 50*time.Millisecond, "fails fast instead of sleeping to the deadline")
+	require.NoError(t, ctx.Err(), "the caller's context is still live")
+}
+
 func TestWaitHost_CallerCancellationIsNotQueueTimeout(t *testing.T) {
 	l := newHostLimiter(t, map[string]config.RateLimitConfig{
 		"slow": {RequestsPerSecond: 1, Burst: 1, MaxQueueTime: time.Minute, Hosts: []string{"slow.example"}},
