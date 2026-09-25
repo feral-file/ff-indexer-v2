@@ -604,6 +604,16 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 			FailureReason: FailureDNS,
 		}
 	}
+	// Our own limiter refused to send in time: the URL was never contacted, so this can
+	// never be evidence that it is broken, whatever classifyTransient says.
+	if errors.Is(err, adapter.ErrRateLimitWait) {
+		msg := err.Error()
+		return HealthCheckResult{
+			Status:        HealthStatusTransientError,
+			Error:         &msg,
+			FailureReason: FailureTransport,
+		}
+	}
 	if classifyTransient && adapter.IsHTTPRetryableError(err) {
 		msg := err.Error()
 		return HealthCheckResult{

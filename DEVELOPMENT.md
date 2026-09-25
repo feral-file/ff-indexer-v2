@@ -74,6 +74,22 @@ Examples:
 - `FF_INDEXER_SECURITY_SSRF_PROTECTION_ENABLED=false`
 - `FF_INDEXER_SECURITY_SSRF_PROTECTION_MAX_REDIRECTS=5`
 
+**Outbound rate limiting** (`rate_limiter` in YAML; one process-wide limiter, one token bucket per provider):
+
+- **`providers.<name>.requests_per_second` / `burst` / `max_queue_time`** — Bucket size and how long a request may wait for a token before giving up.
+- **`providers.<name>.hosts`** — Destination host suffixes (e.g. `artblocks.io`, matched on a dot boundary, so it covers `api.artblocks.io` but not `notartblocks.io`). Every request any `NewHTTPClientWithSSRF` client sends to a matching host waits for that provider's bucket first: all methods, every retry attempt and every redirect hop, whether it comes from a vendor client or a generic tokenURI/media/health fetch. The wait for a request's first hop happens before the client's timeout starts, so queueing never shortens the fetch's own time budget. Each entry needs at least one dot, and a host may belong to only one provider. Unmapped hosts are not limited.
+- **Vendor clients** (`tzkt`, `objkt`, `fxhash`, `opensea`) also call `Limiter.Do` around their API calls. A request admitted by `Do` is not charged again at the transport for the same provider, so giving those providers `hosts` does not double-count.
+- **429 handling** — A 429 from a mapped host pauses that whole provider for `Retry-After` (capped at 30s, 2s when absent), so other workers stop hitting a limit one of them already found. The retrying HTTP helpers also wait at least `Retry-After` before their next attempt.
+- **Queue timeout** — When a request cannot get a token within `max_queue_time` it is not sent and fails with `adapter.ErrRateLimitWait`. Media health checks record that as `transient_error`, never `broken`, because the URL was never contacted.
+- **Defaults** — `artblocks` is limited to 5 rps (burst 5, 2m queue) on `artblocks.io`. Art Blocks publishes no numbers; its Cloudflare zone answers 429 (error 1015, `Retry-After: 6`) per client IP, so tune the rate upward in deploy config until 429s reappear.
+
+Examples:
+
+- `FF_INDEXER_RATE_LIMITER_PROVIDERS_ARTBLOCKS_REQUESTS_PER_SECOND=8`
+- `FF_INDEXER_RATE_LIMITER_PROVIDERS_ARTBLOCKS_HOSTS=artblocks.io,artblocks-mainnet.hasura.app` (comma-separated)
+
+Only the providers listed in `bindAllEnvVars` (`internal/config/config.go`) can be overridden from the environment; a new provider needs its keys added there, or it can be configured in YAML only.
+
 **Environment variable files** (loaded in order, later files override earlier):
 1. `config/.env` - Base configuration (version controlled)
 2. `config/.env.local` - Local overrides (git ignored)
@@ -378,7 +394,7 @@ Stored `vendor_json` from before this release is incomplete for every vendor and
 | fxhash | Tokens were stored as `vendor=objkt` with no `generative_token`/`iteration`; `vendor_release_id` cannot be derived |
 | objkt | `fa.collection_type` was not fetched; custom collections cannot be identified |
 
-Reindexing runs the full enrichment pipeline — vendor API calls are governed by the configured rate limiters (2 RPS for fxhash/objkt, no separate limit for Feral File/Art Blocks) and the existing token worker concurrency.
+Reindexing runs the full enrichment pipeline — vendor API calls are governed by the configured rate limiters (2 RPS for fxhash/objkt, 5 RPS for every `artblocks.io` host, no separate limit for Feral File) and the existing token worker concurrency.
 
 **What happens after migration 018_reindex runs:**
 

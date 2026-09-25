@@ -63,7 +63,8 @@ type HTTPClient interface {
 
 // RealHTTPClient implements HTTPClient using the standard http package
 type RealHTTPClient struct {
-	client *http.Client
+	client  *http.Client
+	limiter HostRateLimiter
 }
 
 // SSRFValidator validates fully-qualified request URLs before RealHTTPClient sends them.
@@ -106,31 +107,35 @@ func ssrfCheckRedirect(maxRedirects int, v SSRFValidator) func(*http.Request, []
 	}
 }
 
-func newUnderlyingHTTPClient(timeout time.Duration, v SSRFValidator, maxRedirects int) *http.Client {
-	if v == nil {
+func newUnderlyingHTTPClient(timeout time.Duration, v SSRFValidator, maxRedirects int, opts httpClientOptions) *http.Client {
+	if v == nil && opts.limiter == nil {
 		return &http.Client{
 			Timeout: timeout,
 		}
 	}
-	transport, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		return &http.Client{
-			Timeout:       timeout,
-			Transport:     &ssrfRoundTripper{next: http.DefaultTransport, v: v},
-			CheckRedirect: ssrfCheckRedirect(maxRedirects, v),
-		}
+	rt := http.DefaultTransport
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		rt = transport.Clone()
 	}
-	return &http.Client{
-		Timeout:       timeout,
-		Transport:     &ssrfRoundTripper{next: transport.Clone(), v: v},
-		CheckRedirect: ssrfCheckRedirect(maxRedirects, v),
+	// Redirect hops are paced here, after SSRF validation (a refused hop takes no token)
+	// and before a connection is taken. The first hop is paced earlier, in
+	// RealHTTPClient.do, so queueing never counts against Client.Timeout.
+	if opts.limiter != nil {
+		rt = &rateLimitRoundTripper{next: rt, limiter: opts.limiter}
 	}
+	client := &http.Client{Timeout: timeout}
+	if v != nil {
+		rt = &ssrfRoundTripper{next: rt, v: v}
+		client.CheckRedirect = ssrfCheckRedirect(maxRedirects, v)
+	}
+	client.Transport = rt
+	return client
 }
 
 // NewHTTPClient creates a new real HTTP client without SSRF validation.
 func NewHTTPClient(timeout time.Duration) HTTPClient {
 	return &RealHTTPClient{
-		client: newUnderlyingHTTPClient(timeout, nil, 0),
+		client: newUnderlyingHTTPClient(timeout, nil, 0, httpClientOptions{}),
 	}
 }
 
@@ -142,9 +147,16 @@ func NewHTTPClient(timeout time.Duration) HTTPClient {
 //
 // Known limitation: validation runs before each RoundTrip, but the default transport may resolve
 // the host again at dial time; see the ssrfRoundTripper.RoundTrip comment in this file.
-func NewHTTPClientWithSSRF(timeout time.Duration, v SSRFValidator, maxRedirects int) HTTPClient {
+//
+// Pass WithHostRateLimiter to pace requests by destination host (see http_ratelimit.go).
+func NewHTTPClientWithSSRF(timeout time.Duration, v SSRFValidator, maxRedirects int, opts ...HTTPClientOption) HTTPClient {
+	var o httpClientOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	return &RealHTTPClient{
-		client: newUnderlyingHTTPClient(timeout, v, maxRedirects),
+		client:  newUnderlyingHTTPClient(timeout, v, maxRedirects, o),
+		limiter: o.limiter,
 	}
 }
 
@@ -224,9 +236,22 @@ func IsHTTPRetryableError(err error) bool {
 func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req *http.Request) (*http.Response, error) {
 	var finalResp *http.Response
 
+	// Configure exponential backoff; a 429's Retry-After can stretch the next interval.
+	eb := backoff.NewExponentialBackOff()
+	eb.InitialInterval = 1 * time.Second
+	eb.MaxInterval = 10 * time.Second
+	eb.MaxElapsedTime = time.Minute // Total retry duration
+	eb.Multiplier = 2.0
+	eb.RandomizationFactor = 0.5 // Add jitter to prevent thundering herd
+	b := &retryAfterBackOff{ExponentialBackOff: eb}
+
 	operation := func() error {
-		resp, err := c.client.Do(req)
+		resp, err := c.do(req)
 		if err != nil {
+			// Our own limiter's queue budget ran out: retrying would only queue again.
+			if errors.Is(err, ErrRateLimitWait) {
+				return backoff.Permanent(err)
+			}
 			// Check if the error is retryable
 			if IsHTTPRetryableError(err) {
 				logger.WarnCtx(ctx, "retryable error encountered", zap.Error(err), zap.String("url", req.URL.String()))
@@ -242,7 +267,12 @@ func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req 
 			if err := resp.Body.Close(); err != nil {
 				logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
 			}
-			logger.WarnCtx(ctx, "rate limited, retrying with backoff", zap.String("url", req.URL.String()))
+			retryAfter, _ := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+			b.next = retryAfter
+			logger.WarnCtx(ctx, "rate limited, retrying with backoff",
+				zap.String("url", req.URL.String()),
+				zap.Duration("retry_after", retryAfter),
+			)
 			return fmt.Errorf("rate limited (429), retrying")
 		}
 
@@ -250,14 +280,6 @@ func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req 
 		finalResp = resp
 		return nil
 	}
-
-	// Configure exponential backoff
-	b := backoff.NewExponentialBackOff()
-	b.InitialInterval = 1 * time.Second
-	b.MaxInterval = 10 * time.Second
-	b.MaxElapsedTime = time.Minute // Total retry duration
-	b.Multiplier = 2.0
-	b.RandomizationFactor = 0.5 // Add jitter to prevent thundering herd
 
 	// Execute with retry and context support
 	if err := backoff.Retry(operation, backoff.WithContext(b, ctx)); err != nil {
@@ -345,7 +367,7 @@ func (c *RealHTTPClient) GetResponseNoRetry(ctx context.Context, url string, hea
 		req.Header.Set(key, value)
 	}
 
-	return c.client.Do(req)
+	return c.do(req)
 }
 
 // GetBytes performs a GET request with custom headers and returns the response body
@@ -376,7 +398,7 @@ func (c *RealHTTPClient) GetPartialBytes(ctx context.Context, url string, maxByt
 // Returns the partial content as bytes
 func (c *RealHTTPClient) GetPartialBytesNoRetry(ctx context.Context, url string, maxBytes int) ([]byte, error) {
 	return c.getPartialBytesNoRetry(ctx, url, maxBytes, func(req *http.Request) (*http.Response, error) {
-		return c.client.Do(req)
+		return c.do(req)
 	})
 }
 
@@ -442,7 +464,7 @@ func (c *RealHTTPClient) PostNoRetry(ctx context.Context, url string, headers ma
 		req.Header.Set(key, value)
 	}
 
-	return c.client.Do(req)
+	return c.do(req)
 }
 
 // Head performs a HEAD request
@@ -463,5 +485,5 @@ func (c *RealHTTPClient) HeadNoRetry(ctx context.Context, url string) (*http.Res
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	return c.client.Do(req)
+	return c.do(req)
 }

@@ -49,7 +49,7 @@ func registerWorkerCore(
 	if err != nil {
 		return nil, nil, fmt.Errorf("SSRF security configuration: %w", err)
 	}
-	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
+	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects, adapter.WithHostRateLimiter(rateLimiter))
 	if ssrfValidator != nil {
 		logger.InfoCtx(ctx, "Token worker outbound HTTP uses SSRF validation",
 			zap.Int("max_redirects", cfg.Security.SSRFProtection.MaxRedirects),
