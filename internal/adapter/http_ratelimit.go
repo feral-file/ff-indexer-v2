@@ -177,20 +177,27 @@ func parseRetryAfter(v string, now time.Time) (time.Duration, bool) {
 }
 
 // retryAfterBackOff stretches the next backoff interval to a server-requested
-// Retry-After while keeping the inner policy's growth and overall stop condition.
+// Retry-After while keeping the inner policy's growth and its overall retry budget.
 type retryAfterBackOff struct {
-	backoff.BackOff
+	*backoff.ExponentialBackOff
 	next time.Duration
 }
 
 // NextBackOff implements backoff.BackOff.
+//
+// The inner policy checks MaxElapsedTime against its own interval before the stretch is
+// applied, so the budget is checked again here: a Retry-After that would land the next
+// attempt past MaxElapsedTime stops retrying instead of silently extending the budget.
 func (b *retryAfterBackOff) NextBackOff() time.Duration {
-	d := b.BackOff.NextBackOff()
+	d := b.ExponentialBackOff.NextBackOff()
 	if d == backoff.Stop {
 		return d
 	}
 	if b.next > d {
 		d = b.next
+		if b.MaxElapsedTime != 0 && b.GetElapsedTime()+d > b.MaxElapsedTime {
+			d = backoff.Stop
+		}
 	}
 	b.next = 0
 	return d

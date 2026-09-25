@@ -243,7 +243,7 @@ func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req 
 	eb.MaxElapsedTime = time.Minute // Total retry duration
 	eb.Multiplier = 2.0
 	eb.RandomizationFactor = 0.5 // Add jitter to prevent thundering herd
-	b := &retryAfterBackOff{BackOff: eb}
+	b := &retryAfterBackOff{ExponentialBackOff: eb}
 
 	operation := func() error {
 		resp, err := c.do(req)

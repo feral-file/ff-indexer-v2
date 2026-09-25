@@ -92,8 +92,21 @@ func TestParseRetryAfter(t *testing.T) {
 	}
 }
 
+// constantExponential is an ExponentialBackOff that always proposes interval
+// (no growth, no jitter), started now, with the given retry budget.
+func constantExponential(interval, budget time.Duration) *backoff.ExponentialBackOff {
+	eb := backoff.NewExponentialBackOff()
+	eb.InitialInterval = interval
+	eb.MaxInterval = interval
+	eb.Multiplier = 1
+	eb.RandomizationFactor = 0
+	eb.MaxElapsedTime = budget
+	eb.Reset()
+	return eb
+}
+
 func TestRetryAfterBackOff_StretchesOnlyTheNextInterval(t *testing.T) {
-	b := &retryAfterBackOff{BackOff: backoff.NewConstantBackOff(time.Second)}
+	b := &retryAfterBackOff{ExponentialBackOff: constantExponential(time.Second, time.Hour)}
 
 	b.next = 6 * time.Second
 	assert.Equal(t, 6*time.Second, b.NextBackOff())
@@ -101,9 +114,25 @@ func TestRetryAfterBackOff_StretchesOnlyTheNextInterval(t *testing.T) {
 
 	b.next = 100 * time.Millisecond
 	assert.Equal(t, time.Second, b.NextBackOff(), "never shorter than the policy")
+}
 
-	stop := &retryAfterBackOff{BackOff: &backoff.StopBackOff{}, next: time.Second}
-	assert.Equal(t, backoff.Stop, stop.NextBackOff(), "Stop is never overridden")
+// Review round 6: a Retry-After must not push the next attempt past the retry budget.
+func TestRetryAfterBackOff_RespectsRetryBudget(t *testing.T) {
+	b := &retryAfterBackOff{ExponentialBackOff: constantExponential(time.Millisecond, 2*time.Second)}
+
+	b.next = 30 * time.Second // would land ~30s past a 2s budget
+	assert.Equal(t, backoff.Stop, b.NextBackOff())
+
+	b.next = time.Second // fits: elapsed (~0) + 1s <= 2s
+	assert.Equal(t, time.Second, b.NextBackOff())
+
+	unbounded := &retryAfterBackOff{ExponentialBackOff: constantExponential(time.Millisecond, 0)}
+	unbounded.next = time.Hour
+	assert.Equal(t, time.Hour, unbounded.NextBackOff(), "MaxElapsedTime 0 means no budget")
+
+	exhausted := &retryAfterBackOff{ExponentialBackOff: constantExponential(time.Second, time.Millisecond)}
+	exhausted.next = time.Hour
+	assert.Equal(t, backoff.Stop, exhausted.NextBackOff(), "inner Stop is never overridden")
 }
 
 func TestRateLimitRoundTripper_429PausesMappedProvider(t *testing.T) {
