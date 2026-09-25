@@ -17,6 +17,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
@@ -441,7 +442,11 @@ func (r *resolver) fetchMetadataFromURI(ctx context.Context, uri string) (map[st
 			return nil, fmt.Errorf("failed to resolve URI: %w", err)
 		}
 		// Fetch metadata from the resolved URL
-		return r.fetchFromHTTP(ctx, resolvedURL)
+		metadata, err := r.fetchFromHTTP(ctx, resolvedURL)
+		if err != nil {
+			return r.fetchViaIPFSGatewayPool(ctx, resolvedURL, err)
+		}
+		return metadata, nil
 	default:
 		return nil, fmt.Errorf("unsupported URI scheme: %s", uri)
 	}
@@ -463,6 +468,47 @@ func (r *resolver) parseDataURI(uri string) (map[string]interface{}, error) {
 	}
 
 	return data, nil
+}
+
+// fetchViaIPFSGatewayPool retries a failed metadata fetch through the configured IPFS
+// gateway pool when the URL is content-addressed (…/ipfs/<cid>… or <cid>.ipfs.<host>).
+//
+// Reason: many tokenURIs are pinned to a single dedicated gateway that later dies or
+// locks down (Infura's retired public gateway, owner-only *.mypinata.cloud), while the
+// same CID is served by any public gateway. The media health checker already falls back
+// by CID; without the same fallback here the metadata document is unreachable and a
+// re-index silently keeps stale metadata.
+// Trade-offs: the origin is always tried first, so working dedicated gateways behave as
+// before; a failure costs one validated gateway race plus one fetch.
+// Constraints: no fallback after the caller's context ends, or for an SSRF refusal (a
+// policy verdict on the stored URL, which must stay visible as such). When the fallback
+// also fails, the original fetch error stays first in the chain so callers classify it
+// exactly as before.
+func (r *resolver) fetchViaIPFSGatewayPool(ctx context.Context, sourceURL string, fetchErr error) (map[string]interface{}, error) {
+	if ctx.Err() != nil || errors.Is(fetchErr, ssrf.ErrBlocked) {
+		return nil, fetchErr
+	}
+	ok, ref := types.IsIPFSGatewayURL(sourceURL)
+	if !ok {
+		return nil, fetchErr
+	}
+	poolURL, err := r.uriResolver.Resolve(ctx, "ipfs://"+ref)
+	if err != nil {
+		return nil, fmt.Errorf("%w (IPFS gateway fallback: %w)", fetchErr, err)
+	}
+	if poolURL == sourceURL {
+		return nil, fetchErr
+	}
+	metadata, err := r.fetchFromHTTP(ctx, poolURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w (IPFS gateway fallback %s: %w)", fetchErr, poolURL, err)
+	}
+	logger.InfoCtx(ctx, "Recovered token metadata through IPFS gateway pool",
+		zap.String("failed_url", sourceURL),
+		zap.String("url", poolURL),
+		zap.NamedError("origin_error", fetchErr),
+	)
+	return metadata, nil
 }
 
 // fetchFromHTTP fetches metadata from an HTTP(S) URL

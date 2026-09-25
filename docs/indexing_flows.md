@@ -165,6 +165,8 @@ This is implemented mainly in **`IndexTokenMetadata`** (`internal/workflows/inde
 
 Content may be IPFS, Arweave, HTTP, or data URIs; results are persisted via the store layer (see [`schema.md`](schema.md) — `token_metadata`, hashes for change detection).
 
+**Content-addressed fallback.** Many metadata URIs are an HTTP gateway URL for an IPFS CID (`https://<host>/ipfs/<cid>/…` or `https://<cid>.ipfs.<host>/…`) pinned to one dedicated gateway that later dies or locks down (Infura's retired `*.infura-ipfs.io`, owner-only `*.mypinata.cloud`). The origin is always fetched first. If that fails, the CID reference is resolved through the configured IPFS gateway pool, using the same validated race media uses, and fetched once from the winner. The fallback is skipped for non-content-addressed URLs, SSRF refusals and an ended caller context. When the fallback fails too, the origin error stays first in the chain, so callers classify the failure as before. Recovered fetches log `Recovered token metadata through IPFS gateway pool` with the failed and recovered URLs. Media URLs inside the recovered document may still point at the dead host; the inline media health check (Step 3) promotes those to a working gateway by the same CID.
+
 **Step 2 — Enhance (optional vendors)**
 
 - **`EnhanceTokenMetadata`** may call vendor APIs (Art Blocks, fxhash, OpenSea, …) and populate **`enrichment_sources`**; failures are **non-fatal**.
