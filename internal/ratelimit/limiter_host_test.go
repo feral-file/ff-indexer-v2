@@ -321,3 +321,58 @@ func mustHostname(t *testing.T, raw string) string {
 	require.NoError(t, err)
 	return u.Hostname()
 }
+
+// Review F1: a request already queued for a token when another caller installs a penalty
+// must not be released during that penalty.
+func TestPenalize_HonoredByRequestAlreadyQueued(t *testing.T) {
+	l := newHostLimiter(t, map[string]config.RateLimitConfig{
+		"p": {RequestsPerSecond: 5, Burst: 1, MaxQueueTime: 5 * time.Second, Hosts: []string{"p.example"}},
+	})
+	_, err := l.WaitHost(context.Background(), "p.example") // drain the burst
+	require.NoError(t, err)
+
+	start := time.Now()
+	done := make(chan time.Duration, 1)
+	go func() {
+		_, err := l.WaitHost(context.Background(), "p.example") // queues ~200ms for a token
+		assert.NoError(t, err)
+		done <- time.Since(start)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	l.Penalize("p", 600*time.Millisecond) // lands while the goroutine is inside rate.Wait
+
+	elapsed := <-done
+	assert.GreaterOrEqual(t, elapsed, 600*time.Millisecond, "released during the penalty")
+}
+
+// Review F2: a redirect hop queued behind the host limiter must fail as a limiter wait
+// (transient), never as a client timeout (broken). The dangerous case is a wait that fits
+// inside Client.Timeout but leaves too little of it for the fetch itself.
+func TestHTTPClient_RedirectHopWaitFailsAsLimiterWaitNotClientTimeout(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, "/final", http.StatusFound)
+			return
+		}
+		time.Sleep(150 * time.Millisecond) // a normal, slightly slow origin
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// The first hop takes the only token; the hop to /final waits ~333ms. That fits the
+	// 450ms client timeout, but 333ms + 150ms does not: without a bounded wait, the fetch
+	// dies as "Client.Timeout exceeded".
+	l := newHostLimiter(t, map[string]config.RateLimitConfig{
+		"local": {RequestsPerSecond: 3, Burst: 1, MaxQueueTime: time.Minute, Hosts: []string{mustHostname(t, srv.URL)}},
+	})
+	client := adapter.NewHTTPClientWithSSRF(450*time.Millisecond, nil, 0, adapter.WithHostRateLimiter(l))
+
+	_, err := client.GetResponseNoRetry(context.Background(), srv.URL+"/redirect", nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapter.ErrRateLimitWait)
+	assert.NotContains(t, err.Error(), "Client.Timeout exceeded")
+	assert.Equal(t, int32(1), hits.Load(), "the queued hop is never sent")
+}

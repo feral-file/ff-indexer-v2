@@ -72,7 +72,7 @@ func (c *RealHTTPClient) do(req *http.Request) (*http.Response, error) {
 	if c.limiter == nil {
 		return c.client.Do(req)
 	}
-	provider, err := waitHost(c.limiter, req)
+	provider, err := waitHost(req.Context(), c.limiter, req)
 	if err != nil {
 		return nil, err
 	}
@@ -81,10 +81,10 @@ func (c *RealHTTPClient) do(req *http.Request) (*http.Response, error) {
 	return c.client.Do(req)
 }
 
-// waitHost waits for req's host and wraps a limiter refusal in ErrRateLimitWait; the
-// caller's own cancellation or deadline is returned unwrapped.
-func waitHost(l HostRateLimiter, req *http.Request) (string, error) {
-	provider, err := l.WaitHost(req.Context(), req.URL.Host)
+// waitHost waits (bounded by ctx) for req's host and wraps a limiter refusal in
+// ErrRateLimitWait; the request's own cancellation or deadline is returned unwrapped.
+func waitHost(ctx context.Context, l HostRateLimiter, req *http.Request) (string, error) {
+	provider, err := l.WaitHost(ctx, req.URL.Host)
 	if err != nil {
 		if ctxErr := req.Context().Err(); ctxErr != nil {
 			return "", ctxErr
@@ -108,8 +108,19 @@ func (t *rateLimitRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	if pc, ok := req.Context().Value(prechargedKey{}).(*precharged); ok && pc.used.CompareAndSwap(false, true) {
 		provider = pc.provider // first hop, already charged by RealHTTPClient.do
 	} else {
+		// A redirect hop: it can only be seen here, inside the exchange that
+		// http.Client.Timeout bounds. Give the wait at most half the time left so a
+		// queued hop surfaces as ErrRateLimitWait (transient) with time still left for
+		// the fetch, instead of burning the budget into a client timeout that health
+		// checks record as broken.
+		waitCtx := req.Context()
+		if deadline, ok := waitCtx.Deadline(); ok {
+			var cancel context.CancelFunc
+			waitCtx, cancel = context.WithDeadline(waitCtx, deadline.Add(-time.Until(deadline)/2))
+			defer cancel()
+		}
 		var err error
-		if provider, err = waitHost(t.limiter, req); err != nil {
+		if provider, err = waitHost(waitCtx, t.limiter, req); err != nil {
 			return nil, err
 		}
 	}

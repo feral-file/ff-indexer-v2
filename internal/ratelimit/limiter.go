@@ -226,15 +226,31 @@ func (l *localLimiter) providerForHost(host string) (string, bool) {
 	}
 }
 
-// wait honors an active Penalize pause, then takes a token. ctx is the caller's context
-// and queueCtx the same context bounded by max_queue_time: expiry of queueCtx alone is our
-// own queue budget running out and is reported as ErrQueueTimeout.
+// wait takes a token and honors any Penalize pause, including one installed while this
+// request was queued for its token: a request is only released once a token is held and
+// no pause is active. ctx is the caller's context and queueCtx the same context bounded
+// by max_queue_time: expiry of queueCtx alone is our own queue budget running out and is
+// reported as ErrQueueTimeout.
 func (p *providerLimiter) wait(ctx, queueCtx context.Context) error {
+	if err := p.waitPause(ctx, queueCtx); err != nil {
+		return err
+	}
+	if err := p.limiter.Wait(queueCtx); err != nil {
+		return p.waitErr(ctx)
+	}
+	// Another caller may have hit a 429 while we were queued; the token we hold stays
+	// spent, but the request must not go out during the pause.
+	return p.waitPause(ctx, queueCtx)
+}
+
+// waitPause blocks until no Penalize pause is active, failing fast when the pause
+// outlasts queueCtx. It loops because a pause can be extended while we sleep.
+func (p *providerLimiter) waitPause(ctx, queueCtx context.Context) error {
 	for {
 		until := p.pausedUntil.Load()
 		d := time.Until(time.Unix(0, until))
 		if until == 0 || d <= 0 {
-			break
+			return nil
 		}
 		if deadline, ok := queueCtx.Deadline(); ok && time.Now().Add(d).After(deadline) {
 			return p.waitErr(ctx)
@@ -247,10 +263,6 @@ func (p *providerLimiter) wait(ctx, queueCtx context.Context) error {
 		case <-t.C:
 		}
 	}
-	if err := p.limiter.Wait(queueCtx); err != nil {
-		return p.waitErr(ctx)
-	}
-	return nil
 }
 
 func (p *providerLimiter) waitErr(ctx context.Context) error {
