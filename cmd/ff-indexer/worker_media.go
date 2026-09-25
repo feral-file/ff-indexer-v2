@@ -21,6 +21,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
@@ -53,6 +54,7 @@ func registerWorkerMedia(
 	ctx context.Context,
 	wcfg *config.WorkerMediaConfig,
 	db *gorm.DB,
+	rateLimiter ratelimit.Limiter,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
 	if !wcfg.MediaEnabled {
 		logger.Warn("Media job worker disabled by config (FF_INDEXER_MEDIA_ENABLED=false)")
@@ -82,8 +84,8 @@ func registerWorkerMedia(
 	if err != nil {
 		return nil, nil, fmt.Errorf("SSRF security configuration: %w", err)
 	}
-	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, wcfg.Security.SSRFProtection.MaxRedirects)
-	mediaDownloaderHTTPClient := adapter.NewHTTPClientWithSSRF(15*time.Minute, ssrfValidator, wcfg.Security.SSRFProtection.MaxRedirects)
+	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, wcfg.Security.SSRFProtection.MaxRedirects, adapter.WithHostRateLimiter(rateLimiter))
+	mediaDownloaderHTTPClient := adapter.NewHTTPClientWithSSRF(15*time.Minute, ssrfValidator, wcfg.Security.SSRFProtection.MaxRedirects, adapter.WithHostRateLimiter(rateLimiter))
 
 	uriResolverConfig := &uri.Config{
 		IPFSGateways:        wcfg.URI.IPFSGateways,

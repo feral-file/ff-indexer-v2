@@ -467,6 +467,76 @@ tezos:
 	assert.Equal(t, 5*time.Minute, fxhash.MaxQueueTime, "fxhash max_queue_time must be overridable via env")
 }
 
+// Production's deploy config lists only some providers; the artblocks default and its
+// host mapping must still be present, since viper merges nested defaults per key.
+func TestLoadAppConfig_ArtBlocksHostLimitDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := `
+database:
+  host: localhost
+  dbname: ff_indexer
+ethereum:
+  rpc_url: https://rpc.example.com
+  websocket_url: wss://ws.example.com
+tezos:
+  websocket_url: wss://ws.tzkt.io
+rate_limiter:
+  max_workers: 20
+  providers:
+    tzkt:
+      requests_per_second: 9
+      burst: 9
+      max_queue_time: 15m
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0600))
+
+	cfg, err := LoadAppConfig(configPath, tmpDir)
+	require.NoError(t, err)
+
+	ab, ok := cfg.RateLimiter.Providers["artblocks"]
+	require.True(t, ok, "artblocks provider must come from defaults")
+	assert.Equal(t, 5, ab.RequestsPerSecond)
+	assert.Equal(t, 5, ab.Burst)
+	assert.Equal(t, 2*time.Minute, ab.MaxQueueTime)
+	assert.Equal(t, []string{"artblocks.io"}, ab.Hosts)
+	assert.Equal(t, 9, cfg.RateLimiter.Providers["tzkt"].RequestsPerSecond)
+	assert.Empty(t, cfg.RateLimiter.Providers["tzkt"].Hosts, "Do-based providers stay unmapped by default")
+}
+
+func TestLoadAppConfig_ArtBlocksHostLimitFromEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+	envDir := filepath.Join(tmpDir, "env")
+	require.NoError(t, os.MkdirAll(envDir, 0750))
+	envContent := "FF_INDEXER_RATE_LIMITER_PROVIDERS_ARTBLOCKS_REQUESTS_PER_SECOND=8\n" +
+		"FF_INDEXER_RATE_LIMITER_PROVIDERS_ARTBLOCKS_BURST=12\n" +
+		"FF_INDEXER_RATE_LIMITER_PROVIDERS_ARTBLOCKS_MAX_QUEUE_TIME=30s\n" +
+		"FF_INDEXER_RATE_LIMITER_PROVIDERS_ARTBLOCKS_HOSTS=artblocks.io,artblocks-mainnet.hasura.app\n"
+	require.NoError(t, os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0600))
+
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := `
+database:
+  host: localhost
+  dbname: ff_indexer
+ethereum:
+  rpc_url: https://rpc.example.com
+  websocket_url: wss://ws.example.com
+tezos:
+  websocket_url: wss://ws.tzkt.io
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0600))
+
+	cfg, err := LoadAppConfig(configPath, envDir)
+	require.NoError(t, err)
+
+	ab := cfg.RateLimiter.Providers["artblocks"]
+	assert.Equal(t, 8, ab.RequestsPerSecond)
+	assert.Equal(t, 12, ab.Burst)
+	assert.Equal(t, 30*time.Second, ab.MaxQueueTime)
+	assert.Equal(t, []string{"artblocks.io", "artblocks-mainnet.hasura.app"}, ab.Hosts)
+}
+
 func TestLoadAppConfig_MediaEnabledFromEnv(t *testing.T) {
 	tmpDir := t.TempDir()
 

@@ -144,7 +144,7 @@ func run() int {
 	if err != nil {
 		logger.FatalCtx(rootCtx, "Invalid SSRF security configuration", zap.Error(err))
 	}
-	httpClient := adapter.NewHTTPClientWithSSRF(sweeperCfg.MediaHealthSweeper.HTTPTimeout, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
+	httpClient := adapter.NewHTTPClientWithSSRF(sweeperCfg.MediaHealthSweeper.HTTPTimeout, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects, adapter.WithHostRateLimiter(rateLimiter))
 	if ssrfValidator != nil {
 		logger.InfoCtx(rootCtx, "Outbound media HTTP client uses SSRF validation (sweeper; token worker; media worker when CGO enabled)",
 			zap.Int("max_redirects", cfg.Security.SSRFProtection.MaxRedirects),
@@ -200,7 +200,7 @@ func run() int {
 
 	// Worker-media: media task queue (requires CGO build).
 	wMediaCfg := cfg.ToWorkerMediaConfig()
-	runWorkerMedia, cleanupWorkerMedia, err := registerWorkerMedia(rootCtx, wMediaCfg, db)
+	runWorkerMedia, cleanupWorkerMedia, err := registerWorkerMedia(rootCtx, wMediaCfg, db, rateLimiter)
 	if err != nil {
 		logger.FatalCtx(rootCtx, "Failed to init worker-media", zap.Error(err))
 	}

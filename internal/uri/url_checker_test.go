@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
@@ -168,6 +169,19 @@ func TestURLChecker_Check(t *testing.T) {
 				mio.EXPECT().
 					ReadAll(gomock.Any()).
 					Return([]byte{0x89, 'P'}, io.ErrUnexpectedEOF)
+			},
+			expectedStatus: uri.HealthStatusTransientError,
+			expectedReason: uri.FailureTransport,
+		},
+		{
+			// The request never left the process: our own host limiter ran out of queue
+			// budget. That says nothing about the URL, so it must not persist as broken.
+			name: "outbound rate limit wait is transient, never broken",
+			url:  "https://generator.artblocks.io/0x1/1",
+			setupMocks: func(m *mocks.MockHTTPClient, _ *mocks.MockIO) {
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://generator.artblocks.io/0x1/1", probeRangeHeader).
+					Return(nil, fmt.Errorf("Get \"https://generator.artblocks.io/0x1/1\": %w: generator.artblocks.io: queue timeout", adapter.ErrRateLimitWait))
 			},
 			expectedStatus: uri.HealthStatusTransientError,
 			expectedReason: uri.FailureTransport,

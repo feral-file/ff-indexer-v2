@@ -287,6 +287,14 @@ type RateLimitConfig struct {
 	// MaxQueueTime is the maximum time a request can wait in queue for a token
 	// Default: 5m
 	MaxQueueTime time.Duration `mapstructure:"max_queue_time"`
+
+	// Hosts are destination host suffixes (e.g. "artblocks.io") whose outbound HTTP
+	// requests draw from this provider's bucket inside the shared HTTP transport, so
+	// generic URL fetches (tokenURI, media probes, redirect hops) are paced too, not
+	// only calls made through a vendor client. A suffix matches on a dot boundary:
+	// "artblocks.io" covers "api.artblocks.io" but not "notartblocks.io".
+	// Empty means the provider is only reachable through Limiter.Do.
+	Hosts []string `mapstructure:"hosts"`
 }
 
 // RateLimiterConfig holds process-local rate limiter configuration.
@@ -1201,6 +1209,13 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("rate_limiter.providers.objkt.requests_per_second", 2)
 	v.SetDefault("rate_limiter.providers.objkt.burst", 2)
 	v.SetDefault("rate_limiter.providers.objkt.max_queue_time", "15m")
+	// Art Blocks fronts api/token/generator/media-proxy.artblocks.io with a Cloudflare
+	// per-IP limit (error 1015, Retry-After: 6) and publishes no numbers; 5 rps is a
+	// conservative start meant to be tuned upward in deploy config.
+	v.SetDefault("rate_limiter.providers.artblocks.requests_per_second", 5)
+	v.SetDefault("rate_limiter.providers.artblocks.burst", 5)
+	v.SetDefault("rate_limiter.providers.artblocks.max_queue_time", "2m")
+	v.SetDefault("rate_limiter.providers.artblocks.hosts", []string{"artblocks.io"})
 
 	// Media health sweeper
 	v.SetDefault("media_health_sweeper.http_timeout", "30s")
@@ -1423,6 +1438,10 @@ func bindAllEnvVars(v *viper.Viper) {
 		"rate_limiter.providers.opensea.requests_per_second",
 		"rate_limiter.providers.opensea.burst",
 		"rate_limiter.providers.opensea.max_queue_time",
+		"rate_limiter.providers.artblocks.requests_per_second",
+		"rate_limiter.providers.artblocks.burst",
+		"rate_limiter.providers.artblocks.max_queue_time",
+		"rate_limiter.providers.artblocks.hosts",
 		// Transform
 		"transform.target_image_size",
 		"transform.target_image_pixels",

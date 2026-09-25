@@ -12,6 +12,7 @@ package mocks
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	gomock "go.uber.org/mock/gomock"
 
@@ -69,4 +70,31 @@ func (m *MockLimiter) Do(ctx context.Context, providerName string, fn ratelimit.
 func (mr *MockLimiterMockRecorder) Do(ctx, providerName, fn any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Do", reflect.TypeOf((*MockLimiter)(nil).Do), ctx, providerName, fn)
+}
+
+// Penalize mocks base method.
+func (m *MockLimiter) Penalize(providerName string, d time.Duration) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Penalize", providerName, d)
+}
+
+// Penalize indicates an expected call of Penalize.
+func (mr *MockLimiterMockRecorder) Penalize(providerName, d any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Penalize", reflect.TypeOf((*MockLimiter)(nil).Penalize), providerName, d)
+}
+
+// WaitHost mocks base method.
+func (m *MockLimiter) WaitHost(ctx context.Context, host string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WaitHost", ctx, host)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// WaitHost indicates an expected call of WaitHost.
+func (mr *MockLimiterMockRecorder) WaitHost(ctx, host any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitHost", reflect.TypeOf((*MockLimiter)(nil).WaitHost), ctx, host)
 }

@@ -106,7 +106,7 @@ func runTezosIngestion(
 	if err != nil {
 		return fmt.Errorf("SSRF security configuration: %w", err)
 	}
-	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
+	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects, adapter.WithHostRateLimiter(rateLimiter))
 	if ssrfValidator != nil {
 		logger.InfoCtx(ctx, "Tezos chain ingestion outbound HTTP uses SSRF validation",
 			zap.Int("max_redirects", cfg.Security.SSRFProtection.MaxRedirects),

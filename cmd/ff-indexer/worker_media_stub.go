@@ -10,6 +10,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 )
 
 // registerWorkerMedia is a no-op when CGO is disabled (media indexing requires CGO).
@@ -17,6 +18,7 @@ func registerWorkerMedia(
 	_ context.Context,
 	wcfg *config.WorkerMediaConfig,
 	_ *gorm.DB,
+	_ ratelimit.Limiter,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
 	if wcfg != nil && wcfg.MediaEnabled {
 		return nil, nil, errors.New("media worker requires CGO_ENABLED=1 when media_enabled=true")
