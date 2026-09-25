@@ -584,7 +584,7 @@ func TestURL(t *testing.T) {
 		{
 			name:     "relative URI",
 			uri:      "thumbnails/123.jpg",
-			expected: "https://cdn.feralfileassets.com/thumbnails/123.jpg",
+			expected: "https://cdn.artworks.feralfile.io/thumbnails/123.jpg",
 		},
 		{
 			name:     "absolute HTTP URL",
@@ -604,7 +604,7 @@ func TestURL(t *testing.T) {
 		{
 			name:     "URI with leading slash",
 			uri:      "/thumbnails/123.jpg",
-			expected: "https://cdn.feralfileassets.com/thumbnails/123.jpg", // Note: double slash is current behavior
+			expected: "https://cdn.artworks.feralfile.io/thumbnails/123.jpg", // Note: double slash is current behavior
 		},
 		{
 			name:     "IPFS URI",

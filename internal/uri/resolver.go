@@ -123,6 +123,7 @@ func (r *resolver) Resolve(ctx context.Context, uri string) (string, error) {
 		return resolved, nil
 	}
 
-	// Regular HTTP(S) URL
-	return uri, nil
+	// Regular HTTP(S) URL. Moved hosts are rewritten so rebuilds never restore
+	// a URL whose origin no longer resolves.
+	return types.MigrateFeralFileCDN(uri), nil
 }
