@@ -83,6 +83,52 @@ VALUES (6, 'https://cdn.feralfileassets.com/r1/p.html', md5('https://cdn.feralfi
        (7, 'https://cdn.feralfileassets.com/r2/p.html', md5('https://cdn.feralfileassets.com/r2/p.html'), 'enrichment_animation', 'healthy');
 `
 
+// migration032ConcurrentWriters (bot round 5) makes a separate, committed session insert
+// the new-host render probe and media asset keys while the migration's own UPDATE of the
+// corresponding old-host row is in progress. dblink provides the second session; the
+// sequences are non-transactional, so each writer fires exactly once even though the
+// migration retries in a fresh subtransaction. %s is the libpq connection string.
+const migration032ConcurrentWriters = `
+CREATE EXTENSION IF NOT EXISTS dblink;
+CREATE TABLE migration032_test_conn (conninfo text NOT NULL);
+INSERT INTO migration032_test_conn VALUES (%s);
+CREATE SEQUENCE migration032_test_probe_writer;
+CREATE SEQUENCE migration032_test_asset_writer;
+
+INSERT INTO media_render_probes (media_url_hash, media_url, verdict, captured_at)
+VALUES (md5('https://cdn.feralfileassets.com/c/p.html'), 'https://cdn.feralfileassets.com/c/p.html', 'blank', now() - interval '1 day');
+INSERT INTO media_assets (source_url, source_url_hash, provider, provider_asset_id, variant_urls)
+VALUES ('https://cdn.feralfileassets.com/c/asset.png', md5('https://cdn.feralfileassets.com/c/asset.png'), 'cloudflare', 'c-old', '{}');
+
+CREATE FUNCTION migration032_test_probe_writer() RETURNS trigger LANGUAGE plpgsql AS $t$
+BEGIN
+    IF nextval('migration032_test_probe_writer') = 1 THEN
+        PERFORM dblink_exec((SELECT conninfo FROM migration032_test_conn),
+            $q$INSERT INTO media_render_probes (media_url_hash, media_url, verdict, last_error)
+               VALUES (md5('https://cdn.artworks.feralfile.io/c/p.html'), 'https://cdn.artworks.feralfile.io/c/p.html',
+                       'rendered_ok', 'concurrent writer')$q$);
+    END IF;
+    RETURN NEW;
+END $t$;
+CREATE TRIGGER migration032_test_probe_writer BEFORE UPDATE ON media_render_probes
+FOR EACH ROW WHEN (OLD.media_url = 'https://cdn.feralfileassets.com/c/p.html')
+EXECUTE FUNCTION migration032_test_probe_writer();
+
+CREATE FUNCTION migration032_test_asset_writer() RETURNS trigger LANGUAGE plpgsql AS $t$
+BEGIN
+    IF nextval('migration032_test_asset_writer') = 1 THEN
+        PERFORM dblink_exec((SELECT conninfo FROM migration032_test_conn),
+            $q$INSERT INTO media_assets (source_url, source_url_hash, provider, provider_asset_id, variant_urls)
+               VALUES ('https://cdn.artworks.feralfile.io/c/asset.png', md5('https://cdn.artworks.feralfile.io/c/asset.png'),
+                       'cloudflare', 'c-new', '{}')$q$);
+    END IF;
+    RETURN NEW;
+END $t$;
+CREATE TRIGGER migration032_test_asset_writer BEFORE UPDATE ON media_assets
+FOR EACH ROW WHEN (OLD.source_url = 'https://cdn.feralfileassets.com/c/asset.png')
+EXECUTE FUNCTION migration032_test_asset_writer();
+`
+
 // migration032Race simulates render jobs that started against old URLs and call
 // AcquireRenderGate after the first render-probe pass: the old-host probe row reappears
 // gated and the old URL's health rows turn broken/render_blank.
@@ -112,6 +158,7 @@ func TestMigration032FeralFileCDNMove(t *testing.T) {
 
 	runPSQLFile(t, conn, schemaPath)
 	runPSQL(t, conn, migration032Fixture)
+	runPSQL(t, conn, fmt.Sprintf(migration032ConcurrentWriters, "'"+strings.ReplaceAll(conn, "'", "''")+"'"))
 
 	// First run with the race injected between the first render-probe pass and the
 	// token batches.
@@ -122,7 +169,7 @@ func TestMigration032FeralFileCDNMove(t *testing.T) {
 	raced := strings.Replace(string(migration), anchor, migration032Race+anchor, 1)
 	racedPath := filepath.Join(t.TempDir(), "032_raced.sql")
 	require.NoError(t, os.WriteFile(racedPath, []byte(raced), 0o600)) //nolint:gosec // G703: path is under t.TempDir()
-	runPSQLFile(t, conn, racedPath)
+	firstRunOutput := runPSQLFile(t, conn, racedPath)
 
 	q := func(sql string) string { return runPSQL(t, conn, sql) }
 
@@ -162,7 +209,7 @@ func TestMigration032FeralFileCDNMove(t *testing.T) {
 		assert.Equal(t, "rendered_ok",
 			q(`SELECT verdict FROM media_render_probes WHERE media_url = 'https://cdn.artworks.feralfile.io/y/index.html'`))
 		assert.Equal(t, "v-1|https://cdn.artworks.feralfile.io/v/index.html",
-			q(`SELECT provider_asset_id || '|' || source_url FROM media_assets WHERE source_url LIKE '%artworks%'`))
+			q(`SELECT provider_asset_id || '|' || source_url FROM media_assets WHERE provider_asset_id LIKE 'v-%' AND source_url LIKE '%artworks%'`))
 	})
 
 	t.Run("round 1 F2: moved rows inherit the new URL's gate", func(t *testing.T) {
@@ -185,6 +232,23 @@ func TestMigration032FeralFileCDNMove(t *testing.T) {
 		// R2: the new URL holds a gate -> the row carries that gate, not the dead host's.
 		assert.Equal(t, "broken|render_known_bad|fingerprint match",
 			q(`SELECT health_status || '|' || failure_reason || '|' || last_error FROM token_media_health WHERE token_id = 7`))
+	})
+
+	t.Run("round 5 F1: a concurrent new-host insert does not abort the move", func(t *testing.T) {
+		// The concurrently inserted new-host rows exist and win; the old-host probe is gone
+		// and the superseded old-host asset keeps its unreachable URL.
+		// Each writer fired once, each move hit the unique key and retried (without the
+		// retry, psql's ON_ERROR_STOP would have failed the run above).
+		assert.Equal(t, "1|1", q(`SELECT (SELECT last_value FROM migration032_test_probe_writer) || '|' ||
+		                                   (SELECT last_value FROM migration032_test_asset_writer)`))
+		assert.Contains(t, firstRunOutput, "render probe key raced a concurrent writer, retry 1")
+		assert.Contains(t, firstRunOutput, "media asset key raced a concurrent writer, retry 1")
+		assert.Equal(t, "rendered_ok|concurrent writer",
+			q(`SELECT verdict || '|' || last_error FROM media_render_probes
+			   WHERE media_url = 'https://cdn.artworks.feralfile.io/c/p.html'`))
+		assert.Equal(t, "c-new|https://cdn.artworks.feralfile.io/c/asset.png,c-old|https://cdn.feralfileassets.com/c/asset.png",
+			q(`SELECT string_agg(provider_asset_id || '|' || source_url, ',' ORDER BY provider_asset_id)
+			   FROM media_assets WHERE provider_asset_id LIKE 'c-%'`))
 	})
 
 	t.Run("re-running is a no-op", func(t *testing.T) {
@@ -213,9 +277,11 @@ func runPSQL(t *testing.T, conn, sql string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// runPSQLFile executes a SQL file through psql with ON_ERROR_STOP, as deployments do.
-func runPSQLFile(t *testing.T, conn, path string) {
+// runPSQLFile executes a SQL file through psql with ON_ERROR_STOP, as deployments do, and
+// returns its combined output (including NOTICEs).
+func runPSQLFile(t *testing.T, conn, path string) string {
 	t.Helper()
 	out, err := exec.Command("psql", conn, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", path).CombinedOutput() //nolint:gosec // G204: test-only, fixed binary, test-controlled args
 	require.NoError(t, err, string(out))
+	return string(out)
 }

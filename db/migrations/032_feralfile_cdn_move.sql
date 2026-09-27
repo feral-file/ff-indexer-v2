@@ -63,6 +63,12 @@
 --   psql ... -v ON_ERROR_STOP=1 -f db/migrations/032_feralfile_cdn_move.sql
 --
 -- Workers can keep running. Races resolve without pausing them:
+--   * UpsertMediaRenderProbe / CreateMediaAsset may insert a new-host key while the
+--     probe or asset move runs. Both writers are upserts and cannot fail. The move
+--     retries its dedupe + update in a fresh subtransaction until it sees the new row.
+--   * Health rows need no retry: the batch holds lockURLGate on every target hash
+--     before it dedupes, and syncSingleMediaURL / UpdateMediaURLAndPropagate take the
+--     same lock before they insert or move a row onto that hash.
 --   * An enrichment upsert that read the old row before a batch commits may fail its
 --     health-row insert on the unique key, then retry and find nothing to change.
 --   * A render job that started against an old URL may re-create its old-host probe row
@@ -190,43 +196,60 @@ END $$;
 CREATE OR REPLACE PROCEDURE migration_032_move_probes(p_final boolean)
 LANGUAGE plpgsql AS $$
 DECLARE
-    v_hash  text;
-    v_gated text[];
-    v_rows  bigint;
+    v_hash    text;
+    v_gated   text[];
+    v_rows    bigint;
+    v_retries int := 0;
 BEGIN
     IF p_final THEN
         DELETE FROM media_render_probes WHERE media_url LIKE '%cdn.feralfileassets.com/%';
         GET DIAGNOSTICS v_rows = ROW_COUNT;
         RAISE NOTICE 'migration_032: final pass deleted % old-host render probe rows written during the run', v_rows;
     ELSE
-        WITH cand AS (
-            SELECT media_url_hash AS h, md5(migration_032_ff_cdn_move(media_url)) AS target,
-                   health_gated, false AS is_target, captured_at
-            FROM media_render_probes
-            WHERE media_url LIKE '%cdn.feralfileassets.com/%'
-            UNION ALL
-            SELECT n.media_url_hash, n.media_url_hash, n.health_gated, true, n.captured_at
-            FROM media_render_probes n
-            WHERE n.media_url_hash IN (SELECT md5(migration_032_ff_cdn_move(media_url))
-                                       FROM media_render_probes
-                                       WHERE media_url LIKE '%cdn.feralfileassets.com/%')
-        ), ranked AS (
-            SELECT h, row_number() OVER (PARTITION BY target
-                                         ORDER BY is_target DESC, health_gated DESC,
-                                                  captured_at DESC NULLS LAST, h) AS rn
-            FROM cand
-        )
-        DELETE FROM media_render_probes p
-        USING ranked r
-        WHERE p.media_url_hash = r.h AND r.rn > 1;
+        -- Workers keep running, and UpsertMediaRenderProbe can insert a target key between
+        -- the dedupe and the key update. The writer is an upsert and never fails; only
+        -- this statement pair can hit the primary key. Retry the pair: each attempt runs
+        -- in its own subtransaction, so a failed one leaves nothing behind, and the next
+        -- dedupe sees the new row.
+        LOOP
+            BEGIN
+                WITH cand AS (
+                    SELECT media_url_hash AS h, md5(migration_032_ff_cdn_move(media_url)) AS target,
+                           health_gated, false AS is_target, captured_at
+                    FROM media_render_probes
+                    WHERE media_url LIKE '%cdn.feralfileassets.com/%'
+                    UNION ALL
+                    SELECT n.media_url_hash, n.media_url_hash, n.health_gated, true, n.captured_at
+                    FROM media_render_probes n
+                    WHERE n.media_url_hash IN (SELECT md5(migration_032_ff_cdn_move(media_url))
+                                               FROM media_render_probes
+                                               WHERE media_url LIKE '%cdn.feralfileassets.com/%')
+                ), ranked AS (
+                    SELECT h, row_number() OVER (PARTITION BY target
+                                                 ORDER BY is_target DESC, health_gated DESC,
+                                                          captured_at DESC NULLS LAST, h) AS rn
+                    FROM cand
+                )
+                DELETE FROM media_render_probes p
+                USING ranked r
+                WHERE p.media_url_hash = r.h AND r.rn > 1;
 
-        UPDATE media_render_probes
-        SET media_url            = migration_032_ff_cdn_move(media_url),
-            media_url_hash       = md5(migration_032_ff_cdn_move(media_url)),
-            next_check_at        = CASE WHEN verdict <> 'rendered_ok' THEN now() ELSE next_check_at END,
-            consecutive_failures = CASE WHEN last_error ~ '(feralfileassets|resolution failed)' THEN 0
-                                        ELSE consecutive_failures END
-        WHERE media_url LIKE '%cdn.feralfileassets.com/%';
+                UPDATE media_render_probes
+                SET media_url            = migration_032_ff_cdn_move(media_url),
+                    media_url_hash       = md5(migration_032_ff_cdn_move(media_url)),
+                    next_check_at        = CASE WHEN verdict <> 'rendered_ok' THEN now() ELSE next_check_at END,
+                    consecutive_failures = CASE WHEN last_error ~ '(feralfileassets|resolution failed)' THEN 0
+                                                ELSE consecutive_failures END
+                WHERE media_url LIKE '%cdn.feralfileassets.com/%';
+                EXIT;
+            EXCEPTION WHEN unique_violation THEN
+                v_retries := v_retries + 1;
+                IF v_retries > 20 THEN
+                    RAISE;
+                END IF;
+                RAISE NOTICE 'migration_032: render probe key raced a concurrent writer, retry %', v_retries;
+            END;
+        END LOOP;
     END IF;
     COMMIT;
 
@@ -248,18 +271,37 @@ CALL migration_032_move_probes(false);
 -- 2. Cloudflare media assets. One old row per (provider, target) moves (lowest id); a
 --    row whose target already has an asset, or that lost that tie, keeps its old URL.
 --    It is unreachable either way and an asset for the new URL exists.
-UPDATE media_assets a
-SET source_url      = migration_032_ff_cdn_move(a.source_url),
-    source_url_hash = md5(migration_032_ff_cdn_move(a.source_url))
-FROM (SELECT id, row_number() OVER (PARTITION BY provider, md5(migration_032_ff_cdn_move(source_url))
-                                    ORDER BY id) AS rn
-      FROM media_assets
-      WHERE source_url LIKE '%cdn.feralfileassets.com/%') w
-WHERE a.id = w.id
-  AND w.rn = 1
-  AND NOT EXISTS (SELECT 1 FROM media_assets n
-                  WHERE n.provider = a.provider
-                    AND n.source_url_hash = md5(migration_032_ff_cdn_move(a.source_url)));
+--    CreateMediaAsset is an upsert on (source_url_hash, provider) and can insert a
+--    target while this runs; the update retries in a fresh subtransaction, whose
+--    NOT EXISTS then sees that row, instead of aborting the backfill.
+DO $$
+DECLARE
+    v_retries int := 0;
+BEGIN
+    LOOP
+        BEGIN
+            UPDATE media_assets a
+            SET source_url      = migration_032_ff_cdn_move(a.source_url),
+                source_url_hash = md5(migration_032_ff_cdn_move(a.source_url))
+            FROM (SELECT id, row_number() OVER (PARTITION BY provider, md5(migration_032_ff_cdn_move(source_url))
+                                                ORDER BY id) AS rn
+                  FROM media_assets
+                  WHERE source_url LIKE '%cdn.feralfileassets.com/%') w
+            WHERE a.id = w.id
+              AND w.rn = 1
+              AND NOT EXISTS (SELECT 1 FROM media_assets n
+                              WHERE n.provider = a.provider
+                                AND n.source_url_hash = md5(migration_032_ff_cdn_move(a.source_url)));
+            EXIT;
+        EXCEPTION WHEN unique_violation THEN
+            v_retries := v_retries + 1;
+            IF v_retries > 20 THEN
+                RAISE;
+            END IF;
+            RAISE NOTICE 'migration_032: media asset key raced a concurrent writer, retry %', v_retries;
+        END;
+    END LOOP;
+END $$;
 
 -- 3. Work list of affected tokens (one sequential scan per table).
 DROP TABLE IF EXISTS pg_temp.migration_032_tokens;
