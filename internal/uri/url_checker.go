@@ -493,11 +493,17 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 
 	// A retired address without a supported CID cannot migrate on a later retry.
 	// Do not persist a healthy native probe as proof of playback eligibility, or
-	// reinterpret its path as another protocol. Keep existing probe failures,
-	// especially transient errors that callers deliberately never persist.
+	// reinterpret its path as another protocol. A transient answer (ipfs.io now
+	// throttles every request) is no better: there is no replacement to wait for, and a
+	// transient verdict is never persisted, so a previously healthy row would stay
+	// viewable forever. Other failures keep their specific causes; SSRF refusals
+	// returned above.
 	if types.IsBrowserIPFSGateway(url) {
-		if result.Status == HealthStatusHealthy {
+		if result.Status == HealthStatusHealthy || result.Status == HealthStatusTransientError {
 			errMsg := "retired IPFS gateway has an unsupported gateway address"
+			if result.Status == HealthStatusTransientError && result.Error != nil {
+				errMsg += ": " + *result.Error
+			}
 			result.Status = HealthStatusBroken
 			result.Error = &errMsg
 			result.FailureReason = FailureGatewayRetired

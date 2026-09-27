@@ -50,8 +50,10 @@ func TestURLChecker_RejectsHealthyUnsupportedRetiredGatewayURLs(t *testing.T) {
 	}
 }
 
-// Retirement must not turn transient failures into persisted broken verdicts or
-// overwrite the specific cause of an already-failed probe, including SSRF/DNS.
+// Retirement must not overwrite the specific cause of an already-failed probe,
+// including SSRF/DNS. A transient answer is the exception: an unsupported retired
+// address has no replacement to wait for, and a never-persisted transient verdict
+// would keep a previously healthy row viewable forever.
 func TestURLChecker_UnsupportedRetiredGatewayPreservesProbeFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -61,7 +63,7 @@ func TestURLChecker_UnsupportedRetiredGatewayPreservesProbeFailures(t *testing.T
 		reason      uri.FailureReason
 		ssrfBlocked bool
 	}{
-		{"throttled", http.StatusTooManyRequests, nil, uri.HealthStatusTransientError, uri.FailureHTTPStatus, false},
+		{"throttled", http.StatusTooManyRequests, nil, uri.HealthStatusBroken, uri.FailureGatewayRetired, false},
 		{"missing", http.StatusNotFound, nil, uri.HealthStatusBroken, uri.FailureHTTPStatus, false},
 		{"blocked", 0, ssrf.ErrBlocked, uri.HealthStatusBroken, uri.FailureSSRF, true},
 		{"dns", 0, ssrf.ErrResolutionFailed, uri.HealthStatusBroken, uri.FailureDNS, false},
