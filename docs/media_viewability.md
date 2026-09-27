@@ -20,8 +20,10 @@ A URL is healthy only when all of the following hold:
 
 1. The fetch succeeds (2xx; 429 and retryable transport errors are `transient_error`,
    whose verdict is never persisted). The sweep still records the attempt by advancing
-   only `last_checked_at`, so the URL is retried after `recheck_after` instead of every
-   cycle; the stored verdict stands until a conclusive check.
+   `last_checked_at`, so the URL is retried after `recheck_after` instead of every cycle;
+   the stored verdict stands until a conclusive check. A still-`unknown` row also gets the
+   attempt's error in `last_error`: `unknown` with no error means never checked (due at
+   once), `unknown` with an error means attempted and waiting like any other row.
 2. The body's first bytes (up to `uri.probe_max_bytes`, default 32KB, fetched with a
    single ranged GET) pass content validation:
    - not empty, not shorter than the declared length (`zero_length`, `truncated`)

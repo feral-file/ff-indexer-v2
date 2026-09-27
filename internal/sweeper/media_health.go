@@ -531,7 +531,11 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 			// so an unrecorded transient URL is reselected every cycle and a batch of them
 			// blocks the whole sweep (seen in production with ipfs.io answering 429 to
 			// every request). Deferring moves it behind every other due URL instead.
-			if err := s.store.DeferTokenMediaHealthCheckByURL(ctx, url); err != nil {
+			reason := "transient error"
+			if result.Error != nil {
+				reason = *result.Error
+			}
+			if err := s.store.DeferTokenMediaHealthCheckByURL(ctx, url, reason); err != nil {
 				logger.ErrorCtx(ctx, err, zap.String("url", url))
 			}
 			return

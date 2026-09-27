@@ -3021,7 +3021,10 @@ func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Dura
 	err := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Select("media_url").
-		Where("last_checked_at < ? OR health_status = ?",
+		// Never-checked rows (unknown, no error) are due immediately; an unknown row
+		// whose attempt was inconclusive carries last_error (DeferTokenMediaHealthCheckByURL)
+		// and waits for recheckAfter like every other row, so it cannot occupy the batch.
+		Where("last_checked_at < ? OR (health_status = ? AND last_error IS NULL)",
 			cutoffTime,
 			schema.MediaHealthStatusUnknown).
 		Where("failure_reason IS NULL OR failure_reason NOT LIKE 'render_%'").
@@ -3167,12 +3170,19 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, u
 // DeferTokenMediaHealthCheckByURL advances last_checked_at for a URL whose check was
 // inconclusive; see Store.DeferTokenMediaHealthCheckByURL. The verdict columns are not
 // written, so the stored health and viewability stand until a conclusive check.
-func (s *pgStore) DeferTokenMediaHealthCheckByURL(ctx context.Context, url string) error {
+func (s *pgStore) DeferTokenMediaHealthCheckByURL(ctx context.Context, url string, reason string) error {
 	return s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Where("media_url_hash = ?", types.MD5Hash(url)).
 		Where("failure_reason IS NULL OR failure_reason NOT LIKE 'render_%'").
-		Update("last_checked_at", time.Now()).Error
+		Updates(map[string]interface{}{
+			"last_checked_at": time.Now(),
+			// Only an unknown row needs a marker: its verdict is not a check result, so
+			// last_error is what distinguishes "attempted, inconclusive" from "never
+			// checked". Rows with a verdict keep the error that belongs to that verdict.
+			"last_error": gorm.Expr("CASE WHEN health_status = ? THEN ? ELSE last_error END",
+				schema.MediaHealthStatusUnknown, reason),
+		}).Error
 }
 
 // renderGate describes an active URL-level render gate.

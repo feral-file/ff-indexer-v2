@@ -6959,8 +6959,8 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		laterBefore := rowFor(laterID, laterURL)
 		time.Sleep(20 * time.Millisecond)
 
-		require.NoError(t, store.DeferTokenMediaHealthCheckByURL(ctx, throttledURL))
-		require.NoError(t, store.DeferTokenMediaHealthCheckByURL(ctx, gatedURL))
+		require.NoError(t, store.DeferTokenMediaHealthCheckByURL(ctx, throttledURL, "rate limited (429)"))
+		require.NoError(t, store.DeferTokenMediaHealthCheckByURL(ctx, gatedURL, "rate limited (429)"))
 
 		due, err = store.GetURLsForChecking(ctx, -time.Minute, 100000)
 		require.NoError(t, err)
@@ -6975,6 +6975,55 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		gatedAfter := rowFor(gatedID, gatedURL)
 		assert.True(t, gatedAfter.LastCheckedAt.Equal(gatedBefore.LastCheckedAt), "render-gated rows belong to L1")
 		assert.True(t, rowFor(laterID, laterURL).LastCheckedAt.Equal(laterBefore.LastCheckedAt), "other URLs untouched")
+	})
+
+	t.Run("a deferred never-checked row waits for recheckAfter; a never-checked row does not", func(t *testing.T) {
+		mint := func(contract, imageURL string) uint64 {
+			token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, contract, "1", "0xowner9")
+			require.NoError(t, store.CreateTokenMint(ctx, token))
+			tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
+			require.NoError(t, err)
+			md, _ := json.Marshal(map[string]interface{}{"image": imageURL})
+			require.NoError(t, store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+				TokenID: tokenData.ID, OriginJSON: md, LatestJSON: md,
+				EnrichmentLevel: schema.EnrichmentLevelVendor, ImageURL: &imageURL,
+				LastRefreshedAt: time.Now().UTC(),
+			}))
+			return tokenData.ID
+		}
+		firstCheckTransientURL := "https://ipfs.io/ipfs/QmVJn8AG9x22BrbUaUj2CAQFtKMozSHyLvgV2X6X8dmtPw/new.png"
+		neverCheckedURL := "https://example.com/defer/never-checked.png"
+		deferredID := mint("0x0000000000000000000000000000000000100911", firstCheckTransientURL)
+		mint("0x0000000000000000000000000000000000100912", neverCheckedURL)
+
+		due, err := store.GetURLsForChecking(ctx, time.Hour, 100000)
+		require.NoError(t, err)
+		require.Contains(t, due, firstCheckTransientURL, "precondition: a new unknown row is due immediately")
+		require.Contains(t, due, neverCheckedURL)
+
+		require.NoError(t, store.DeferTokenMediaHealthCheckByURL(ctx, firstCheckTransientURL, "rate limited (429)"))
+
+		due, err = store.GetURLsForChecking(ctx, time.Hour, 100000)
+		require.NoError(t, err)
+		assert.NotContains(t, due, firstCheckTransientURL, "an attempted unknown row must not be reselected every cycle")
+		assert.Contains(t, due, neverCheckedURL, "never-checked rows stay immediately due")
+
+		due, err = store.GetURLsForChecking(ctx, -time.Minute, 100000)
+		require.NoError(t, err)
+		assert.Contains(t, due, firstCheckTransientURL, "once recheckAfter passes it is due again")
+
+		rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{deferredID})
+		require.NoError(t, err)
+		require.NotEmpty(t, rows[deferredID])
+		for _, r := range rows[deferredID] {
+			if r.MediaURL != firstCheckTransientURL {
+				continue
+			}
+			assert.Equal(t, schema.MediaHealthStatusUnknown, r.HealthStatus, "no verdict is invented")
+			require.NotNil(t, r.LastError)
+			assert.Equal(t, "rate limited (429)", *r.LastError)
+			assert.Nil(t, r.FailureReason)
+		}
 	})
 
 	t.Run("BatchUpdateTokensViewability with media health changes", func(t *testing.T) {

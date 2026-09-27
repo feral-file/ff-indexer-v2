@@ -560,7 +560,7 @@ func TestMediaHealthSweeper_CheckURL_TransientDefersWithoutVerdict(t *testing.T)
 				Status: uri.HealthStatusTransientError,
 				Error:  &errorMsg,
 			})
-			mocks.store.EXPECT().DeferTokenMediaHealthCheckByURL(ctx, testURL).Return(deferErr).Times(1)
+			mocks.store.EXPECT().DeferTokenMediaHealthCheckByURL(ctx, testURL, errorMsg).Return(deferErr).Times(1)
 			// The verdict is never written for a transient result.
 			mocks.store.EXPECT().UpdateTokenMediaHealthByURL(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 			mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{1}).Return(nil, nil).AnyTimes()
@@ -582,7 +582,7 @@ func TestMediaHealthSweeper_CheckURL_ConclusiveVerdictNotDeferred(t *testing.T) 
 	mocks.store.EXPECT().GetTokenIDsByMediaURL(ctx, testURL).Return([]uint64{1}, nil)
 	mocks.urlChecker.EXPECT().Check(ctx, testURL).Return(uri.HealthCheckResult{Status: uri.HealthStatusBroken, Error: &errorMsg})
 	mocks.store.EXPECT().UpdateTokenMediaHealthByURL(ctx, testURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg}).Return(nil)
-	mocks.store.EXPECT().DeferTokenMediaHealthCheckByURL(gomock.Any(), gomock.Any()).Times(0)
+	mocks.store.EXPECT().DeferTokenMediaHealthCheckByURL(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{1}).Return(nil, nil).AnyTimes()
 
 	runSingleURLSweep(t, mocks, ctx, testURL)
