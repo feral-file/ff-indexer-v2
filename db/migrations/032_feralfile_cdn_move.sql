@@ -20,8 +20,8 @@
 -- one row per target before moving, so no unique key can abort the run. None of these
 -- collisions existed in production on 2026-09-25.
 --
---   * media_render_probes: move url + hash (the PK) in place. Among converging rows a
---     gated row wins, then an existing new-host row, then the latest capture. Verdicts
+--   * media_render_probes: move url + hash (the PK) in place. Among converging rows an
+--     existing new-host row wins, then a gated row, then the latest capture. Verdicts
 --     that are not rendered_ok become due now. consecutive_failures resets when the old
 --     host's outage caused the failure. A gate that lands on a new-host URL is applied to
 --     that URL's existing health rows, as AcquireRenderGate does.
@@ -38,7 +38,8 @@
 --         The API serves media_url from these rows, so it has to change in the same
 --         transaction as the event: a client that refetches on the event then sees the
 --         new URL. Rows broken by the old host's DNS failure become 'unknown' and are
---         backdated so the sweeper re-probes them first. Other statuses are kept.
+--         backdated so the sweeper re-probes them first, and so are rows held by a
+--         render gate on the old URL (a gate belongs to its URL). Other statuses are kept.
 --         The batch holds pg_advisory_xact_lock on every target URL hash (lockURLGate),
 --         then applies any active render gate on those URLs to the moved rows, with
 --         AcquireRenderGate's predicate and values, as syncSingleMediaURL does for a new
@@ -59,10 +60,14 @@
 --
 --   psql ... -v ON_ERROR_STOP=1 -f db/migrations/032_feralfile_cdn_move.sql
 --
--- Workers can keep running. Rare races are self-healing:
+-- Workers can keep running. Races resolve without pausing them:
 --   * An enrichment upsert that read the old row before a batch commits may fail its
 --     health-row insert on the unique key, then retry and find nothing to change.
---   * A render probe in flight may write back one orphan row under the old hash.
+--   * A render job that started against an old URL may re-create its old-host probe row
+--     and gate the old URL's health rows mid-run. The batch releases those rows when it
+--     moves them and re-applies only the new URL's gate. The final render-probe pass
+--     deletes the old-host probe rows. A job finishing after the run writes an old-host
+--     probe row that no health row references, so it is never scheduled again.
 --
 -- Sizing (2026-09-25): ~29.6k enrichment rows, ~2.3k token_metadata rows, ~50k health
 -- rows, 18.4k render probe rows, 16.6k media assets. Expect ~32k token_events. The
@@ -164,54 +169,79 @@ BEGIN
     RETURN v_gated;
 END $$;
 
--- 1. Render probes (keyed by URL hash, independent of tokens).
---    Several old URLs can converge on one target (".../x/" and ".../x/index.html"), and
---    the target may already exist when post-deploy indexing created it. Keep exactly one
---    row per target: a gated row first (never drop a held gate), then the existing
---    new-host row, then the most recent capture.
-BEGIN;
-WITH cand AS (
-    SELECT media_url_hash AS h, md5(migration_032_ff_cdn_move(media_url)) AS target,
-           health_gated, false AS is_target, captured_at
+-- Render probes (keyed by URL hash, independent of tokens). Called twice: before the
+-- token batches (p_final = false) and after them (p_final = true).
+--
+-- Several old URLs can converge on one target (".../x/" and ".../x/index.html"), and the
+-- target may already exist when post-deploy indexing created it. Keep exactly one row per
+-- target. An existing new-host row always wins: it is evidence about the URL actually
+-- served, while an old-host row describes a host that no longer resolves. Among old-host
+-- rows a gated row wins, so a held gate is never dropped, then the latest capture.
+--
+-- The final pass deletes every old-host row still present. The first pass moved all of
+-- them, so any that remain were written during the run by a render job that started
+-- against an old URL. They measure a dead host, and no health row references them.
+--
+-- A gate that lands on a new-host URL must reach health rows that post-deploy indexing
+-- already created there (inserted ungated). Locks are taken in hash order, as
+-- lockChangedURLGates does.
+CREATE OR REPLACE PROCEDURE migration_032_move_probes(p_final boolean)
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_hash  text;
+    v_gated text[];
+    v_rows  bigint;
+BEGIN
+    IF p_final THEN
+        DELETE FROM media_render_probes WHERE media_url LIKE '%cdn.feralfileassets.com/%';
+        GET DIAGNOSTICS v_rows = ROW_COUNT;
+        RAISE NOTICE 'migration_032: final pass deleted % old-host render probe rows written during the run', v_rows;
+    ELSE
+        WITH cand AS (
+            SELECT media_url_hash AS h, md5(migration_032_ff_cdn_move(media_url)) AS target,
+                   health_gated, false AS is_target, captured_at
+            FROM media_render_probes
+            WHERE media_url LIKE '%cdn.feralfileassets.com/%'
+            UNION ALL
+            SELECT n.media_url_hash, n.media_url_hash, n.health_gated, true, n.captured_at
+            FROM media_render_probes n
+            WHERE n.media_url_hash IN (SELECT md5(migration_032_ff_cdn_move(media_url))
+                                       FROM media_render_probes
+                                       WHERE media_url LIKE '%cdn.feralfileassets.com/%')
+        ), ranked AS (
+            SELECT h, row_number() OVER (PARTITION BY target
+                                         ORDER BY is_target DESC, health_gated DESC,
+                                                  captured_at DESC NULLS LAST, h) AS rn
+            FROM cand
+        )
+        DELETE FROM media_render_probes p
+        USING ranked r
+        WHERE p.media_url_hash = r.h AND r.rn > 1;
+
+        UPDATE media_render_probes
+        SET media_url            = migration_032_ff_cdn_move(media_url),
+            media_url_hash       = md5(migration_032_ff_cdn_move(media_url)),
+            next_check_at        = CASE WHEN verdict <> 'rendered_ok' THEN now() ELSE next_check_at END,
+            consecutive_failures = CASE WHEN last_error ~ '(feralfileassets|resolution failed)' THEN 0
+                                        ELSE consecutive_failures END
+        WHERE media_url LIKE '%cdn.feralfileassets.com/%';
+    END IF;
+    COMMIT;
+
+    SELECT array_agg(media_url_hash ORDER BY media_url_hash) INTO v_gated
     FROM media_render_probes
-    WHERE media_url LIKE '%cdn.feralfileassets.com/%'
-    UNION ALL
-    SELECT n.media_url_hash, n.media_url_hash, n.health_gated, true, n.captured_at
-    FROM media_render_probes n
-    WHERE n.media_url_hash IN (SELECT md5(migration_032_ff_cdn_move(media_url))
-                               FROM media_render_probes
-                               WHERE media_url LIKE '%cdn.feralfileassets.com/%')
-), ranked AS (
-    SELECT h, row_number() OVER (PARTITION BY target
-                                 ORDER BY health_gated DESC, is_target DESC,
-                                          captured_at DESC NULLS LAST, h) AS rn
-    FROM cand
-)
-DELETE FROM media_render_probes p
-USING ranked r
-WHERE p.media_url_hash = r.h AND r.rn > 1;
+    WHERE health_gated AND media_url LIKE 'https://cdn.artworks.feralfile.io/%';
+    IF v_gated IS NOT NULL THEN
+        FOREACH v_hash IN ARRAY v_gated LOOP
+            PERFORM pg_advisory_xact_lock(hashtext(v_hash));
+        END LOOP;
+        PERFORM migration_032_apply_gates(v_gated);
+    END IF;
+    COMMIT;
+END $$;
 
-UPDATE media_render_probes
-SET media_url            = migration_032_ff_cdn_move(media_url),
-    media_url_hash       = md5(migration_032_ff_cdn_move(media_url)),
-    next_check_at        = CASE WHEN verdict <> 'rendered_ok' THEN now() ELSE next_check_at END,
-    consecutive_failures = CASE WHEN last_error ~ '(feralfileassets|resolution failed)' THEN 0
-                                ELSE consecutive_failures END
-WHERE media_url LIKE '%cdn.feralfileassets.com/%';
-COMMIT;
-
--- A gate moved onto a new-host URL must reach health rows that post-deploy indexing
--- already created there (they were inserted ungated). Rows still on the old host are
--- handled per batch below. Lock order is hash order, as lockChangedURLGates does.
-BEGIN;
-SELECT pg_advisory_xact_lock(hashtext(media_url_hash))
-FROM (SELECT media_url_hash FROM media_render_probes
-      WHERE health_gated AND media_url LIKE 'https://cdn.artworks.feralfile.io/%'
-      ORDER BY media_url_hash) s;
-SELECT migration_032_apply_gates(ARRAY(
-    SELECT media_url_hash FROM media_render_probes
-    WHERE health_gated AND media_url LIKE 'https://cdn.artworks.feralfile.io/%')) AS new_host_gates;
-COMMIT;
+-- 1. Render probes, first pass.
+CALL migration_032_move_probes(false);
 
 -- 2. Cloudflare media assets. One old row per (provider, target) moves (lowest id); a
 --    row whose target already has an asset, or that lost that tie, keeps its old URL.
@@ -362,13 +392,20 @@ BEGIN
         UPDATE token_media_health h
         SET media_url       = migration_032_ff_cdn_move(h.media_url),
             media_url_hash  = md5(migration_032_ff_cdn_move(h.media_url)),
-            health_status   = CASE WHEN d.dns_outage THEN 'unknown'::media_health_status ELSE h.health_status END,
-            failure_reason  = CASE WHEN d.dns_outage THEN NULL ELSE h.failure_reason END,
-            last_error      = CASE WHEN d.dns_outage THEN NULL ELSE h.last_error END,
-            last_checked_at = CASE WHEN d.dns_outage THEN 'epoch'::timestamptz ELSE h.last_checked_at END
+            health_status   = CASE WHEN d.reset THEN 'unknown'::media_health_status ELSE h.health_status END,
+            failure_reason  = CASE WHEN d.reset THEN NULL ELSE h.failure_reason END,
+            last_error      = CASE WHEN d.reset THEN NULL ELSE h.last_error END,
+            last_checked_at = CASE WHEN d.reset THEN 'epoch'::timestamptz ELSE h.last_checked_at END
         FROM (SELECT id,
-                     (health_status = 'broken' AND failure_reason = 'dns'
-                      AND last_error LIKE '%cdn.feralfileassets.com%') AS dns_outage
+                     -- Broken only because the old host stopped resolving, or held by a
+                     -- render gate on the OLD url. A gate belongs to a URL: the old one's
+                     -- does not travel (it may even have been acquired mid-run by a render
+                     -- job against the dead host). The row is released like
+                     -- ReleaseRenderGate does, and migration_032_apply_gates below re-gates
+                     -- it iff the NEW url holds a gate.
+                     ((health_status = 'broken' AND failure_reason = 'dns'
+                       AND last_error LIKE '%cdn.feralfileassets.com%')
+                      OR failure_reason LIKE 'render_%') AS reset
               FROM token_media_health
               WHERE token_id = ANY (v_ids) AND media_url LIKE '%cdn.feralfileassets.com/%') d
         WHERE h.id = d.id;
@@ -391,6 +428,10 @@ BEGIN
 END $$;
 
 CALL migration_032_move_tokens();
+
+-- 4. Render probes, final pass: drop old-host rows written by in-flight render jobs.
+CALL migration_032_move_probes(true);
+DROP PROCEDURE migration_032_move_probes(boolean);
 
 DROP PROCEDURE migration_032_move_tokens(int);
 DROP TABLE migration_032_tokens;
