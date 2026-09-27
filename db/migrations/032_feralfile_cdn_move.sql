@@ -15,12 +15,20 @@
 --
 -- What this file does, mirroring the store's own write paths
 -- ----------------------------------------------------------
---   * media_render_probes: move url + hash (the PK) in place. Verdicts that are not
---     rendered_ok become due now. consecutive_failures resets when the old host's
---     outage caused the failure.
---   * media_assets: move source_url + hash. The Cloudflare copies stay valid and the
---     API finds assets by md5(display URL), so no re-upload is needed.
---   * Then per batch of tokens, in one transaction each:
+-- Several old URLs can converge on one new URL (".../x/" and ".../x/index.html"), and
+-- post-deploy indexing may already have created the new-URL row. Every step keeps exactly
+-- one row per target before moving, so no unique key can abort the run. None of these
+-- collisions existed in production on 2026-09-25.
+--
+--   * media_render_probes: move url + hash (the PK) in place. Among converging rows a
+--     gated row wins, then an existing new-host row, then the latest capture. Verdicts
+--     that are not rendered_ok become due now. consecutive_failures resets when the old
+--     host's outage caused the failure. A gate that lands on a new-host URL is applied to
+--     that URL's existing health rows, as AcquireRenderGate does.
+--   * media_assets: move source_url + hash, one old row per (provider, target). The
+--     Cloudflare copies stay valid and the API finds assets by md5(display URL), so no
+--     re-upload is needed.
+--   * Then per batch of 100 tokens, in one transaction each:
 --       - enrichment_sources: rewrite image/animation URL + hash, and insert
 --         token_events 'enrichment_updated' {"vendor", "changed_fields"}, like
 --         UpsertEnrichmentSource.
@@ -31,6 +39,11 @@
 --         transaction as the event: a client that refetches on the event then sees the
 --         new URL. Rows broken by the old host's DNS failure become 'unknown' and are
 --         backdated so the sweeper re-probes them first. Other statuses are kept.
+--         The batch holds pg_advisory_xact_lock on every target URL hash (lockURLGate),
+--         then applies any active render gate on those URLs to the moved rows, with
+--         AcquireRenderGate's predicate and values, as syncSingleMediaURL does for a new
+--         URL. A URL whose rows it gates becomes due for a re-render, so the application
+--         recomputes viewability for its tokens on that probe.
 --   Raw payloads (vendor_json, origin_json, latest_json) are left verbatim, as in code.
 --
 -- Deploy ordering (REQUIRED)
@@ -102,11 +115,81 @@ BEGIN
     END LOOP;
 END $$;
 
+-- Render-gate reason for a URL hash, exactly as activeRenderGate derives it: a sibling
+-- health row's render_% reason when one exists, otherwise mapped from the verdict.
+CREATE OR REPLACE FUNCTION migration_032_gate_reason(p_hash text) RETURNS text
+LANGUAGE sql STABLE AS $$
+    SELECT COALESCE(
+        (SELECT h.failure_reason FROM token_media_health h
+         WHERE h.media_url_hash = p_hash AND h.failure_reason LIKE 'render_%' LIMIT 1),
+        (SELECT CASE p.verdict
+                    WHEN 'known_bad_fingerprint' THEN 'render_known_bad'
+                    WHEN 'stalled' THEN 'render_stalled'
+                    ELSE 'render_blank'
+                END
+         FROM media_render_probes p WHERE p.media_url_hash = p_hash))
+$$;
+
+-- Applies any active render gate on the given URL hashes to their health rows, with the
+-- same predicate and values as AcquireRenderGate, and makes those gated probes due so the
+-- prober re-renders them and the application recomputes viewability for their tokens.
+-- Callers hold pg_advisory_xact_lock(hashtext(hash)) for every hash (lockURLGate).
+CREATE OR REPLACE FUNCTION migration_032_apply_gates(p_hashes text[]) RETURNS bigint
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_gated bigint;
+BEGIN
+    WITH gate AS (
+        SELECT p.media_url_hash, p.last_error, migration_032_gate_reason(p.media_url_hash) AS reason
+        FROM media_render_probes p
+        WHERE p.media_url_hash = ANY (p_hashes) AND p.health_gated
+        FOR UPDATE
+    ), applied AS (
+        UPDATE token_media_health h
+        SET health_status   = 'broken',
+            failure_reason  = g.reason,
+            last_error      = g.last_error,
+            last_checked_at = now()
+        FROM gate g
+        WHERE h.media_url_hash = g.media_url_hash
+          AND (h.health_status IN ('healthy', 'unknown') OR h.failure_reason LIKE 'render_%')
+        RETURNING h.media_url_hash
+    )
+    UPDATE media_render_probes p
+    SET next_check_at = now()
+    WHERE p.media_url_hash IN (SELECT DISTINCT media_url_hash FROM applied)
+      AND p.next_check_at > now();
+    SELECT count(*) INTO v_gated FROM media_render_probes p
+    WHERE p.media_url_hash = ANY (p_hashes) AND p.health_gated;
+    RETURN v_gated;
+END $$;
+
 -- 1. Render probes (keyed by URL hash, independent of tokens).
+--    Several old URLs can converge on one target (".../x/" and ".../x/index.html"), and
+--    the target may already exist when post-deploy indexing created it. Keep exactly one
+--    row per target: a gated row first (never drop a held gate), then the existing
+--    new-host row, then the most recent capture.
+BEGIN;
+WITH cand AS (
+    SELECT media_url_hash AS h, md5(migration_032_ff_cdn_move(media_url)) AS target,
+           health_gated, false AS is_target, captured_at
+    FROM media_render_probes
+    WHERE media_url LIKE '%cdn.feralfileassets.com/%'
+    UNION ALL
+    SELECT n.media_url_hash, n.media_url_hash, n.health_gated, true, n.captured_at
+    FROM media_render_probes n
+    WHERE n.media_url_hash IN (SELECT md5(migration_032_ff_cdn_move(media_url))
+                               FROM media_render_probes
+                               WHERE media_url LIKE '%cdn.feralfileassets.com/%')
+), ranked AS (
+    SELECT h, row_number() OVER (PARTITION BY target
+                                 ORDER BY health_gated DESC, is_target DESC,
+                                          captured_at DESC NULLS LAST, h) AS rn
+    FROM cand
+)
 DELETE FROM media_render_probes p
-WHERE p.media_url LIKE '%cdn.feralfileassets.com/%'
-  AND EXISTS (SELECT 1 FROM media_render_probes n
-              WHERE n.media_url_hash = md5(migration_032_ff_cdn_move(p.media_url)));
+USING ranked r
+WHERE p.media_url_hash = r.h AND r.rn > 1;
 
 UPDATE media_render_probes
 SET media_url            = migration_032_ff_cdn_move(media_url),
@@ -115,13 +198,33 @@ SET media_url            = migration_032_ff_cdn_move(media_url),
     consecutive_failures = CASE WHEN last_error ~ '(feralfileassets|resolution failed)' THEN 0
                                 ELSE consecutive_failures END
 WHERE media_url LIKE '%cdn.feralfileassets.com/%';
+COMMIT;
 
--- 2. Cloudflare media assets. A row whose new URL already has an asset keeps its old URL;
---    it is unreachable either way and a newer asset exists.
+-- A gate moved onto a new-host URL must reach health rows that post-deploy indexing
+-- already created there (they were inserted ungated). Rows still on the old host are
+-- handled per batch below. Lock order is hash order, as lockChangedURLGates does.
+BEGIN;
+SELECT pg_advisory_xact_lock(hashtext(media_url_hash))
+FROM (SELECT media_url_hash FROM media_render_probes
+      WHERE health_gated AND media_url LIKE 'https://cdn.artworks.feralfile.io/%'
+      ORDER BY media_url_hash) s;
+SELECT migration_032_apply_gates(ARRAY(
+    SELECT media_url_hash FROM media_render_probes
+    WHERE health_gated AND media_url LIKE 'https://cdn.artworks.feralfile.io/%')) AS new_host_gates;
+COMMIT;
+
+-- 2. Cloudflare media assets. One old row per (provider, target) moves (lowest id); a
+--    row whose target already has an asset, or that lost that tie, keeps its old URL.
+--    It is unreachable either way and an asset for the new URL exists.
 UPDATE media_assets a
 SET source_url      = migration_032_ff_cdn_move(a.source_url),
     source_url_hash = md5(migration_032_ff_cdn_move(a.source_url))
-WHERE a.source_url LIKE '%cdn.feralfileassets.com/%'
+FROM (SELECT id, row_number() OVER (PARTITION BY provider, md5(migration_032_ff_cdn_move(source_url))
+                                    ORDER BY id) AS rn
+      FROM media_assets
+      WHERE source_url LIKE '%cdn.feralfileassets.com/%') w
+WHERE a.id = w.id
+  AND w.rn = 1
   AND NOT EXISTS (SELECT 1 FROM media_assets n
                   WHERE n.provider = a.provider
                     AND n.source_url_hash = md5(migration_032_ff_cdn_move(a.source_url)));
@@ -140,7 +243,7 @@ CREATE TEMP TABLE migration_032_tokens AS
 CREATE UNIQUE INDEX ON migration_032_tokens (token_id);
 ANALYZE migration_032_tokens;
 
-CREATE OR REPLACE PROCEDURE migration_032_move_tokens(p_batch_size int DEFAULT 500)
+CREATE OR REPLACE PROCEDURE migration_032_move_tokens(p_batch_size int DEFAULT 100)
 LANGUAGE plpgsql AS $$
 DECLARE
     v_last     bigint := 0;
@@ -151,6 +254,9 @@ DECLARE
     v_total_e  bigint := 0;
     v_total_m  bigint := 0;
     v_total_h  bigint := 0;
+    v_targets  text[];
+    v_target   text;
+    v_gates    bigint := 0;
 BEGIN
     IF p_batch_size < 1 THEN
         RAISE EXCEPTION 'p_batch_size must be >= 1';
@@ -224,22 +330,41 @@ BEGIN
         FROM src s JOIN upd u USING (token_id);
         GET DIAGNOSTICS v_meta = ROW_COUNT;
 
-        -- Media health: drop an old row whose moved twin already exists (unique key),
-        -- then move the rest in place.
+        -- Media health. Serialize against render-gate transitions on every target URL
+        -- (lockURLGate), in hash order to avoid deadlocks.
+        SELECT array_agg(t ORDER BY t) INTO v_targets
+        FROM (SELECT DISTINCT md5(migration_032_ff_cdn_move(media_url)) AS t
+              FROM token_media_health
+              WHERE token_id = ANY (v_ids) AND media_url LIKE '%cdn.feralfileassets.com/%') s;
+        IF v_targets IS NOT NULL THEN
+            FOREACH v_target IN ARRAY v_targets LOOP
+                PERFORM pg_advisory_xact_lock(hashtext(v_target));
+            END LOOP;
+        END IF;
+
+        -- Keep one row per (token, source, target) for the unique key: an existing
+        -- new-host row wins, then the lowest id among old rows that converge.
         DELETE FROM token_media_health h
-        WHERE h.token_id = ANY (v_ids)
-          AND h.media_url LIKE '%cdn.feralfileassets.com/%'
-          AND EXISTS (SELECT 1 FROM token_media_health n
-                      WHERE n.token_id = h.token_id
-                        AND n.media_source = h.media_source
-                        AND n.media_url_hash = md5(migration_032_ff_cdn_move(h.media_url)));
+        USING (
+            SELECT id, row_number() OVER (PARTITION BY token_id, media_source, target
+                                          ORDER BY is_target DESC, id) AS rn
+            FROM (SELECT id, token_id, media_source,
+                         md5(migration_032_ff_cdn_move(media_url)) AS target, false AS is_target
+                  FROM token_media_health
+                  WHERE token_id = ANY (v_ids) AND media_url LIKE '%cdn.feralfileassets.com/%'
+                  UNION ALL
+                  SELECT id, token_id, media_source, media_url_hash, true
+                  FROM token_media_health
+                  WHERE token_id = ANY (v_ids) AND media_url NOT LIKE '%cdn.feralfileassets.com/%') c
+        ) d
+        WHERE h.id = d.id AND d.rn > 1;
 
         UPDATE token_media_health h
-        SET media_url      = migration_032_ff_cdn_move(h.media_url),
-            media_url_hash = md5(migration_032_ff_cdn_move(h.media_url)),
-            health_status  = CASE WHEN d.dns_outage THEN 'unknown'::media_health_status ELSE h.health_status END,
-            failure_reason = CASE WHEN d.dns_outage THEN NULL ELSE h.failure_reason END,
-            last_error     = CASE WHEN d.dns_outage THEN NULL ELSE h.last_error END,
+        SET media_url       = migration_032_ff_cdn_move(h.media_url),
+            media_url_hash  = md5(migration_032_ff_cdn_move(h.media_url)),
+            health_status   = CASE WHEN d.dns_outage THEN 'unknown'::media_health_status ELSE h.health_status END,
+            failure_reason  = CASE WHEN d.dns_outage THEN NULL ELSE h.failure_reason END,
+            last_error      = CASE WHEN d.dns_outage THEN NULL ELSE h.last_error END,
             last_checked_at = CASE WHEN d.dns_outage THEN 'epoch'::timestamptz ELSE h.last_checked_at END
         FROM (SELECT id,
                      (health_status = 'broken' AND failure_reason = 'dns'
@@ -249,11 +374,18 @@ BEGIN
         WHERE h.id = d.id;
         GET DIAGNOSTICS v_health = ROW_COUNT;
 
+        -- Moved rows inherit an active render gate on their new URL, as
+        -- syncSingleMediaURL and UpdateMediaURLAndPropagate do.
+        IF v_targets IS NOT NULL THEN
+            v_gates := v_gates + migration_032_apply_gates(v_targets);
+        END IF;
+        v_targets := NULL;
+
         v_total_e := v_total_e + v_enriched;
         v_total_m := v_total_m + v_meta;
         v_total_h := v_total_h + v_health;
-        RAISE NOTICE 'migration_032: through token_id % | enrichment % | metadata % | health % (totals % / % / %)',
-            v_last, v_enriched, v_meta, v_health, v_total_e, v_total_m, v_total_h;
+        RAISE NOTICE 'migration_032: through token_id % | enrichment % | metadata % | health % (totals % / % / %, gated targets %)',
+            v_last, v_enriched, v_meta, v_health, v_total_e, v_total_m, v_total_h, v_gates;
         COMMIT;
     END LOOP;
 END $$;
@@ -275,4 +407,6 @@ UNION ALL SELECT 'media_render_probes', count(*) FROM media_render_probes
 UNION ALL SELECT 'media_assets (conflicts left on purpose)', count(*) FROM media_assets
     WHERE source_url LIKE '%cdn.feralfileassets.com/%';
 
+DROP FUNCTION migration_032_apply_gates(text[]);
+DROP FUNCTION migration_032_gate_reason(text);
 DROP FUNCTION migration_032_ff_cdn_move(text);
