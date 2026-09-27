@@ -240,7 +240,7 @@ Migrations are stored in `db/migrations/`. Apply migrations:
 psql -h localhost -U postgres -d ff_indexer -f db/migrations/001.sql
 ```
 
-**Autocommit-only migrations:** most migrations are transactional, but files using `CONCURRENTLY` (index create/drop) or per-batch commits **must run outside a transaction** — apply them with a plain `psql -f` in autocommit, and if you use a runner that auto-wraps files in `BEGIN/COMMIT`, disable wrapping for these. Current examples: `017_dedup.sql`, `030_drop_unused_indexes.sql` (35 `DROP INDEX CONCURRENTLY IF EXISTS`, no lock, re-runnable) `031.sql` (one `CREATE INDEX CONCURRENTLY`, no lock, re-runnable) and `032_feralfile_cdn_move.sql` (per-batch commits; run only after the matching code is deployed). See each file's header.
+**Autocommit-only migrations:** most migrations are transactional, but files using `CONCURRENTLY` (index create/drop) or per-batch commits **must run outside a transaction** — apply them with a plain `psql -f` in autocommit, and if you use a runner that auto-wraps files in `BEGIN/COMMIT`, disable wrapping for these. Current examples: `017_dedup.sql`, `030_drop_unused_indexes.sql` (35 `DROP INDEX CONCURRENTLY IF EXISTS`, no lock, re-runnable), `031.sql` (one `CREATE INDEX CONCURRENTLY`, no lock, re-runnable) and `032_feralfile_cdn_move.sql` (per-batch commits; run only after the matching code is deployed). See each file's header.
 
 **Interrupted `CREATE INDEX CONCURRENTLY`:** a cancelled or crashed concurrent build leaves an INVALID index under the target name, and a later `CREATE INDEX ... IF NOT EXISTS` skips it silently. Check with `SELECT indisvalid FROM pg_index WHERE indexrelid = '<name>'::regclass;` after any concurrent build; if it is `f`, `DROP INDEX CONCURRENTLY <name>;` and re-run the migration. `031.sql` does this check itself (via psql `\gexec`, so apply it with `psql -f`) and prints the validity at the end.
 
@@ -256,6 +256,32 @@ Some migrations introduce database constraints that application code depends on 
 4. **Verify migrations** succeeded (check indexes/constraints exist)
 5. **Deploy** the new application version
 6. **Resume** traffic
+
+**Exception: data backfills that depend on new code run AFTER the deploy.** A file whose
+section below says "code first" (currently `032_feralfile_cdn_move.sql`) rewrites data
+the old application would write back. Deploy the matching application version, confirm
+no process from the previous version is still running, and only then run the backfill.
+Ordinary schema migrations in the same release still run before the deploy.
+
+**Migration 032 (Feral File CDN move) — code first, then the backfill:**
+
+`032_feralfile_cdn_move.sql` moves stored Feral File media URLs from
+`cdn.feralfileassets.com` to `cdn.artworks.feralfile.io` and emits the matching
+`enrichment_updated` / `metadata_updated` token events. Any worker still running the
+previous version rebuilds old-host URLs from the Feral File API and on-chain metadata.
+It would revert the backfilled rows to a dead host and emit another round of events.
+Sequence:
+
+1. Deploy the application version that contains `types.MigrateFeralFileCDN`.
+2. Confirm every indexer and worker process runs that version: the rollout has
+   finished and no container on the previous image is left, including any draining.
+3. Run the backfill in autocommit, in one psql session:
+   `psql ... -v ON_ERROR_STOP=1 -f db/migrations/032_feralfile_cdn_move.sql`
+4. Check the verification counts it prints at the end. Every count is 0, except
+   `media_assets` rows intentionally left on a superseded old URL.
+
+Workers may keep running during step 3. The file's header explains why concurrent
+indexing and in-flight render jobs cannot corrupt the result. Re-running it is safe.
 
 **Migration 025 + the EVM credit guard — required ordering:**
 

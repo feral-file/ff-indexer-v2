@@ -50,8 +50,10 @@
 -- Deploy ordering (REQUIRED)
 -- --------------------------
 -- Run this ONLY AFTER the application version containing types.MigrateFeralFileCDN is
--- live. Older code rebuilds old-host URLs from the Feral File API and on-chain metadata
--- and would revert these rows (emitting another round of events).
+-- live and no process on the previous version remains. Older code rebuilds old-host URLs
+-- from the Feral File API and on-chain metadata and would revert these rows (emitting
+-- another round of events). This is an exception to the default "migrations before
+-- deploy" sequence; see "Migration 032" in DEVELOPMENT.md.
 --
 -- Running
 -- -------
