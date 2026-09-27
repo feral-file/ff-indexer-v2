@@ -3164,6 +3164,17 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, u
 		Updates(updates).Error
 }
 
+// DeferTokenMediaHealthCheckByURL advances last_checked_at for a URL whose check was
+// inconclusive; see Store.DeferTokenMediaHealthCheckByURL. The verdict columns are not
+// written, so the stored health and viewability stand until a conclusive check.
+func (s *pgStore) DeferTokenMediaHealthCheckByURL(ctx context.Context, url string) error {
+	return s.db.WithContext(ctx).
+		Model(&schema.TokenMediaHealth{}).
+		Where("media_url_hash = ?", types.MD5Hash(url)).
+		Where("failure_reason IS NULL OR failure_reason NOT LIKE 'render_%'").
+		Update("last_checked_at", time.Now()).Error
+}
+
 // renderGate describes an active URL-level render gate.
 type renderGate struct {
 	Reason    *string

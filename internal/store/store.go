@@ -493,6 +493,15 @@ type Store interface {
 	GetTokenMediaHealthByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64][]schema.TokenMediaHealth, error)
 	// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
 	UpdateTokenMediaHealthByURL(ctx context.Context, url string, update MediaHealthUpdate) error
+	// DeferTokenMediaHealthCheckByURL records a check attempt that produced no verdict
+	// (a transient error): it advances last_checked_at on every row for the URL and
+	// changes nothing else. The sweeper selects the oldest last_checked_at first and
+	// never persists transient verdicts, so without this a URL that cannot currently be
+	// answered (e.g. a gateway throttling every request) is reselected every cycle and,
+	// once enough such URLs accumulate, occupies the whole batch indefinitely.
+	// Rows owned by the L1 render probe (render_% reasons) are left untouched, like every
+	// other L0 write.
+	DeferTokenMediaHealthCheckByURL(ctx context.Context, url string) error
 	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source
 	// tables (metadata/enrichment) in a transaction. observedContentType and
 	// sniffedContentType are the promoted URL's own validated observations from the

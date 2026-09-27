@@ -527,7 +527,13 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 				zap.String("url", url),
 				zap.Stringp("error", result.Error),
 			)
-			// No need to update media health status, it will be retried later
+			// Keep the stored verdict, but record the attempt: selection is oldest-first,
+			// so an unrecorded transient URL is reselected every cycle and a batch of them
+			// blocks the whole sweep (seen in production with ipfs.io answering 429 to
+			// every request). Deferring moves it behind every other due URL instead.
+			if err := s.store.DeferTokenMediaHealthCheckByURL(ctx, url); err != nil {
+				logger.ErrorCtx(ctx, err, zap.String("url", url))
+			}
 			return
 		}
 	}

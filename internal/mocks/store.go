@@ -234,6 +234,20 @@ func (mr *MockStoreMockRecorder) CreateWebhookDelivery(ctx, delivery any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWebhookDelivery", reflect.TypeOf((*MockStore)(nil).CreateWebhookDelivery), ctx, delivery)
 }
 
+// DeferTokenMediaHealthCheckByURL mocks base method.
+func (m *MockStore) DeferTokenMediaHealthCheckByURL(ctx context.Context, url string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeferTokenMediaHealthCheckByURL", ctx, url)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeferTokenMediaHealthCheckByURL indicates an expected call of DeferTokenMediaHealthCheckByURL.
+func (mr *MockStoreMockRecorder) DeferTokenMediaHealthCheckByURL(ctx, url any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeferTokenMediaHealthCheckByURL", reflect.TypeOf((*MockStore)(nil).DeferTokenMediaHealthCheckByURL), ctx, url)
+}
+
 // DeleteAddressScanSession mocks base method.
 func (m *MockStore) DeleteAddressScanSession(ctx context.Context, sessionID int64) error {
 	m.ctrl.T.Helper()

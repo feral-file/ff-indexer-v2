@@ -202,7 +202,7 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 | media_url_hash | TEXT | MD5 hash of media_url for efficient indexing |
 | media_source | TEXT | Source of URL (metadata_image, metadata_animation, enrichment_image, enrichment_animation) |
 | health_status | media_health_status | Health status (unknown, healthy, broken) |
-| last_checked_at | TIMESTAMPTZ | Last health check timestamp |
+| last_checked_at | TIMESTAMPTZ | Last health check attempt, including inconclusive (`transient_error`) attempts that leave the verdict columns unchanged; drives the sweep's oldest-first selection |
 | last_error | TEXT | Error message from last failed check (NULL if healthy) |
 | failure_reason | TEXT | Machine-readable broken cause: http_status, dns, ssrf, type_mismatch, container_invalid, directory_listing, known_error_page, zero_length, truncated, invalid_url, unsupported_scheme, transport, data_uri_invalid, unsupported_mime_type, gateway_retired (otherwise healthy retired address has no supported CID form, or validated replacement could not be persisted); render_% prefix reserved for the L1 render probe. NULL only when healthy/unknown — every broken verdict carries a reason |
 | observed_content_type | TEXT | Content-Type header observed on the last probe (NULL until content-probed) |
