@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -639,7 +640,7 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 			FailureReason: FailureTransport,
 		}
 	}
-	if classifyTransient && adapter.IsHTTPRetryableError(err) {
+	if classifyTransient && (adapter.IsHTTPRetryableError(err) || isProbeTimeout(err)) {
 		msg := err.Error()
 		return HealthCheckResult{
 			Status:        HealthStatusTransientError,
@@ -653,4 +654,26 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 		Error:         &msg,
 		FailureReason: FailureTransport,
 	}
+}
+
+// isProbeTimeout reports whether a probe fetch ended because a time budget ran out or its
+// context was canceled, rather than because the remote answered with a failure.
+//
+// Reason: adapter.IsHTTPRetryableError deliberately rejects context.DeadlineExceeded (in
+// a retry loop an expired deadline means "stop"), and http.Client's Timeout wraps exactly
+// that error. Classified here, a gateway that is merely slow — a fetching IPFS gateway
+// answering a cold CID, or one briefly loaded by a full-speed sweep — was persisted as
+// broken/transport and could flip a viewable token to unviewable while the same URL
+// served moments later (seen in production after the sweep was unblocked).
+// Trade-offs: a host that times out on every attempt keeps its last conclusive verdict
+// rather than turning broken; IPFS/Arweave/OnChFS URLs still fall back to a gateway that
+// answers, and the sweep defers these rows instead of reselecting them.
+// Constraints: SSRF, DNS and other transport failures (refused, reset) are classified
+// before this and are unaffected.
+func isProbeTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }

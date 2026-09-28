@@ -18,7 +18,9 @@ false-positive class in the linked bugs shares this mechanism.
 
 A URL is healthy only when all of the following hold:
 
-1. The fetch succeeds (2xx; 429 and retryable transport errors are `transient_error`,
+1. The fetch succeeds (2xx; 429, retryable transport errors, and probe timeouts or
+   cancellations — the check's own time budget running out, e.g. a fetching gateway slow
+   on a cold CID — are `transient_error`,
    whose verdict is never persisted). The sweep still records the attempt by advancing
    `last_checked_at`, so the URL is retried after `recheck_after` instead of every cycle;
    the stored verdict stands until a conclusive check. A still-`unknown` row also gets the
