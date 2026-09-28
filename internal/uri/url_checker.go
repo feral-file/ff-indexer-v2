@@ -469,16 +469,41 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 			// or leaving its reason NULL. No replacement keeps the direct verdict.
 			fallback.FailureReason = FailureGatewayRetired
 		}
+		if fallback.Status == HealthStatusTransientError && types.IsBrowserIPFSGateway(url) {
+			// A retired gateway is not a playback source, so its throttling is not a
+			// transient condition worth waiting out: with no validated replacement the
+			// URL is simply unplayable. Reporting transient here would keep the stale
+			// verdict forever (transients are never persisted) — ipfs.io now answers
+			// 429 to every request. A later check still promotes a replacement once one
+			// validates, exactly as for other gateway_retired rows.
+			errMsg := "retired IPFS gateway has no validated replacement"
+			if fallback.Error != nil {
+				errMsg += ": " + *fallback.Error
+			}
+			return HealthCheckResult{
+				Status:              HealthStatusBroken,
+				Error:               &errMsg,
+				FailureReason:       FailureGatewayRetired,
+				ObservedContentType: fallback.ObservedContentType,
+				SniffedContentType:  fallback.SniffedContentType,
+			}
+		}
 		return fallback
 	}
 
 	// A retired address without a supported CID cannot migrate on a later retry.
 	// Do not persist a healthy native probe as proof of playback eligibility, or
-	// reinterpret its path as another protocol. Keep existing probe failures,
-	// especially transient errors that callers deliberately never persist.
+	// reinterpret its path as another protocol. A transient answer (ipfs.io now
+	// throttles every request) is no better: there is no replacement to wait for, and a
+	// transient verdict is never persisted, so a previously healthy row would stay
+	// viewable forever. Other failures keep their specific causes; SSRF refusals
+	// returned above.
 	if types.IsBrowserIPFSGateway(url) {
-		if result.Status == HealthStatusHealthy {
+		if result.Status == HealthStatusHealthy || result.Status == HealthStatusTransientError {
 			errMsg := "retired IPFS gateway has an unsupported gateway address"
+			if result.Status == HealthStatusTransientError && result.Error != nil {
+				errMsg += ": " + *result.Error
+			}
 			result.Status = HealthStatusBroken
 			result.Error = &errMsg
 			result.FailureReason = FailureGatewayRetired

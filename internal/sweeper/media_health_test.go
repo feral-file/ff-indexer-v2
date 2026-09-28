@@ -3,6 +3,7 @@ package sweeper_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -516,6 +517,75 @@ func TestMediaHealthSweeper_CheckURL_Broken(t *testing.T) {
 
 	err := mocks.sweeper.Start(ctx)
 	require.NoError(t, err)
+}
+
+// runSingleURLSweep drives one sweep cycle over testURL and then stops the sweeper.
+func runSingleURLSweep(t *testing.T, mocks *testSweeperMocks, ctx context.Context, testURL string) {
+	t.Helper()
+	now := time.Now()
+	mocks.clock.EXPECT().Now().Return(now).AnyTimes()
+	mocks.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
+	mocks.clock.EXPECT().After(gomock.Any()).DoAndReturn(func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			ch <- time.Now()
+		}()
+		return ch
+	}).AnyTimes()
+	mocks.store.EXPECT().GetURLsForChecking(ctx, 24*time.Hour, 10).Return([]string{testURL}, nil).Times(1)
+	mocks.store.EXPECT().GetURLsForChecking(ctx, 24*time.Hour, 10).Return([]string{}, nil).AnyTimes()
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = mocks.sweeper.Stop(ctx)
+	}()
+	require.NoError(t, mocks.sweeper.Start(ctx))
+}
+
+// A transient result keeps the stored verdict but records the attempt, so the URL
+// cannot hold the head of the oldest-first sweep (production: ipfs.io 429s pinned
+// the same 500 URLs for days while ~1M rows went overdue).
+func TestMediaHealthSweeper_CheckURL_TransientDefersWithoutVerdict(t *testing.T) {
+	for _, deferErr := range []error{nil, errors.New("db down")} {
+		t.Run(fmt.Sprintf("defer error %v", deferErr), func(t *testing.T) {
+			mocks := setupTestSweeper(t)
+			defer tearDownTestSweeper(mocks)
+
+			ctx := context.Background()
+			testURL := "https://gateway.example.com/ipfs/QmVJn8AG9x22BrbUaUj2CAQFtKMozSHyLvgV2X6X8dmtPw"
+			errorMsg := "rate limited (429)"
+
+			mocks.store.EXPECT().GetTokenIDsByMediaURL(ctx, testURL).Return([]uint64{1}, nil)
+			mocks.urlChecker.EXPECT().Check(ctx, testURL).Return(uri.HealthCheckResult{
+				Status: uri.HealthStatusTransientError,
+				Error:  &errorMsg,
+			})
+			mocks.store.EXPECT().DeferTokenMediaHealthCheckByURL(ctx, testURL, errorMsg).Return(deferErr).Times(1)
+			// The verdict is never written for a transient result.
+			mocks.store.EXPECT().UpdateTokenMediaHealthByURL(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+			mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{1}).Return(nil, nil).AnyTimes()
+
+			runSingleURLSweep(t, mocks, ctx, testURL)
+		})
+	}
+}
+
+// Conclusive verdicts are written as before and never go through the deferral path.
+func TestMediaHealthSweeper_CheckURL_ConclusiveVerdictNotDeferred(t *testing.T) {
+	mocks := setupTestSweeper(t)
+	defer tearDownTestSweeper(mocks)
+
+	ctx := context.Background()
+	testURL := "https://example.com/conclusive.jpg"
+	errorMsg := "404 Not Found"
+
+	mocks.store.EXPECT().GetTokenIDsByMediaURL(ctx, testURL).Return([]uint64{1}, nil)
+	mocks.urlChecker.EXPECT().Check(ctx, testURL).Return(uri.HealthCheckResult{Status: uri.HealthStatusBroken, Error: &errorMsg})
+	mocks.store.EXPECT().UpdateTokenMediaHealthByURL(ctx, testURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg}).Return(nil)
+	mocks.store.EXPECT().DeferTokenMediaHealthCheckByURL(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{1}).Return(nil, nil).AnyTimes()
+
+	runSingleURLSweep(t, mocks, ctx, testURL)
 }
 
 // TestMediaHealthSweeper_EnqueuesRenderProbes asserts that with the render probe enabled

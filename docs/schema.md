@@ -202,9 +202,9 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 | media_url_hash | TEXT | MD5 hash of media_url for efficient indexing |
 | media_source | TEXT | Source of URL (metadata_image, metadata_animation, enrichment_image, enrichment_animation) |
 | health_status | media_health_status | Health status (unknown, healthy, broken) |
-| last_checked_at | TIMESTAMPTZ | Last health check timestamp |
-| last_error | TEXT | Error message from last failed check (NULL if healthy) |
-| failure_reason | TEXT | Machine-readable broken cause: http_status, dns, ssrf, type_mismatch, container_invalid, directory_listing, known_error_page, zero_length, truncated, invalid_url, unsupported_scheme, transport, data_uri_invalid, unsupported_mime_type, gateway_retired (otherwise healthy retired address has no supported CID form, or validated replacement could not be persisted); render_% prefix reserved for the L1 render probe. NULL only when healthy/unknown — every broken verdict carries a reason |
+| last_checked_at | TIMESTAMPTZ | Last health check attempt, including inconclusive (`transient_error`) attempts that leave the verdict columns unchanged; drives the sweep's oldest-first selection |
+| last_error | TEXT | Error message from the last failed check (NULL if healthy). On a still-`unknown` row it is the error of an inconclusive (`transient_error`) attempt: `unknown` + NULL means never checked and due at once, `unknown` + error means attempted and due again after `recheck_after` |
+| failure_reason | TEXT | Machine-readable broken cause: http_status, dns, ssrf, type_mismatch, container_invalid, directory_listing, known_error_page, zero_length, truncated, invalid_url, unsupported_scheme, transport, data_uri_invalid, unsupported_mime_type, gateway_retired (a retired address with no supported CID form that answers healthy or transiently, a retired source that answers transiently with no validated replacement, or a validated replacement that could not be persisted); render_% prefix reserved for the L1 render probe. NULL only when healthy/unknown — every broken verdict carries a reason |
 | observed_content_type | TEXT | Content-Type header observed on the last probe (NULL until content-probed) |
 | sniffed_content_type | TEXT | Magic-byte-detected type from the first bytes of the body (NULL until content-probed); drives render-probe class selection |
 | created_at | TIMESTAMPTZ | Record creation timestamp |

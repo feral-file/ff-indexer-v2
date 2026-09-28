@@ -19,7 +19,11 @@ false-positive class in the linked bugs shares this mechanism.
 A URL is healthy only when all of the following hold:
 
 1. The fetch succeeds (2xx; 429 and retryable transport errors are `transient_error`,
-   retried next sweep and never persisted).
+   whose verdict is never persisted). The sweep still records the attempt by advancing
+   `last_checked_at`, so the URL is retried after `recheck_after` instead of every cycle;
+   the stored verdict stands until a conclusive check. A still-`unknown` row also gets the
+   attempt's error in `last_error`: `unknown` with no error means never checked (due at
+   once), `unknown` with an error means attempted and waiting like any other row.
 2. The body's first bytes (up to `uri.probe_max_bytes`, default 32KB, fetched with a
    single ranged GET) pass content validation:
    - not empty, not shorter than the declared length (`zero_length`, `truncated`)
@@ -65,12 +69,18 @@ content validates, so a directory listing can no longer be stored as a working U
 fetches are throttled and browser navigations can open a gateway viewer. The
 resolver also repairs HTTP URLs on these hosts. For supported CID addresses,
 health checks attempt a validated replacement even when a direct fetch succeeds;
-an unavailable replacement preserves that direct verdict. Unsupported retired
+an unavailable replacement preserves that direct verdict. A retired source that
+itself answers `transient_error` (ipfs.io now answers 429 to every request) with no
+validated replacement is `broken`/`gateway_retired` rather than transient: a retired
+gateway is not a playback source, so there is nothing to wait out, and a transient
+verdict would never be persisted. A later check still promotes a replacement once one
+validates. Unsupported retired
 addresses (IPNS, malformed CID paths/subdomains, userinfo, or a bare gateway root) cannot
 migrate through the CID resolver: a successful native probe returns
-`broken`/`gateway_retired`, with its content observations retained. Their existing
-probe failures keep their specific causes, including transient errors that are
-never persisted and final SSRF refusals. These URLs need a corrected source before
+`broken`/`gateway_retired`, with its content observations retained, and so does a
+transient answer (there is no replacement to wait for, and a transient verdict would
+never be persisted). Their other probe failures keep their specific causes, including
+final SSRF refusals. These URLs need a corrected source before
 they can become healthy; stored metadata is retained, but viewability can fall
 until a usable media URL is supplied. `gateway_retired` also diagnoses failed
 promotion of an otherwise healthy retired URL. Default pools
@@ -154,7 +164,7 @@ SSRF policy refusals are final and never trigger gateway fallback. DNS failures 
 | `transport` | transport-level fetch failure with no more specific entry (TLS, protocol, non-retryable connection errors) | probe |
 | `data_uri_invalid` | data: URI failed RFC 2397 parsing | data URI checker |
 | `unsupported_mime_type` | data: URI declared a mime type outside the supported set | data URI checker |
-| `gateway_retired` | an otherwise healthy retired address has no supported CID form, or its validated replacement could not be propagated; the original URL is persisted as broken | gateway retirement |
+| `gateway_retired` | a retired address with no supported CID form answers healthy or transiently, or a retired source answers transiently (e.g. 429) and no replacement validates, or a validated replacement could not be propagated; the original URL is persisted as broken | gateway retirement |
 | `render_*` | **reserved for the L1 render probe** | render probe |
 
 `failure_reason` is NULL only for healthy and unknown rows: every broken verdict carries
