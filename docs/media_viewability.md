@@ -20,7 +20,7 @@ A URL is healthy only when all of the following hold:
 
 1. The fetch succeeds (2xx; 429, retryable transport errors, and probe timeouts or
    cancellations — the check's own time budget running out, e.g. a fetching gateway slow
-   on a cold CID — are `transient_error`,
+   on a cold CID, including mid-body — are `transient_error`,
    whose verdict is never persisted). The sweep still records the attempt by advancing
    `last_checked_at`, so the URL is retried after `recheck_after` instead of every cycle;
    the stored verdict stands until a conclusive check. A still-`unknown` row also gets the
@@ -65,6 +65,18 @@ bumps.
 The same validated probe drives gateway selection (`FindWorking*Gateway`, used by both
 the health checker's fallback and the URI resolver): a gateway "works" only if its
 content validates, so a directory listing can no longer be stored as a working URL.
+
+**Inconclusive direct probes and gateway answers.** When a content-addressed URL's
+direct probe is inconclusive (timeout, 429) and no gateway candidate validates, the
+result stays `transient_error` unless enough candidates answered *conclusively*: a 4xx
+other than 429, or a content verdict on bytes they served (`type_mismatch`,
+`container_invalid`, `known_error_page`, `zero_length`, `truncated`,
+`directory_listing`). Two such answers are required (one when the pool has a single
+gateway), and the row becomes `broken` with that reason. 5xx, 429, timeouts and
+transport errors never count: a fetching gateway reports a slow cold CID as a 504 or by
+hanging. Retired sources keep the `gateway_retired` rule below. Without this, content
+gone from the network — which gateways often report only by timing out — would keep its
+last healthy verdict forever, because transient results are never persisted.
 
 **Retiring browser gateways.** `ipfs.io`, `dweb.link`, and `inbrowser.link`
 (including their case-insensitive CID subdomains) are excluded from IPFS candidate pools: native
@@ -163,7 +175,7 @@ SSRF policy refusals are final and never trigger gateway fallback. DNS failures 
 | `truncated` | body ended before declared length | validator |
 | `invalid_url` | URL failed basic parsing; no fetch attempted | checker |
 | `unsupported_scheme` | non-HTTP(S) scheme escaped ingest normalization; no fetch attempted | checker |
-| `transport` | transport-level fetch failure with no more specific entry (TLS, protocol, non-retryable connection errors) | probe |
+| `transport` | transport-level fetch failure with no more specific entry (TLS, protocol, non-retryable connection errors). Timeouts, cancellations and retryable connection errors are `transient_error` and never persist this reason; rows persisted before that rule heal on their next successful probe | probe |
 | `data_uri_invalid` | data: URI failed RFC 2397 parsing | data URI checker |
 | `unsupported_mime_type` | data: URI declared a mime type outside the supported set | data URI checker |
 | `gateway_retired` | a retired address with no supported CID form answers healthy or transiently, or a retired source answers transiently (e.g. 429) and no replacement validates, or a validated replacement could not be propagated; the original URL is persisted as broken | gateway retirement |
