@@ -38,15 +38,23 @@ func resolveMediaURI(ctx context.Context, resolver uri.Resolver, source string) 
 	return domain.UriToGateway(source), nil
 }
 
-// resolveRetiredMedia validates every retired HTTP gateway in vendor media.
+// resolveRetiredMedia validates every retired HTTP gateway in vendor media and
+// moves Feral File CDN URLs to the current origin.
 // Reason: vendor HTTP URLs can bypass per-vendor URI resolution, and enrichment
 // takes precedence over normalized metadata in display selection.
 // Trade-offs: a gateway outage delays other new vendor facts until the next
 // refresh, preserving the entire existing enrichment record without an upsert.
+// The CDN move is a pure rewrite (same paths, new host), so it needs no probe.
 // Constraints: never overwrite migrated playable media with an unvalidated URL.
 func (e *enhancer) resolveRetiredMedia(ctx context.Context, enhanced *EnhancedMetadata) error {
 	for _, target := range []**string{&enhanced.ImageURL, &enhanced.AnimationURL} {
-		if *target == nil || !types.IsBrowserIPFSGateway(**target) {
+		if *target == nil {
+			continue
+		}
+		if moved := types.MigrateFeralFileCDN(**target); moved != **target {
+			*target = &moved
+		}
+		if !types.IsBrowserIPFSGateway(**target) {
 			continue
 		}
 		resolved, err := resolveMediaURI(ctx, e.uriResolver, **target)

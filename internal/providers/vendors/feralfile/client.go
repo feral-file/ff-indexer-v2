@@ -15,8 +15,9 @@ import (
 const feralfileArtworksPageSize = 100
 
 const (
-	// CDN is the base URL for Feral File CDN
-	CDN = "https://cdn.feralfileassets.com"
+	// CDN is the base URL for Feral File CDN. The API still returns paths relative
+	// to it; the former origin cdn.feralfileassets.com no longer resolves.
+	CDN = "https://cdn.artworks.feralfile.io"
 
 	// API_ENDPOINT is the base URL for Feral File API
 	API_ENDPOINT = "https://feralfile.com/api"

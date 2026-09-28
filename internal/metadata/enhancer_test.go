@@ -631,8 +631,8 @@ func TestEnhancer_Enhance_FeralFile(t *testing.T) {
 		Return(vendorJSON, nil)
 
 	// Mock URI resolver and HTTP client for MIME type detection
-	expectedImageURL := "https://cdn.feralfileassets.com/previews/test/thumbnail.jpg"
-	expectedAnimationURL := "https://cdn.feralfileassets.com/previews/test/preview.html"
+	expectedImageURL := "https://cdn.artworks.feralfile.io/previews/test/thumbnail.jpg"
+	expectedAnimationURL := "https://cdn.artworks.feralfile.io/previews/test/preview.html"
 
 	mocks.uriResolver.
 		EXPECT().
@@ -663,6 +663,49 @@ func TestEnhancer_Enhance_FeralFile(t *testing.T) {
 	assert.NotNil(t, result.Release)
 	assert.Equal(t, "series-uuid", result.Release.VendorReleaseID)
 	assert.Equal(t, int64(5), result.Release.MintNumber)
+}
+
+// TestEnhancer_Enhance_FeralFile_MovesRetiredCDN verifies that Feral File media on the
+// retired cdn.feralfileassets.com origin, whether returned absolute or embedded in a
+// query parameter, lands on cdn.artworks.feralfile.io, and that a directory-style
+// preview gains index.html because the new CDN does not serve directory indexes.
+func TestEnhancer_Enhance_FeralFile_MovesRetiredCDN(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890abcdef", "777")
+	publisherName := registry.PublisherNameFeralFile
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{"name": "Moved"},
+		Publisher: &metadata.Publisher{
+			Name: &publisherName,
+			URL:  types.StringPtr("https://feralfile.com"),
+		},
+	}
+
+	artwork := &feralfile.Artwork{
+		ID:           "777",
+		Name:         "Moved",
+		ThumbnailURI: "https://cdn.feralfileassets.com/thumbnails/abc/1",
+		PreviewURI:   "previews/abc/2/?edition_number=1&clip_directory_url=https://cdn.feralfileassets.com/misc/clips",
+		Series:       feralfile.Series{Medium: "software"},
+	}
+	mocks.feralfileClient.EXPECT().GetArtwork(gomock.Any(), "777").Return(artwork, nil)
+	mocks.json.EXPECT().Marshal(artwork).Return([]byte(`{"id":"777"}`), nil)
+
+	expectedImageURL := "https://cdn.artworks.feralfile.io/thumbnails/abc/1"
+	expectedAnimationURL := "https://cdn.artworks.feralfile.io/previews/abc/2/index.html?edition_number=1&clip_directory_url=https://cdn.artworks.feralfile.io/misc/clips"
+	mocks.uriResolver.EXPECT().Resolve(gomock.Any(), expectedAnimationURL).Return(expectedAnimationURL, nil)
+	// MIME sniffing HEADs the URL without its query string, then reads the full URL.
+	mocks.httpClient.EXPECT().Head(gomock.Any(), "https://cdn.artworks.feralfile.io/previews/abc/2/index.html").Return(nil, assert.AnError)
+	mocks.httpClient.EXPECT().GetPartialBytes(gomock.Any(), expectedAnimationURL, gomock.Any()).Return([]byte("<html></html>"), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, expectedImageURL, *result.ImageURL)
+	assert.Equal(t, expectedAnimationURL, *result.AnimationURL)
 }
 
 // TestEnhancer_Enhance_FeralFile_NilIndexSkipsRelease verifies that when the FF API
@@ -766,7 +809,7 @@ func TestEnhancer_Enhance_FeralFile_ImageMedium(t *testing.T) {
 		Return(vendorJSON, nil)
 
 	// Mock URI resolver and HTTP client for MIME type detection (only for image, no animation)
-	expectedImageURL := "https://cdn.feralfileassets.com/previews/test-full.jpg"
+	expectedImageURL := "https://cdn.artworks.feralfile.io/previews/test-full.jpg"
 
 	mocks.uriResolver.
 		EXPECT().
@@ -848,8 +891,8 @@ func TestEnhancer_Enhance_FeralFile_MayaManStarQuest(t *testing.T) {
 
 	// Mock URI resolver and HTTP client for MIME type detection
 	// The animation URL should have &mode=episode appended for Maya Man StarQuest
-	expectedAnimationURL := "https://cdn.feralfileassets.com/previews/maya/preview.html&mode=episode"
-	expectedImageURL := "https://cdn.feralfileassets.com/previews/maya/thumbnail.jpg"
+	expectedAnimationURL := "https://cdn.artworks.feralfile.io/previews/maya/preview.html&mode=episode"
+	expectedImageURL := "https://cdn.artworks.feralfile.io/previews/maya/thumbnail.jpg"
 
 	mocks.uriResolver.
 		EXPECT().
@@ -1707,7 +1750,7 @@ func TestEnhancer_Enhance_Objkt_FeralFileNotAffected(t *testing.T) {
 		Marshal(artwork).
 		Return(vendorJSON, nil)
 
-	expectedImageURL := "https://cdn.feralfileassets.com/previews/test.jpg"
+	expectedImageURL := "https://cdn.artworks.feralfile.io/previews/test.jpg"
 	mocks.uriResolver.
 		EXPECT().
 		Resolve(gomock.Any(), expectedImageURL).
