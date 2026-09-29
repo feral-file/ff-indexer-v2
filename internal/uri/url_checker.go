@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -462,7 +463,7 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		// Retired sources keep the gateway_retired rule below instead.
 		minConclusive := 0
 		if !types.IsBrowserIPFSGateway(url) {
-			minConclusive = minConclusiveGateways(c.ipfsGateways)
+			minConclusive = minConclusiveGateways(eligibleIPFSGateways(c.ipfsGateways))
 		}
 		fallback := c.checkGatewayFallback(ctx, result, minConclusive, func(ctx context.Context, probe GatewayProbe) (string, error) {
 			return FindWorkingIPFSGateway(ctx, probe, cid, c.ipfsGateways)
@@ -553,7 +554,9 @@ func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthChec
 	// because findWorkingGateway reports only the winning URL, not which probe won.
 	var mu sync.Mutex
 	observations := make(map[string]HealthCheckResult)
-	// Conclusive failures (see isConclusiveGatewayAnswer), keyed by candidate URL.
+	// Conclusive failures (see isConclusiveGatewayAnswer), keyed by gateway origin: one
+	// gateway may be probed twice (an IPFS directory's bare CID, then its index.html), and
+	// the threshold counts independent gateways, not probes.
 	conclusive := make(map[string]HealthCheckResult)
 	recordingProbe := func(ctx context.Context, url string) error {
 		res := c.probe.probe(ctx, url, true)
@@ -563,7 +566,7 @@ func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthChec
 		if res.hcr.Status != HealthStatusHealthy {
 			if isConclusiveGatewayAnswer(res) {
 				mu.Lock()
-				conclusive[url] = res.hcr
+				conclusive[gatewayOrigin(url)] = res.hcr
 				mu.Unlock()
 			}
 			return gatewayProbeError(res.hcr)
@@ -671,11 +674,27 @@ func conclusiveGatewayResult(direct HealthCheckResult, conclusive map[string]Hea
 // minConclusiveGateways is how many independent gateways must answer conclusively before
 // an inconclusive direct probe becomes broken: two, so one gateway's quirk (a 404 policy
 // for CIDs it does not index) cannot condemn content, or one when that is the whole pool.
+// pool must be the pool actually probed (for IPFS, eligibleIPFSGateways); duplicate
+// entries for one origin count once.
 func minConclusiveGateways(pool []string) int {
-	if len(pool) >= 2 {
+	origins := make(map[string]struct{}, len(pool))
+	for _, gw := range pool {
+		origins[gatewayOrigin(gw)] = struct{}{}
+	}
+	if len(origins) >= 2 {
 		return 2
 	}
-	return len(pool)
+	return len(origins)
+}
+
+// gatewayOrigin identifies the gateway behind a gateway base or candidate URL (lower-cased
+// scheme://host[:port]); unparsable input is returned as-is.
+func gatewayOrigin(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
 // healthResultFromSSRF maps SSRF policy failures to a broken result with SSRFBlocked set.

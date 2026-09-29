@@ -150,6 +150,20 @@ func findWorkingGateway(ctx context.Context, probe GatewayProbe, candidateURLs [
 	return "", sawDirectoryListing, err
 }
 
+// eligibleIPFSGateways is the IPFS candidate pool actually probed: browser-only (retired)
+// gateways removed, since even stale deployment config must not let one win the parallel
+// race during an interval when its non-browser probe returns 200. The health checker
+// sizes its conclusive-answer threshold from this same pool.
+func eligibleIPFSGateways(gateways []string) []string {
+	eligible := make([]string, 0, len(gateways))
+	for _, gateway := range gateways {
+		if !types.IsBrowserIPFSGateway(gateway) {
+			eligible = append(eligible, gateway)
+		}
+	}
+	return eligible
+}
+
 // FindWorkingIPFSGateway finds a working IPFS gateway for the given ref (a CID
 // optionally followed by a path). It probes all gateways in parallel and returns the
 // first whose content validates.
@@ -185,15 +199,7 @@ func findWorkingGateway(ctx context.Context, probe GatewayProbe, candidateURLs [
 // retried. The entry point is probe-verified before it is returned, so this can never
 // invent a URL that does not serve.
 func FindWorkingIPFSGateway(ctx context.Context, probe GatewayProbe, ref string, gateways []string) (string, error) {
-	// Even stale deployment config must not let a browser-only gateway win the
-	// parallel race during an interval when its non-browser probe returns 200.
-	mediaGateways := make([]string, 0, len(gateways))
-	for _, gateway := range gateways {
-		if !types.IsBrowserIPFSGateway(gateway) {
-			mediaGateways = append(mediaGateways, gateway)
-		}
-	}
-	gateways = mediaGateways
+	gateways = eligibleIPFSGateways(gateways)
 	url, sawDirectoryListing, err := findWorkingGateway(ctx, probe, candidateURLs(gateways, "%s/ipfs/%s", ref), "IPFS", ref)
 	if err == nil || !sawDirectoryListing {
 		return url, err

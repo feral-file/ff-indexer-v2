@@ -245,3 +245,62 @@ func TestURLChecker_TimedOutGatewayFallback(t *testing.T) {
 		})
 	}
 }
+
+// Review F1 (#161): the threshold counts independent gateways, not probes. A directory
+// CID makes one gateway answer twice (listing for the bare CID, then 404 for its
+// index.html); with the other gateway silent that is still a single gateway's word.
+func TestURLChecker_ConclusiveThresholdCountsGatewaysNotProbes(t *testing.T) {
+	const source = "https://ipfs.filebase.io/ipfs/" + timeoutTestCID
+	a, b := "https://gw-a.example", "https://gw-b.example"
+	bare, entry := "/ipfs/"+timeoutTestCID, "/ipfs/"+timeoutTestCID+"/index.html"
+	listing := func() (*http.Response, error) {
+		return httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil
+	}
+	notFound := func() (*http.Response, error) {
+		return httpResp(http.StatusNotFound, "text/plain", []byte("no link named index.html"), nil), nil
+	}
+	timedOut := func() (*http.Response, error) { return nil, realHeaderTimeoutErr(t) }
+
+	for _, tc := range []struct {
+		name    string
+		answers map[string]func() (*http.Response, error)
+		status  uri.HealthStatus
+	}{
+		{"one gateway answers twice, the other is silent: transient",
+			map[string]func() (*http.Response, error){a + bare: listing, a + entry: notFound, b + bare: timedOut, b + entry: timedOut},
+			uri.HealthStatusTransientError},
+		{"two gateways answer: broken",
+			map[string]func() (*http.Response, error){a + bare: listing, a + entry: notFound, b + bare: listing, b + entry: notFound},
+			uri.HealthStatusBroken},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, checker := newTimeoutTestChecker(t, []string{a, b})
+			client.EXPECT().GetResponseNoRetry(gomock.Any(), source, probeRangeHeader).Return(nil, realHeaderTimeoutErr(t))
+			for u, answer := range tc.answers {
+				client.EXPECT().GetResponseNoRetry(gomock.Any(), u, gomock.Any()).DoAndReturn(
+					func(context.Context, string, map[string]string) (*http.Response, error) { return answer() }).AnyTimes()
+			}
+
+			result := checker.Check(context.Background(), source)
+			require.Equal(t, tc.status, result.Status)
+			require.Nil(t, result.WorkingURL)
+		})
+	}
+}
+
+// Review F2 (#161): the threshold is sized from the pool actually probed. Retired gateways
+// in stale config are never candidates, so [ipfs.io, gw-a] has one eligible gateway and
+// its conclusive 404 is enough.
+func TestURLChecker_ConclusiveThresholdUsesEligiblePool(t *testing.T) {
+	const path = "/ipfs/" + timeoutTestCID + "/1754.png"
+	const source = "https://ipfs.filebase.io" + path
+	a := "https://gw-a.example"
+	client, checker := newTimeoutTestChecker(t, []string{"https://ipfs.io", "https://dweb.link", a})
+	client.EXPECT().GetResponseNoRetry(gomock.Any(), source, probeRangeHeader).Return(nil, realHeaderTimeoutErr(t))
+	client.EXPECT().GetResponseNoRetry(gomock.Any(), a+path, probeRangeHeader).
+		Return(httpResp(http.StatusNotFound, "text/plain", []byte("no link named 1754.png"), nil), nil)
+
+	result := checker.Check(context.Background(), source)
+	require.Equal(t, uri.HealthStatusBroken, result.Status)
+	require.Equal(t, uri.FailureHTTPStatus, result.FailureReason)
+}
