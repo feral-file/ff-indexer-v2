@@ -505,8 +505,10 @@ type Store interface {
 	// Rows owned by the L1 render probe (render_% reasons) are left untouched, like every
 	// other L0 write.
 	DeferTokenMediaHealthCheckByURL(ctx context.Context, url string, reason string) error
-	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source
-	// tables (metadata/enrichment) in a transaction. observedContentType and
+	// UpdateMediaURLAndPropagate updates a URL across token_media_health, the source
+	// tables (metadata/enrichment) and media_assets in a transaction. The media asset
+	// stored for oldURL moves to newURL only when both are gateway URLs for the same
+	// IPFS reference and newURL has no asset of its own. observedContentType and
 	// sniffedContentType are the promoted URL's own validated observations from the
 	// fallback probe (nil writes NULL); the replaced URL's diagnostics are always
 	// cleared.

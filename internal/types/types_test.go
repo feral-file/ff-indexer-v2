@@ -1328,3 +1328,33 @@ func TestInt64FromUnsignedDecimalString(t *testing.T) {
 	_, err = Int64FromUnsignedDecimalString("3.14")
 	require.Error(t, err)
 }
+
+// TestSameIPFSReference verifies that only the gateway host may differ between two
+// URLs reported as the same IPFS reference.
+func TestSameIPFSReference(t *testing.T) {
+	const cid = "bafybeihsfdyjhwuue3unor2n5yywnw74sp2lk5d7xlireo2ejxldx4jsf4"
+	const otherCID = "bafybeiabfhzmgp5n7wgud5dcvk7hizj42bht2tgx5437o2jvc2fv3uizwq"
+
+	tests := []struct {
+		name string
+		a    string
+		b    string
+		want bool
+	}{
+		{"same CID on two gateways", "https://a.example.com/ipfs/" + cid, "https://b.example.com/ipfs/" + cid, true},
+		{"path form and subdomain form", "https://a.example.com/ipfs/" + cid + "/a.png", "https://" + cid + ".ipfs.b.example.com/a.png", true},
+		{"same CID and query", "https://a.example.com/ipfs/" + cid + "?fxhash=1", "https://b.example.com/ipfs/" + cid + "?fxhash=1", true},
+		{"different CID", "https://a.example.com/ipfs/" + cid, "https://b.example.com/ipfs/" + otherCID, false},
+		{"different path", "https://a.example.com/ipfs/" + cid, "https://b.example.com/ipfs/" + cid + "/index.html", false},
+		{"different query", "https://a.example.com/ipfs/" + cid + "?fxhash=1", "https://b.example.com/ipfs/" + cid + "?fxhash=2", false},
+		{"one is not a gateway URL", "https://a.example.com/ipfs/" + cid, "https://cdn.example.com/" + cid, false},
+		{"neither is a gateway URL", "https://cdn.example.com/a.png", "https://cdn.example.com/a.png", false},
+		{"native scheme is not a gateway URL", "ipfs://" + cid, "https://b.example.com/ipfs/" + cid, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, SameIPFSReference(tt.a, tt.b))
+		})
+	}
+}
