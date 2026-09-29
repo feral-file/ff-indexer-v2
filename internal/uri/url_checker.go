@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -154,8 +156,9 @@ type contentProbe struct {
 // at the transport layer) so gateway aggregation can preserve ssrf.ErrBlocked /
 // ssrf.ErrResolutionFailed sentinel classes that the string-typed HealthCheckResult loses.
 type probeResult struct {
-	hcr      HealthCheckResult
-	fetchErr error // non-nil only for transport-level failures
+	hcr        HealthCheckResult
+	fetchErr   error // non-nil only for transport-level failures
+	httpStatus int   // status of a non-2xx answer; 0 when the fetch failed or was 2xx
 }
 
 // probe fetches up to maxBytes of the URL and validates the content.
@@ -251,7 +254,7 @@ func (p *contentProbe) probe(ctx context.Context, url string, withRange bool) pr
 			Status:        HealthStatusBroken,
 			Error:         &errMsg,
 			FailureReason: FailureHTTPStatus,
-		}}
+		}, httpStatus: resp.StatusCode}
 	}
 }
 
@@ -296,9 +299,11 @@ func (p *contentProbe) gatewayProbe(ctx context.Context, url string) error {
 // 206, Content-Length otherwise, -1 unknown); truncation is judged against it.
 func (p *contentProbe) readAndValidate(resp *http.Response, promisedLength int64) probeResult {
 	body, readErr := p.io.ReadAll(io.LimitReader(resp.Body, int64(p.maxBytes)))
-	if readErr != nil && !isConclusiveTruncation(len(body), promisedLength, p.maxBytes) {
-		// The connection died mid-body with no length evidence: a transport condition,
-		// retried next sweep.
+	if readErr != nil && (isProbeTimeout(readErr) || !isConclusiveTruncation(len(body), promisedLength, p.maxBytes)) {
+		// The connection died mid-body with no length evidence, or the probe's own time
+		// budget ran out while a slow server was still sending (http.Client's Timeout
+		// covers the body read): either way a transport condition, retried next sweep.
+		// A missing remainder is not evidence of truncation.
 		errMsg := readErr.Error()
 		return probeResult{hcr: HealthCheckResult{
 			Status:        HealthStatusTransientError,
@@ -455,7 +460,12 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	// Check if it's an IPFS gateway URL - resolve with CID
 	if isIPFS, cid := types.IsIPFSGatewayURL(url); isIPFS {
 		logger.InfoCtx(ctx, "Checking alternative IPFS gateways", zap.String("url", url), zap.String("cid", cid))
-		fallback := c.checkGatewayFallback(ctx, result, func(ctx context.Context, probe GatewayProbe) (string, error) {
+		// Retired sources keep the gateway_retired rule below instead.
+		minConclusive := 0
+		if !types.IsBrowserIPFSGateway(url) {
+			minConclusive = minConclusiveGateways(eligibleIPFSGateways(c.ipfsGateways))
+		}
+		fallback := c.checkGatewayFallback(ctx, result, minConclusive, func(ctx context.Context, probe GatewayProbe) (string, error) {
 			return FindWorkingIPFSGateway(ctx, probe, cid, c.ipfsGateways)
 		})
 		if result.Status == HealthStatusHealthy && fallback.WorkingURL == nil {
@@ -514,7 +524,7 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	// Check if it's an Arweave gateway URL - resolve with tx ID
 	if isArweave, txID := types.IsArweaveGatewayURL(url); isArweave {
 		logger.InfoCtx(ctx, "Direct check failed, trying Arweave gateway resolution", zap.String("url", url), zap.String("txID", txID))
-		return c.checkGatewayFallback(ctx, result, func(ctx context.Context, probe GatewayProbe) (string, error) {
+		return c.checkGatewayFallback(ctx, result, minConclusiveGateways(c.arweaveGateways), func(ctx context.Context, probe GatewayProbe) (string, error) {
 			return FindWorkingArweaveGateway(ctx, probe, txID, c.arweaveGateways)
 		})
 	}
@@ -525,7 +535,7 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	if isOnChFS, hash := types.IsOnChFSGatewayURL(url); isOnChFS {
 		ref := OnChFSGatewayRef(url, hash)
 		logger.InfoCtx(ctx, "Direct check failed, trying OnChFS gateway resolution", zap.String("url", url), zap.String("ref", ref))
-		return c.checkGatewayFallback(ctx, result, func(ctx context.Context, probe GatewayProbe) (string, error) {
+		return c.checkGatewayFallback(ctx, result, minConclusiveGateways(c.onchfsGateways), func(ctx context.Context, probe GatewayProbe) (string, error) {
 			return FindWorkingOnChFSGateway(ctx, probe, ref, c.onchfsGateways)
 		})
 	}
@@ -538,19 +548,31 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 // When every gateway fails, the direct probe's result is returned (not the aggregate
 // resolution error): the direct result carries the more specific failure_reason and
 // content-type observations for the canonical URL.
-func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthCheckResult, find func(ctx context.Context, probe GatewayProbe) (string, error)) HealthCheckResult {
+func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthCheckResult, minConclusive int, find func(ctx context.Context, probe GatewayProbe) (string, error)) HealthCheckResult {
 	// Record each successful candidate's validated observations so the winner's can be
 	// returned. The candidates are probed concurrently, hence the mutex; keyed by URL
 	// because findWorkingGateway reports only the winning URL, not which probe won.
 	var mu sync.Mutex
 	observations := make(map[string]HealthCheckResult)
+	// Conclusive failures (see isConclusiveGatewayAnswer), keyed by gateway origin: one
+	// gateway may be probed twice (an IPFS directory's bare CID, then its index.html), and
+	// the threshold counts independent gateways, not probes.
+	conclusive := make(map[string]HealthCheckResult)
 	recordingProbe := func(ctx context.Context, url string) error {
-		hcr, err := c.probe.gatewayProbeResult(ctx, url)
-		if err != nil {
-			return err
+		res := c.probe.probe(ctx, url, true)
+		if res.fetchErr != nil {
+			return res.fetchErr
+		}
+		if res.hcr.Status != HealthStatusHealthy {
+			if isConclusiveGatewayAnswer(res) {
+				mu.Lock()
+				conclusive[gatewayOrigin(url)] = res.hcr
+				mu.Unlock()
+			}
+			return gatewayProbeError(res.hcr)
 		}
 		mu.Lock()
-		observations[url] = hcr
+		observations[url] = res.hcr
 		mu.Unlock()
 		return nil
 	}
@@ -559,6 +581,19 @@ func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthChec
 	if err != nil {
 		if hr, ok := healthResultFromSSRF(err); ok {
 			return hr
+		}
+		// An inconclusive direct probe (timeout, 429) keeps its transient verdict only
+		// while nothing answered conclusively. When enough independent gateways say the
+		// content is not there — a 4xx or a content verdict, never a 5xx or a timeout,
+		// which is how a fetching gateway reports a slow cold CID — that is the verdict:
+		// otherwise content that is gone everywhere would keep its last healthy row
+		// forever, since transient results are never persisted.
+		if minConclusive > 0 && direct.Status == HealthStatusTransientError {
+			mu.Lock()
+			defer mu.Unlock()
+			if len(conclusive) >= minConclusive {
+				return conclusiveGatewayResult(direct, conclusive)
+			}
 		}
 		return direct
 	}
@@ -589,6 +624,79 @@ func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthChec
 	}
 }
 
+// isConclusiveGatewayAnswer reports whether a failed gateway candidate answered with
+// evidence about the content rather than about its own state: a 4xx other than 429, or a
+// content-validation verdict on bytes it served. 5xx (a Kubo gateway's 504 for a CID it
+// could not find in time), 429, timeouts and transport errors are not conclusive.
+func isConclusiveGatewayAnswer(res probeResult) bool {
+	if res.hcr.Status != HealthStatusBroken || res.hcr.SSRFBlocked {
+		return false
+	}
+	switch res.hcr.FailureReason {
+	case FailureHTTPStatus:
+		return res.httpStatus >= 400 && res.httpStatus < 500 && res.httpStatus != http.StatusTooManyRequests
+	case FailureTypeMismatch, FailureContainerInvalid, FailureKnownErrorPage, FailureZeroLength,
+		FailureTruncated, FailureDirectoryListing:
+		return true
+	}
+	return false
+}
+
+// conclusiveGatewayResult builds the broken verdict for an inconclusive direct probe that
+// gateways answered conclusively. The reason comes from the candidates (lowest URL first,
+// for a deterministic row); content-type observations stay the direct probe's, since
+// they describe the stored URL's own response.
+func conclusiveGatewayResult(direct HealthCheckResult, conclusive map[string]HealthCheckResult) HealthCheckResult {
+	urls := make([]string, 0, len(conclusive))
+	for u := range conclusive {
+		urls = append(urls, u)
+	}
+	sort.Strings(urls)
+	first := conclusive[urls[0]]
+	directErr, gatewayErr := "inconclusive", "failed"
+	if direct.Error != nil {
+		directErr = *direct.Error
+	}
+	if first.Error != nil {
+		gatewayErr = *first.Error
+	}
+	msg := fmt.Sprintf("direct probe inconclusive (%s); %d gateways answered conclusively, e.g. %s: %s",
+		directErr, len(conclusive), urls[0], gatewayErr)
+	return HealthCheckResult{
+		Status:              HealthStatusBroken,
+		Error:               &msg,
+		FailureReason:       first.FailureReason,
+		ObservedContentType: direct.ObservedContentType,
+		SniffedContentType:  direct.SniffedContentType,
+	}
+}
+
+// minConclusiveGateways is how many independent gateways must answer conclusively before
+// an inconclusive direct probe becomes broken: two, so one gateway's quirk (a 404 policy
+// for CIDs it does not index) cannot condemn content, or one when that is the whole pool.
+// pool must be the pool actually probed (for IPFS, eligibleIPFSGateways); duplicate
+// entries for one origin count once.
+func minConclusiveGateways(pool []string) int {
+	origins := make(map[string]struct{}, len(pool))
+	for _, gw := range pool {
+		origins[gatewayOrigin(gw)] = struct{}{}
+	}
+	if len(origins) >= 2 {
+		return 2
+	}
+	return len(origins)
+}
+
+// gatewayOrigin identifies the gateway behind a gateway base or candidate URL (lower-cased
+// scheme://host[:port]); unparsable input is returned as-is.
+func gatewayOrigin(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
+}
+
 // healthResultFromSSRF maps SSRF policy failures to a broken result with SSRFBlocked set.
 func healthResultFromSSRF(err error) (HealthCheckResult, bool) {
 	if errors.Is(err, ssrf.ErrBlocked) {
@@ -608,9 +716,10 @@ func healthResultFromSSRF(err error) (HealthCheckResult, bool) {
 // SSRF policy failures (ErrBlocked, including redirect-cap exhaustion from the SSRF HTTP
 // client) yield broken + SSRFBlocked. DNS resolution failures (ErrResolutionFailed) yield
 // broken without SSRFBlocked so bad or unresolvable hosts are not retried every sweep tick
-// (scheduled sweeps can still pick the row up later). When classifyTransient is true,
-// retryable transport errors map to transient_error; when false, they stay broken (used
-// for IPFS/Arweave/OnChFS gateway aggregation). Remaining transport errors carry the
+// (scheduled sweeps can still pick the row up later) — unless our own deadline cut the
+// lookup short. When classifyTransient is true, retryable transport errors and probe
+// timeouts/cancellations (isProbeTimeout) map to transient_error; when false they stay
+// broken (no current caller passes false). Remaining transport errors carry the
 // deliberately coarse `transport` reason rather than an empty one: an earlier version
 // left FailureReason empty here on the argument that the taxonomy should only record
 // causes it can distinguish, but a persisted broken row with a NULL reason (and NULL
@@ -623,6 +732,15 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 	}
 	if errors.Is(err, ssrf.ErrResolutionFailed) {
 		msg := err.Error()
+		// A lookup our own deadline or cancellation cut short (the resolver wraps context
+		// errors) says nothing about the name; only a completed lookup is a DNS verdict.
+		if classifyTransient && isProbeTimeout(err) {
+			return HealthCheckResult{
+				Status:        HealthStatusTransientError,
+				Error:         &msg,
+				FailureReason: FailureTransport,
+			}
+		}
 		return HealthCheckResult{
 			Status:        HealthStatusBroken,
 			Error:         &msg,
@@ -639,7 +757,7 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 			FailureReason: FailureTransport,
 		}
 	}
-	if classifyTransient && adapter.IsHTTPRetryableError(err) {
+	if classifyTransient && (adapter.IsHTTPRetryableError(err) || isProbeTimeout(err)) {
 		msg := err.Error()
 		return HealthCheckResult{
 			Status:        HealthStatusTransientError,
@@ -653,4 +771,25 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 		Error:         &msg,
 		FailureReason: FailureTransport,
 	}
+}
+
+// isProbeTimeout reports whether a probe fetch ended because a time budget ran out or its
+// context was canceled, rather than because the remote answered with a failure.
+//
+// Reason: adapter.IsHTTPRetryableError deliberately rejects context.DeadlineExceeded (in
+// a retry loop an expired deadline means "stop"), and http.Client's Timeout wraps exactly
+// that error. Classified here, a gateway that is merely slow — a fetching IPFS gateway
+// answering a cold CID, or one briefly loaded by a full-speed sweep — was persisted as
+// broken/transport and could flip a viewable token to unviewable while the same URL
+// served moments later (seen in production after the sweep was unblocked).
+// Trade-offs: a host that times out on every attempt keeps its last conclusive verdict
+// rather than turning broken; IPFS/Arweave/OnChFS URLs still fall back to a gateway that
+// answers, and the sweep defers these rows instead of reselecting them.
+// Constraints: SSRF refusals are classified before this and stay broken; a completed DNS
+// lookup stays broken/dns. Other net timeouts (TLS handshake, i/o timeout) and refused/
+// reset/unreachable connections were already transient via adapter.IsHTTPRetryableError;
+// only TLS and other unrecognized transport errors remain broken/transport. Every
+// http.Client and dialer timeout satisfies errors.Is(err, context.DeadlineExceeded).
+func isProbeTimeout(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }

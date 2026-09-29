@@ -239,8 +239,9 @@ func TestURLChecker_ThrottledRetiredGatewayPromotesReplacement(t *testing.T) {
 	require.Equal(t, "https://ipfs.filebase.io/ipfs/"+cid, *result.WorkingURL)
 }
 
-// A throttling gateway that is NOT retired stays transient: it may recover and is a
-// legitimate playback source, so its verdict must not be overwritten.
+// A throttling gateway that is NOT retired stays transient while nothing answers
+// conclusively: it may recover and is a legitimate playback source, so its verdict must
+// not be overwritten. (A pool 5xx is a gateway state, not a content verdict.)
 func TestURLChecker_ThrottledNonRetiredGatewayStaysTransient(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	client := mocks.NewMockHTTPClient(ctrl)
@@ -251,7 +252,7 @@ func TestURLChecker_ThrottledNonRetiredGatewayStaysTransient(t *testing.T) {
 	client.EXPECT().GetResponseNoRetry(gomock.Any(), source, probeRangeHeader).
 		Return(httpResp(http.StatusTooManyRequests, "text/plain", []byte("slow down"), nil), nil)
 	client.EXPECT().GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid, probeRangeHeader).
-		Return(httpResp(http.StatusNotFound, "text/plain", []byte("not found"), nil), nil)
+		Return(httpResp(http.StatusGatewayTimeout, "text/plain", []byte("gateway timeout"), nil), nil)
 	checker := uri.NewURLChecker(client, mio, &uri.Config{IPFSGateways: []string{"https://ipfs.filebase.io"}})
 
 	result := checker.Check(context.Background(), source)
