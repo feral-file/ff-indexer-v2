@@ -7241,6 +7241,80 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		assert.Equal(t, newURL, *tokenMetadata2.ImageURL)
 	})
 
+	// createAsset stores a processed media asset for a source URL.
+	createAsset := func(t *testing.T, sourceURL, providerAssetID string) *schema.MediaAsset {
+		asset, err := store.CreateMediaAsset(ctx, CreateMediaAssetInput{
+			SourceURL:       sourceURL,
+			Provider:        schema.StorageProviderCloudflare,
+			ProviderAssetID: &providerAssetID,
+			VariantURLs:     datatypes.JSON([]byte(`{"m":"https://cdn.example.com/` + providerAssetID + `"}`)),
+		})
+		require.NoError(t, err)
+		return asset
+	}
+
+	t.Run("UpdateMediaURLAndPropagate moves the media asset to the new URL", func(t *testing.T) {
+		// Assets are looked up by the exact source URL. Leaving the asset under the
+		// replaced URL detaches it from every token that followed the URL.
+		oldURL := "https://dead.example.com/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+		newURL := "https://working.example.com/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+		asset := createAsset(t, oldURL, "repointed-asset")
+
+		require.NoError(t, store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL, nil, nil))
+
+		moved, err := store.GetMediaAssetBySourceURL(ctx, newURL, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, moved, "the asset must be found under the new URL")
+		assert.Equal(t, asset.ID, moved.ID, "the same asset row must move, not a new upload")
+		assert.Equal(t, newURL, moved.SourceURL)
+		assert.JSONEq(t, string(asset.VariantURLs), string(moved.VariantURLs))
+
+		left, err := store.GetMediaAssetBySourceURL(ctx, oldURL, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		assert.Nil(t, left, "no asset may remain under the replaced URL")
+	})
+
+	t.Run("UpdateMediaURLAndPropagate keeps the asset the new URL already has", func(t *testing.T) {
+		// One asset per source URL and provider: the new URL's own asset wins and the
+		// propagation must not fail on the unique constraint.
+		oldURL := "https://dead.example.com/ipfs/QmT78zSuBmuS4z925WZfrqQ1qHaJ56DQaTfyMUF7F8ff5o"
+		newURL := "https://working.example.com/ipfs/QmT78zSuBmuS4z925WZfrqQ1qHaJ56DQaTfyMUF7F8ff5o"
+		oldAsset := createAsset(t, oldURL, "existing-asset-old")
+		newAsset := createAsset(t, newURL, "existing-asset-new")
+
+		require.NoError(t, store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL, nil, nil))
+
+		kept, err := store.GetMediaAssetBySourceURL(ctx, newURL, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, kept)
+		assert.Equal(t, newAsset.ID, kept.ID)
+
+		left, err := store.GetMediaAssetBySourceURL(ctx, oldURL, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, left, "the replaced URL's asset stays in place when it cannot move")
+		assert.Equal(t, oldAsset.ID, left.ID)
+	})
+
+	t.Run("UpdateMediaURLAndPropagate leaves the asset of a different resource in place", func(t *testing.T) {
+		// The Arweave fallback probes the transaction ID alone, so it can promote the
+		// transaction root for a sub-path. The asset was built from the sub-path's bytes
+		// and must not be served for the root.
+		oldURL := "https://dead-arweave.example.com/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ/cover.png"
+		newURL := "https://arweave.net/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
+		asset := createAsset(t, oldURL, "different-resource-asset")
+
+		require.NoError(t, store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL, nil, nil))
+
+		left, err := store.GetMediaAssetBySourceURL(ctx, oldURL, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, left)
+		assert.Equal(t, asset.ID, left.ID)
+
+		moved, err := store.GetMediaAssetBySourceURL(ctx, newURL, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		assert.Nil(t, moved)
+	})
+
 	t.Run("BatchUpdateTokensViewability respects animation URL priority", func(t *testing.T) {
 		sharedImageURL := "https://example.com/shared-image.jpg"
 

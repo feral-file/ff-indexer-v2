@@ -181,6 +181,19 @@ func IsIPFSGatewayURL(s string) (bool, string) {
 	return false, ""
 }
 
+// SameIPFSReference reports whether a and b are gateway URLs for the same IPFS
+// reference: the same CID followed by the same path, query and fragment.
+//
+// Reason: a gateway host is only a locator. Code that keys state by URL uses this
+// to recognize one resource behind two hosts.
+// Constraints: the comparison is exact, so a CIDv0 and its CIDv1 form, or a bare
+// directory and its index.html entry point, are reported as different.
+func SameIPFSReference(a, b string) bool {
+	isGatewayA, refA := IsIPFSGatewayURL(a)
+	isGatewayB, refB := IsIPFSGatewayURL(b)
+	return isGatewayA && isGatewayB && refA == refB
+}
+
 // IsArweaveGatewayURL checks if a string is a valid Arweave gateway URL
 // Returns: (isValid, txID) where txID is the transaction ID
 // Example: https://arweave.net/abc123 -> (true, "abc123")

@@ -167,6 +167,8 @@ Content may be IPFS, Arweave, HTTP, or data URIs; results are persisted via the 
 
 **Content-addressed fallback.** Many metadata URIs are an HTTP gateway URL for an IPFS CID (`https://<host>/ipfs/<cid>/…` or `https://<cid>.ipfs.<host>/…`) pinned to one dedicated gateway that later dies or locks down (Infura's retired `*.infura-ipfs.io`, owner-only `*.mypinata.cloud`). The origin is always fetched first. If that fails, the CID reference is resolved through the configured IPFS gateway pool, using the same validated race media uses, and fetched once from the winner. The fallback is skipped for non-content-addressed URLs, SSRF refusals and an ended caller context. When the fallback fails too, the origin error stays first in the chain, so callers classify the failure as before. Recovered fetches log `Recovered token metadata through IPFS gateway pool` with the failed and recovered URLs. Media URLs inside the recovered document may still point at the dead host; the inline media health check (Step 3) promotes those to a working gateway by the same CID.
 
+**Stored gateway preference.** Media references are resolved by racing the configured gateways, so the winner can differ between runs. Before the upsert, a resolved `image_url` or `animation_url` is replaced by the URL the token already stores for that field when both are gateway URLs for the same IPFS reference (same CID, path, query and fragment). Re-indexing unchanged content therefore writes unchanged URLs, and the health rows and `media_assets` keyed by those URLs stay attached. The stored URL is not probed at this point: Step 3 probes it directly in the same run and promotes a working alternative only when it fails. The rule never keeps a retired browser gateway (`ipfs.io`, `dweb.link`, `inbrowser.link`), and it covers IPFS only. The same rule applies to vendor media in Step 2, compared with the token's stored `enrichment_sources` row.
+
 **Step 2 — Enhance (optional vendors)**
 
 - **`EnhanceTokenMetadata`** may call vendor APIs (Art Blocks, fxhash, OpenSea, …) and populate **`enrichment_sources`**; failures are **non-fatal**.
@@ -176,6 +178,7 @@ For how **`artists`** and **`did:pkh`** values are chosen in resolve vs enrich (
 **Step 3 — Viewability**
 
 - **`CheckMediaURLsHealthAndUpdateViewability`** probes media URLs derived from resolved + enriched metadata, updates **`tokens.is_viewable`**, and drives webhook “viewable / unviewable” notifications.
+- When a URL fails its direct probe and another gateway serves the same reference, the working URL replaces it in `token_media_health`, `token_metadata` and `enrichment_sources` in one transaction (`UpdateMediaURLAndPropagate`). For gateway URLs of the same IPFS reference the `media_assets` row moves with it, so Step 4 finds the existing asset under the new URL and uploads nothing. The media health sweep promotes through the same function.
 
 **Step 4 — Media pipeline (optional)**
 

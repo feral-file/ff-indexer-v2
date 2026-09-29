@@ -3272,7 +3272,8 @@ func nullableString(s *string) interface{} {
 	return nil
 }
 
-// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction.
+// UpdateMediaURLAndPropagate updates a URL across token_media_health, the source tables
+// (metadata/enrichment) and media_assets in a transaction.
 //
 // Reason: the promoted row carries the fallback probe's OWN observations
 // (observedContentType/sniffedContentType, nil → NULL), not the replaced URL's — the
@@ -3375,8 +3376,44 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 			return fmt.Errorf("failed to update enrichment_sources.animation_url: %w", err)
 		}
 
-		return nil
+		// 6. Move the media asset with the references it serves
+		return repointMediaAsset(tx, oldURL, newURL)
 	})
+}
+
+// repointMediaAsset moves the media asset stored for a replaced URL to the URL that
+// replaced it, so the tokens that followed the URL keep their processed media.
+//
+// Reason: media assets are looked up by the hash of the exact source URL. Without
+// this, promoting a working gateway left the asset behind under the dead URL: the
+// tokens lost their media until the same bytes were downloaded and uploaded again.
+// Trade-offs: when the new URL already has an asset for the provider, that one is
+// kept and the old row stays behind unreferenced; no rows are merged or deleted.
+// A concurrent insert for the new URL fails the unique constraint and with it the
+// whole propagation, which callers already treat as retryable.
+// Constraints: the asset moves only between gateway URLs for the same IPFS
+// reference, where the bytes are the same by construction. Other promotions leave
+// it in place: the Arweave fallback can promote a transaction root for a sub-path,
+// and a directory promoted to its index.html entry point is a different resource.
+// Only valid inside UpdateMediaURLAndPropagate, which moves every reference from
+// the old URL in the same transaction.
+func repointMediaAsset(tx *gorm.DB, oldURL, newURL string) error {
+	if !types.SameIPFSReference(oldURL, newURL) {
+		return nil
+	}
+	newHash := types.MD5Hash(newURL)
+	err := tx.Exec(`
+		UPDATE media_assets AS old
+		SET source_url = ?, source_url_hash = ?
+		WHERE old.source_url_hash = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM media_assets AS existing
+			WHERE existing.source_url_hash = ? AND existing.provider = old.provider
+		  )`, newURL, newHash, types.MD5Hash(oldURL), newHash).Error
+	if err != nil {
+		return fmt.Errorf("failed to re-point media_assets: %w", err)
+	}
+	return nil
 }
 
 // GetURLsDueForRenderProbe returns L0-healthy media URLs due for an L1 render probe.

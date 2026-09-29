@@ -190,6 +190,8 @@ Reference mapping between original URLs and provider-hosted URLs with variants.
 - `(provider, provider_asset_id)` (unique)
 - `(source_url, provider)` (unique)
 
+**Note**: A row is found by the exact `source_url` of the token's media, not by content. When media health promotes another gateway for the same IPFS reference, `UpdateMediaURLAndPropagate` rewrites `source_url` and its hash to the promoted URL in the same transaction, so the asset follows the tokens. If the promoted URL already has a row for that provider, that row is kept and the old one stays unreferenced. Other promotions (Arweave, OnChFS, a directory promoted to its `index.html` entry point) leave the row in place.
+
 ### token_media_health
 
 Tracks health check status for media URLs associated with tokens. The sweeper service continuously monitors these URLs and updates their status.

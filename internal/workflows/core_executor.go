@@ -492,7 +492,9 @@ func (e *coreExecutor) UpdateTokenTransfer(ctx context.Context, event *domain.Bl
 	return nil
 }
 
-// ResolveTokenMetadata resolves token metadata from blockchain and store metadata in the database
+// ResolveTokenMetadata resolves token metadata from blockchain and store metadata in the database.
+// Media URLs that address the same IPFS content as the stored ones keep the stored
+// gateway (see keepStoredMetadataMedia).
 func (e *coreExecutor) ResolveTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
 	// Validate token CID
 	if !tokenCID.Valid() {
@@ -517,6 +519,8 @@ func (e *coreExecutor) ResolveTokenMetadata(ctx context.Context, tokenCID domain
 	if tokenWithMetadata == nil {
 		return nil, domain.ErrTokenNotFound
 	}
+
+	keepStoredMetadataMedia(normalizedMetadata, tokenWithMetadata.Metadata)
 
 	// Hash the new metadata
 	hash, metadataJSON, err := e.metadataResolver.RawHash(normalizedMetadata)
@@ -580,7 +584,9 @@ func (e *coreExecutor) ResolveTokenMetadata(ctx context.Context, tokenCID domain
 	return normalizedMetadata, nil
 }
 
-// EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source
+// EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source.
+// Media URLs that address the same IPFS content as the stored ones keep the stored
+// gateway (see keepStoredEnrichmentMedia).
 func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error) {
 	// Validate token CID
 	if !tokenCID.Valid() {
@@ -615,6 +621,10 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 	if enhanced == nil {
 		logger.InfoCtx(ctx, "No enhancement available for token", zap.String("tokenCID", tokenCID.String()))
 		return nil, nil
+	}
+
+	if err := e.keepStoredEnrichmentMedia(ctx, token.ID, enhanced); err != nil {
+		return nil, err
 	}
 
 	// Hash the vendor JSON
