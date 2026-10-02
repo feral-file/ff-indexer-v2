@@ -400,10 +400,11 @@ func TestPenalize_QueuedCallersArePacedAfterPause(t *testing.T) {
 	assert.GreaterOrEqual(t, times[n-1]-times[0], 350*time.Millisecond, "queued callers released as a burst: %v", times)
 }
 
-// Review F2: a redirect hop queued behind the host limiter must fail as a limiter wait
-// (transient), never as a client timeout (broken). The dangerous case is a wait that fits
-// inside Client.Timeout but leaves too little of it for the fetch itself.
-func TestHTTPClient_RedirectHopWaitFailsAsLimiterWaitNotClientTimeout(t *testing.T) {
+// Review F2 (originally): a redirect hop queued behind the host limiter must never die as
+// a client timeout (which health checks record as broken). Since redirects are followed
+// by RealHTTPClient.doPaced, the hop waits for its slot before its own Client.Timeout
+// starts, so the same scenario now simply succeeds instead of failing as a limiter wait.
+func TestHTTPClient_RedirectHopWaitDoesNotConsumeClientTimeout(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
@@ -416,17 +417,40 @@ func TestHTTPClient_RedirectHopWaitFailsAsLimiterWaitNotClientTimeout(t *testing
 	}))
 	defer srv.Close()
 
-	// The first hop takes the only token; the hop to /final waits ~333ms. That fits the
-	// 450ms client timeout, but 333ms + 150ms does not: without a bounded wait, the fetch
-	// dies as "Client.Timeout exceeded".
+	// The first hop takes the only token; the hop to /final waits ~333ms, and 333ms +
+	// 150ms exceeds the 450ms client timeout. It succeeds only if the wait sits outside
+	// the hop's timeout.
 	l := newHostLimiter(t, map[string]config.RateLimitConfig{
 		"local": {RequestsPerSecond: 3, Burst: 1, MaxQueueTime: time.Minute, Hosts: []string{mustHostname(t, srv.URL)}},
 	})
 	client := adapter.NewHTTPClientWithSSRF(450*time.Millisecond, nil, 0, adapter.WithHostRateLimiter(l))
 
+	resp, err := client.GetResponseNoRetry(context.Background(), srv.URL+"/redirect", nil)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, int32(2), hits.Load(), "both hops are sent")
+}
+
+// A redirect hop whose wait cannot fit max_queue_time still fails as a limiter wait
+// (transient) and is never sent.
+func TestHTTPClient_RedirectHopPastMaxQueueTimeFailsAsLimiterWait(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, "/final", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	// 1 rps, burst 1: the second hop needs ~1s, beyond the 200ms queue budget.
+	l := newHostLimiter(t, map[string]config.RateLimitConfig{
+		"local": {RequestsPerSecond: 1, Burst: 1, MaxQueueTime: 200 * time.Millisecond, Hosts: []string{mustHostname(t, srv.URL)}},
+	})
+	client := adapter.NewHTTPClientWithSSRF(5*time.Second, nil, 0, adapter.WithHostRateLimiter(l))
+
 	_, err := client.GetResponseNoRetry(context.Background(), srv.URL+"/redirect", nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, adapter.ErrRateLimitWait)
 	assert.NotContains(t, err.Error(), "Client.Timeout exceeded")
-	assert.Equal(t, int32(1), hits.Load(), "the queued hop is never sent")
+	assert.Equal(t, int32(1), hits.Load(), "the refused hop is never sent")
 }

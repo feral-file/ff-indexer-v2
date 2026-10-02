@@ -382,10 +382,18 @@ func (w *coreWorkflows) IndexToken(ctx context.Context, tokenCID domain.TokenCID
 	// Waiting here provides backpressure so we don't flood the system with metadata/provenance
 	// workflows across chunks (and across many owners).
 	if err := w.IndexTokenMetadata(ctx, tokenCID, address); err != nil {
-		logger.WarnCtx(ctx, "Metadata indexing workflow failed",
-			zap.String("tokenCID", tokenCID.String()),
-			zap.Error(err),
-		)
+		// A self-throttled metadata step is handed to its own delayed job rather than
+		// rescheduling this one: rescheduling would redo on-chain work and re-send
+		// webhooks for every token in the chunk.
+		var re *jobs.RescheduleError
+		if errors.As(err, &re) {
+			w.deferMetadataJob(ctx, tokenCID, address, re)
+		} else {
+			logger.WarnCtx(ctx, "Metadata indexing workflow failed",
+				zap.String("tokenCID", tokenCID.String()),
+				zap.Error(err),
+			)
+		}
 	}
 
 	// Step 3: Index full provenance (wait for completion).
@@ -478,7 +486,7 @@ func (w *coreWorkflows) startIndexTokenMetadataAsync(ctx context.Context, tokenC
 		Queue:     w.config.TokenTaskQueue,
 		Kind:      "IndexTokenMetadata",
 		Args:      []any{tokenCID, address},
-		UniqueKey: types.StringPtr(fmt.Sprintf("index-metadata-%s", tokenCID.String())),
+		UniqueKey: metadataUniqueKey(tokenCID),
 	})
 	if err != nil {
 		logger.WarnCtx(ctx, "Failed to enqueue IndexTokenMetadata",
