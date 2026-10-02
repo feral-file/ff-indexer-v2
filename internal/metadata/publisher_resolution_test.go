@@ -33,6 +33,7 @@ func TestResolvePublisher_CollectionHit(t *testing.T) {
 	m := setupTestResolver(t)
 	defer tearDownTestResolver(m)
 
+	m.ethClient.EXPECT().IsVendorOnlyMetadata(publisherTestContract).Return(false)
 	m.registry.EXPECT().LookupPublisherByCollection(domain.ChainEthereumMainnet, publisherTestContract).
 		Return(&registry.PublisherInfo{Name: registry.PublisherNameArtBlocks, URL: "https://artblocks.io"})
 
@@ -48,6 +49,7 @@ func TestResolvePublisher_DeployerHit(t *testing.T) {
 	m := setupTestResolver(t)
 	defer tearDownTestResolver(m)
 
+	m.ethClient.EXPECT().IsVendorOnlyMetadata(publisherTestContract).Return(false)
 	expectDeployerLookup(m, "0xdeployer", nil)
 	m.registry.EXPECT().LookupPublisherByDeployer(domain.ChainEthereumMainnet, "0xdeployer").
 		Return(&registry.PublisherInfo{Name: registry.PublisherNameFeralFile, URL: "https://feralfile.com"})
@@ -65,6 +67,7 @@ func TestResolvePublisher_NoPublisher(t *testing.T) {
 	m := setupTestResolver(t)
 	defer tearDownTestResolver(m)
 
+	m.ethClient.EXPECT().IsVendorOnlyMetadata(publisherTestContract).Return(false)
 	expectDeployerLookup(m, "", nil)
 
 	publisher, err := m.resolver.ResolvePublisher(context.Background(), publisherTestCID)
@@ -79,6 +82,7 @@ func TestResolvePublisher_DeployerLookupFails(t *testing.T) {
 	m := setupTestResolver(t)
 	defer tearDownTestResolver(m)
 
+	m.ethClient.EXPECT().IsVendorOnlyMetadata(publisherTestContract).Return(false)
 	expectDeployerLookup(m, "", assert.AnError)
 
 	publisher, err := m.resolver.ResolvePublisher(context.Background(), publisherTestCID)
@@ -110,4 +114,25 @@ func TestResolve_PublisherLookupFails_MarksPublisherUnresolved(t *testing.T) {
 	assert.Equal(t, "Test NFT", result.Name)
 	assert.Nil(t, result.Publisher)
 	assert.True(t, result.PublisherUnresolved)
+}
+
+// Vendor-only contracts (CryptoPunks) never reached a deployer lookup before this
+// lookup existed; it must not add an uncached archive binary search per token, nor
+// make their OpenSea enrichment depend on that RPC succeeding.
+func TestResolvePublisher_VendorOnly_SkipsDeployerLookup(t *testing.T) {
+	m := setupTestResolver(t)
+	defer tearDownTestResolver(m)
+
+	punks := "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+	// TokenCID checksums the address, so match on it rather than the literal.
+	cid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, punks, "1")
+	_, _, checksummed, _ := cid.Parse()
+	m.ethClient.EXPECT().IsVendorOnlyMetadata(checksummed).Return(true)
+	m.registry.EXPECT().LookupPublisherByCollection(domain.ChainEthereumMainnet, checksummed).Return(nil)
+	m.ethClient.EXPECT().GetContractDeployer(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	publisher, err := m.resolver.ResolvePublisher(context.Background(), cid)
+
+	require.NoError(t, err)
+	assert.Nil(t, publisher)
 }

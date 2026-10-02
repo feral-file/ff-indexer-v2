@@ -60,7 +60,8 @@ func (w *coreWorkflows) IndexMetadataUpdate(ctx context.Context, event *domain.B
 // IndexTokenMetadata indexes metadata, enrichment, and media health.
 // Retirement failures stop the attempt before publisher context is lost and a
 // generic vendor can overwrite preserved enrichment. Other fetch failures and
-// vendor-only tokens retain their existing enrichment path.
+// vendor-only tokens still proceed to enrichment, routed by the contract's
+// publisher rather than the missing metadata (see EnhanceTokenMetadata).
 func (w *coreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
 	logger.InfoCtx(ctx, "Indexing token metadata", zap.String("tokenCID", tokenCID.String()))
 

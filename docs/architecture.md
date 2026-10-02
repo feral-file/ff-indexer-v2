@@ -186,7 +186,7 @@ PostgreSQL
 | Completed, no match | Generic fallback: OpenSea (Ethereum) or objkt (Tezos) |
 | Failed (e.g. deployer RPC error) | Skipped with an error; existing enrichment and membership are kept |
 
-When metadata was fetched, its normalized `Publisher` is reused (`PublisherUnresolved` records a failed lookup), so the deployer lookup is not repeated on the happy path.
+When metadata was fetched, its normalized `Publisher` is reused (`PublisherUnresolved` records a failed lookup), so the deployer lookup is not repeated on the happy path. Vendor-only contracts (`metadata.source: "vendor_only"`, e.g. CryptoPunks) are resolved from the collection list only: they never fetch metadata, and a deployer lookup would add an uncacheable archive binary search per token for no possible match.
 
 ### Contract adapter system (Ethereum)
 

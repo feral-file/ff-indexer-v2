@@ -126,10 +126,8 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 	chainID, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
 	// Skip on-chain metadata for vendor-only contracts (e.g. CryptoPunks); enrichment uses OpenSea.
-	if chainID == domain.ChainEthereumMainnet || chainID == domain.ChainEthereumSepolia {
-		if r.ethClient.IsVendorOnlyMetadata(contractAddress) {
-			return nil, nil
-		}
+	if r.isVendorOnly(chainID, contractAddress) {
+		return nil, nil
 	}
 
 	var metadataURI string
@@ -630,7 +628,7 @@ func (r *resolver) getContractDeployer(ctx context.Context, chainID domain.Chain
 // than failing normalization, so the fetched metadata is still stored; the
 // enrichment step uses the flag to avoid a generic-vendor fallback.
 func (r *resolver) normalizedPublisher(ctx context.Context, tokenCID domain.TokenCID) (*Publisher, bool) {
-	publisher, err := r.ResolvePublisher(ctx, tokenCID)
+	publisher, err := r.resolvePublisher(ctx, tokenCID)
 	if err != nil {
 		logger.WarnCtx(ctx, "failed to resolve publisher",
 			zap.Error(err),
@@ -651,7 +649,25 @@ func (r *resolver) normalizedPublisher(ctx context.Context, tokenCID domain.Toke
 // Constraints: (nil, nil) means "no known publisher" and is safe to route to the
 // generic vendor fallback; a non-nil error means "unknown whether a publisher
 // exists" and callers must not route that case to the generic fallback.
+//
+// Vendor-only contracts (e.g. CryptoPunks) are resolved from the collection list
+// only. Resolve skips their on-chain metadata, so before this lookup existed they
+// never reached a deployer lookup; CryptoPunks' deployment predates the registry's
+// min block, so the search ends "not found", which getContractDeployer does not
+// serve from cache. A deployer lookup there would cost an archive binary search per
+// token and make OpenSea enrichment fail on its RPC errors, for no possible match.
 func (r *resolver) ResolvePublisher(ctx context.Context, tokenCID domain.TokenCID) (*Publisher, error) {
+	chainID, _, contractAddress, _ := tokenCID.Parse()
+	if r.registry != nil && r.isVendorOnly(chainID, contractAddress) {
+		return r.collectionPublisher(chainID, contractAddress), nil
+	}
+	return r.resolvePublisher(ctx, tokenCID)
+}
+
+// resolvePublisher looks a contract up in the registry's collection list, then by
+// deployer. It assumes the caller has already excluded vendor-only contracts (the
+// normalizers only run after Resolve's vendor-only guard).
+func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCID) (*Publisher, error) {
 	if r.registry == nil {
 		return nil, nil
 	}
@@ -659,8 +675,8 @@ func (r *resolver) ResolvePublisher(ctx context.Context, tokenCID domain.TokenCI
 	chainID, _, contractAddress, _ := tokenCID.Parse()
 
 	// First, check if the contract is in the collection addresses
-	if publisher := r.registry.LookupPublisherByCollection(chainID, contractAddress); publisher != nil {
-		return newPublisher(publisher.Name, publisher.URL), nil
+	if publisher := r.collectionPublisher(chainID, contractAddress); publisher != nil {
+		return publisher, nil
 	}
 
 	// Second, get the deployer and check if it's in the deployer addresses
@@ -678,6 +694,24 @@ func (r *resolver) ResolvePublisher(ctx context.Context, tokenCID domain.TokenCI
 	}
 
 	return nil, nil
+}
+
+// collectionPublisher returns the publisher whose registry collection list contains
+// the contract, or nil. It is an in-memory lookup.
+func (r *resolver) collectionPublisher(chainID domain.Chain, contractAddress string) *Publisher {
+	if publisher := r.registry.LookupPublisherByCollection(chainID, contractAddress); publisher != nil {
+		return newPublisher(publisher.Name, publisher.URL)
+	}
+	return nil
+}
+
+// isVendorOnly reports whether an Ethereum contract skips on-chain metadata; it
+// mirrors the guard at the top of Resolve.
+func (r *resolver) isVendorOnly(chainID domain.Chain, contractAddress string) bool {
+	if chainID != domain.ChainEthereumMainnet && chainID != domain.ChainEthereumSepolia {
+		return false
+	}
+	return r.ethClient.IsVendorOnlyMetadata(contractAddress)
 }
 
 // newPublisher copies a registry entry's name and URL into a Publisher.
