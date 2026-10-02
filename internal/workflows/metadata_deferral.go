@@ -81,7 +81,7 @@ func (w *coreWorkflows) metadataDeferral(ctx context.Context, tokenCID domain.To
 		return nil
 	}
 
-	at := time.Now().UTC().Add(metadataDeferralBaseDelay + rand.N(metadataDeferralJitter))
+	at := time.Now().UTC().Add(metadataDeferralBaseDelay + rand.N(metadataDeferralJitter)) //nolint:gosec // G404: scheduling jitter, not security-sensitive
 	logger.InfoCtx(ctx, "Deferring self-throttled metadata indexing",
 		zap.String("tokenCID", tokenCID.String()), zap.Time("run_after", at), zap.Error(cause))
 	return jobs.ErrReschedule(at)

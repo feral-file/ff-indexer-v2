@@ -65,6 +65,10 @@ type HTTPClient interface {
 type RealHTTPClient struct {
 	client  *http.Client
 	limiter HostRateLimiter
+	// validator and maxRedirects drive doPaced's redirect policy; they are only used
+	// when limiter is set (otherwise http.Client follows redirects itself).
+	validator    SSRFValidator
+	maxRedirects int
 }
 
 // SSRFValidator validates fully-qualified request URLs before RealHTTPClient sends them.
@@ -117,9 +121,8 @@ func newUnderlyingHTTPClient(timeout time.Duration, v SSRFValidator, maxRedirect
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
 		rt = transport.Clone()
 	}
-	// Redirect hops are paced here, after SSRF validation (a refused hop takes no token)
-	// and before a connection is taken. The first hop is paced earlier, in
-	// RealHTTPClient.do, so queueing never counts against Client.Timeout.
+	// Every hop is paced earlier, in RealHTTPClient.doPaced, so queueing never counts
+	// against Client.Timeout; the round tripper turns 429s into provider pauses.
 	if opts.limiter != nil {
 		rt = &rateLimitRoundTripper{next: rt, limiter: opts.limiter}
 	}
@@ -127,6 +130,11 @@ func newUnderlyingHTTPClient(timeout time.Duration, v SSRFValidator, maxRedirect
 	if v != nil {
 		rt = &ssrfRoundTripper{next: rt, v: v}
 		client.CheckRedirect = ssrfCheckRedirect(maxRedirects, v)
+	}
+	// With a limiter, RealHTTPClient.doPaced follows redirects itself so each hop is
+	// paced outside its own Client.Timeout; it applies the same cap and validation.
+	if opts.limiter != nil {
+		client.CheckRedirect = errNoRedirectFollow
 	}
 	client.Transport = rt
 	return client
@@ -154,9 +162,14 @@ func NewHTTPClientWithSSRF(timeout time.Duration, v SSRFValidator, maxRedirects 
 	for _, opt := range opts {
 		opt(&o)
 	}
+	if v == nil {
+		maxRedirects = defaultMaxRedirects
+	}
 	return &RealHTTPClient{
-		client:  newUnderlyingHTTPClient(timeout, v, maxRedirects, o),
-		limiter: o.limiter,
+		client:       newUnderlyingHTTPClient(timeout, v, maxRedirects, o),
+		limiter:      o.limiter,
+		validator:    v,
+		maxRedirects: maxRedirects,
 	}
 }
 

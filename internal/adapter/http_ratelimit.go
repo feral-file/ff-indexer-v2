@@ -56,9 +56,8 @@ func WithHostRateLimiter(l HostRateLimiter) HTTPClientOption {
 	return func(o *httpClientOptions) { o.limiter = l }
 }
 
-// precharged records that RealHTTPClient.do already took a token for a request's first
-// hop. One marker per send attempt: the transport consumes it on that attempt's first
-// round trip and charges every later hop (redirects) itself.
+// precharged records that RealHTTPClient.doPaced already took a token for one hop.
+// The transport consumes it on that hop's round trip, so the hop is charged once.
 type precharged struct {
 	provider string
 	used     atomic.Bool
@@ -66,23 +65,24 @@ type precharged struct {
 
 type prechargedKey struct{}
 
-// do sends req, first waiting for host capacity when a limiter is configured.
+// withPrecharged marks ctx's request as already charged to provider ("" for an
+// unlimited host).
+func withPrecharged(ctx context.Context, provider string) context.Context {
+	return context.WithValue(ctx, prechargedKey{}, &precharged{provider: provider})
+}
+
+// do sends req. With a limiter configured, doPaced paces every hop, including
+// redirects it follows itself; without one, http.Client follows redirects as usual.
 //
-// The wait happens here, before Client.Do, because http.Client.Timeout covers the whole
+// The wait happens before Client.Do, because http.Client.Timeout covers the whole
 // exchange including time spent inside the transport: waiting there would eat into the
 // fetch's own budget and turn a queued request into a client timeout, which health checks
-// record as broken. Redirect hops can only be seen by the transport and are charged there.
+// record as broken.
 func (c *RealHTTPClient) do(req *http.Request) (*http.Response, error) {
 	if c.limiter == nil {
 		return c.client.Do(req)
 	}
-	provider, err := waitHost(req.Context(), c.limiter, req)
-	if err != nil {
-		return nil, err
-	}
-	// Marked even for unlimited hosts ("") so the transport does not look the host up twice.
-	req = req.WithContext(context.WithValue(req.Context(), prechargedKey{}, &precharged{provider: provider}))
-	return c.client.Do(req)
+	return c.doPaced(req)
 }
 
 // waitHost waits (bounded by ctx) for req's host and wraps a limiter refusal in
@@ -107,24 +107,17 @@ type rateLimitRoundTripper struct {
 }
 
 // RoundTrip implements http.RoundTripper.
+//
+// Every hop sent through RealHTTPClient is precharged by doPaced (the client returns
+// redirects unfollowed when a limiter is set), so the wait below only covers a request
+// sent through the underlying http.Client directly.
 func (t *rateLimitRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	var provider string
 	if pc, ok := req.Context().Value(prechargedKey{}).(*precharged); ok && pc.used.CompareAndSwap(false, true) {
-		provider = pc.provider // first hop, already charged by RealHTTPClient.do
+		provider = pc.provider
 	} else {
-		// A redirect hop: it can only be seen here, inside the exchange that
-		// http.Client.Timeout bounds. Give the wait at most half the time left so a
-		// queued hop surfaces as ErrRateLimitWait (transient) with time still left for
-		// the fetch, instead of burning the budget into a client timeout that health
-		// checks record as broken.
-		waitCtx := req.Context()
-		if deadline, ok := waitCtx.Deadline(); ok {
-			var cancel context.CancelFunc
-			waitCtx, cancel = context.WithDeadline(waitCtx, deadline.Add(-time.Until(deadline)/2))
-			defer cancel()
-		}
 		var err error
-		if provider, err = waitHost(waitCtx, t.limiter, req); err != nil {
+		if provider, err = waitHost(req.Context(), t.limiter, req); err != nil {
 			return nil, err
 		}
 	}
