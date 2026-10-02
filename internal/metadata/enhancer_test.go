@@ -2617,3 +2617,43 @@ func TestEnhancer_Enhance_RoutesOnPublisherArgument(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, result)
 }
+
+// Foundation and SuperRare have no dedicated client; OpenSea is their designated
+// vendor. Routing must be identical with and without the token's own metadata, so a
+// failed fetch cannot change the vendor or the release it assigns.
+func TestEnhancer_Enhance_OpenSeaDesignatedPublishers_SameVendorWithOrWithoutMetadata(t *testing.T) {
+	for _, name := range []registry.PublisherName{registry.PublisherNameFoundation, registry.PublisherNameSuperRare} {
+		for _, meta := range []*metadata.NormalizedMetadata{nil, {Raw: map[string]interface{}{"name": "x"}}} {
+			t.Run(fmt.Sprintf("%s/meta=%t", name, meta != nil), func(t *testing.T) {
+				mocks := setupTestEnhancer(t)
+				defer tearDownTestEnhancer(mocks)
+
+				tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
+				publisherName := name
+				publisher := &metadata.Publisher{Name: &publisherName}
+
+				mocks.openseaClient.EXPECT().GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+					Return(nil, opensea.ErrNFTNotFound)
+
+				result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, meta, publisher)
+
+				require.NoError(t, err)
+				assert.Nil(t, result)
+			})
+		}
+	}
+}
+
+// Off Ethereum mainnet these publishers have no vendor, matching the generic branch.
+func TestEnhancer_Enhance_OpenSeaDesignatedPublishers_NonMainnet(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumSepolia, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
+	publisherName := registry.PublisherNameFoundation
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, nil, &metadata.Publisher{Name: &publisherName})
+
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}

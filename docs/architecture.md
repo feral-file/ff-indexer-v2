@@ -182,7 +182,7 @@ PostgreSQL
 
 | Publisher lookup | Enrichment |
 |---|---|
-| Known publisher | That vendor only. Art Blocks additionally needs the token's fetched metadata (image, `generator_url`); without it enrichment fails with `ErrArtBlocksTokenMetadataMissing` and existing enrichment and membership are kept |
+| Known publisher | That publisher's designated vendor only: Art Blocks, Feral File, or fxhash APIs; OpenSea for Foundation and SuperRare, which have no dedicated client (the same vendor whether or not the fetch succeeded, so the release cannot flip). Art Blocks additionally needs the token's fetched metadata (image, `generator_url`); without it enrichment fails with `ErrArtBlocksTokenMetadataMissing` and existing enrichment and membership are kept |
 | Completed, no match | Generic fallback: OpenSea (Ethereum) or objkt (Tezos) |
 | Failed (e.g. deployer RPC error) | Skipped with an error; existing enrichment and membership are kept |
 

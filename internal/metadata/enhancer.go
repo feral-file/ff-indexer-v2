@@ -190,6 +190,18 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 			}
 		}
 
+	case registry.PublisherNameFoundation, registry.PublisherNameSuperRare:
+		// No dedicated client: OpenSea is these publishers' designated vendor whether or
+		// not the token's own metadata was fetched, so a failed fetch yields the same
+		// vendor and release as a successful one. Kept explicit (rather than reaching the
+		// generic branch below) so it is not mistaken for the publisher-less fallback.
+		if chain == domain.ChainEthereumMainnet {
+			enhancedMetadata, err = e.enhanceOpenSea(ctx, contractAddress, tokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("failed to enhance OpenSea metadata: %w", err)
+			}
+		}
+
 	default:
 		switch chain {
 		case domain.ChainTezosMainnet:
