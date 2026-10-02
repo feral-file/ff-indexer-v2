@@ -39,7 +39,7 @@ func (w *coreWorkflows) IndexMetadataUpdate(ctx context.Context, event *domain.B
 		Queue:     w.config.TokenTaskQueue,
 		Kind:      "IndexTokenMetadata",
 		Args:      []any{event.TokenCID(), nil},
-		UniqueKey: types.StringPtr(fmt.Sprintf("index-metadata-%s", event.TokenCID().String())),
+		UniqueKey: metadataUniqueKey(event.TokenCID()),
 	})
 	if err != nil {
 		logger.ErrorCtx(ctx,
@@ -61,7 +61,9 @@ func (w *coreWorkflows) IndexMetadataUpdate(ctx context.Context, event *domain.B
 // Retirement failures stop the attempt before publisher context is lost and a
 // generic vendor can overwrite preserved enrichment. Other fetch failures and
 // vendor-only tokens still proceed to enrichment, routed by the contract's
-// publisher rather than the missing metadata (see EnhanceTokenMetadata).
+// publisher rather than the missing metadata (see EnhanceTokenMetadata). A fetch or
+// enrichment refused by our own rate limiter returns a *jobs.RescheduleError instead
+// (see metadataDeferral), before any viewability update or webhook.
 func (w *coreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
 	logger.InfoCtx(ctx, "Indexing token metadata", zap.String("tokenCID", tokenCID.String()))
 
@@ -83,6 +85,12 @@ func (w *coreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.
 			// Leave metadata, enrichment, viewability, and notifications intact
 			// for retry; nil metadata here does not mean vendor-only metadata.
 			return err
+		}
+		// Our own rate limiter refused the fetch: retry later instead of indexing
+		// the token without metadata. Returning before enrichment and webhooks
+		// keeps a merely-delayed token from being announced as unviewable.
+		if deferral := w.metadataDeferral(ctx, tokenCID, err); deferral != nil {
+			return deferral
 		}
 		// Log the error but don't fail the workflow
 	}
@@ -106,6 +114,11 @@ func (w *coreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.
 	// - Update token_metadata with enriched data and set enrichment_level to 'vendor'
 	enhancedMetadata, err := w.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
 	if err != nil {
+		// Same as the fetch above: a self-throttled vendor call is retried later.
+		// The fetched metadata is already stored; the deferred run refreshes it.
+		if deferral := w.metadataDeferral(ctx, tokenCID, err); deferral != nil {
+			return deferral
+		}
 		// Log the error but don't fail the workflow
 		// Enrichment is optional and should not block the main indexing flow
 		logger.WarnCtx(ctx, "Failed to enhance token metadata (non-fatal)",
@@ -230,7 +243,7 @@ func (w *coreWorkflows) IndexMultipleTokensMetadata(ctx context.Context, tokenCI
 			Queue:     w.config.TokenTaskQueue,
 			Kind:      "IndexTokenMetadata",
 			Args:      []any{tokenCID, nil},
-			UniqueKey: types.StringPtr(fmt.Sprintf("index-metadata-%s", tokenCID.String())),
+			UniqueKey: metadataUniqueKey(tokenCID),
 		})
 		if err != nil {
 			return err
