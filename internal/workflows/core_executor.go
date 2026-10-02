@@ -586,7 +586,10 @@ func (e *coreExecutor) ResolveTokenMetadata(ctx context.Context, tokenCID domain
 
 // EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source.
 // Media URLs that address the same IPFS content as the stored ones keep the stored
-// gateway (see keepStoredEnrichmentMedia).
+// gateway (see keepStoredEnrichmentMedia). The vendor is chosen by the contract's
+// publisher (see enrichmentPublisher), so a nil normalizedMetadata from a failed fetch
+// cannot downgrade a known-publisher token to the generic OpenSea/objkt enrichment,
+// whose release assignment would move the token out of its real release.
 func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error) {
 	// Validate token CID
 	if !tokenCID.Valid() {
@@ -603,8 +606,13 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 		return nil, domain.ErrTokenNotFound
 	}
 
+	publisher, err := e.enrichmentPublisher(ctx, tokenCID, normalizedMetadata)
+	if err != nil {
+		return nil, err
+	}
+
 	// Enhance metadata from vendor APIs
-	enhanced, err := e.metadataEnhancer.Enhance(ctx, tokenCID, normalizedMetadata)
+	enhanced, err := e.metadataEnhancer.Enhance(ctx, tokenCID, normalizedMetadata, publisher)
 	if err != nil {
 		return nil, fmt.Errorf("failed to enhance metadata: %w", err)
 	}
@@ -715,6 +723,37 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 		zap.String("vendor", string(enhanced.Vendor)))
 
 	return enhanced, nil
+}
+
+// enrichmentPublisher returns the publisher that routes a token's enrichment.
+//
+// Reason: release membership is last-writer-wins per token, so enriching a known
+// publisher's token through the generic OpenSea fallback moves it out of its real
+// release. In production (2026-10-02) Art Blocks rate limiting failed ~950 Ringers
+// tokenURI fetches; each fell back to OpenSea and 457 tokens ended up in an OpenSea
+// release with the same slug.
+//
+// Trade-offs: a fetched normalizedMetadata already carries the publisher, so the
+// lookup is repeated only when the fetch produced nothing. That keeps the happy path
+// free of a second deployer lookup, which is an RPC binary search for contracts whose
+// deployer is not cached.
+//
+// Constraints: a failed lookup returns an error so enrichment is skipped and existing
+// enrichment and release membership are kept; only a completed lookup that finds no
+// publisher may reach the generic fallback.
+func (e *coreExecutor) enrichmentPublisher(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.Publisher, error) {
+	if normalizedMetadata != nil {
+		if normalizedMetadata.PublisherUnresolved {
+			return nil, errors.New("publisher lookup failed during metadata resolution; skipping enrichment")
+		}
+		return normalizedMetadata.Publisher, nil
+	}
+
+	publisher, err := e.metadataResolver.ResolvePublisher(ctx, tokenCID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve publisher; skipping enrichment: %w", err)
+	}
+	return publisher, nil
 }
 
 // CheckMediaURLsHealthAndUpdateViewability checks media URLs in parallel and updates token viewability.

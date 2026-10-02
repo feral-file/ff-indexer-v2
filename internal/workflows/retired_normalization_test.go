@@ -55,7 +55,7 @@ func TestIndexTokenMetadata_RetirementFailurePreservesEnrichment(t *testing.T) {
 		mocks.NewMockArtBlocksClient(m.ctrl), mocks.NewMockFeralFileClient(m.ctrl),
 		mocks.NewMockFxhashClient(m.ctrl), vendor, mocks.NewMockOpenSeaClient(m.ctrl),
 		m.json, mocks.NewMockJCS(m.ctrl))
-	m.metadataEnhancer.EXPECT().Enhance(ctx, cid, (*metadata.NormalizedMetadata)(nil)).DoAndReturn(enhancer.Enhance).AnyTimes()
+	m.metadataEnhancer.EXPECT().Enhance(ctx, cid, (*metadata.NormalizedMetadata)(nil), gomock.Any()).DoAndReturn(enhancer.Enhance).AnyTimes()
 	m.metadataEnhancer.EXPECT().VendorJsonHash(gomock.Any()).Return([]byte{1}, nil).AnyTimes()
 	m.store.EXPECT().GetTokenByTokenCID(ctx, cid.String()).Return(&schema.Token{ID: 1, TokenCID: cid.String()}, nil).AnyTimes()
 	m.store.EXPECT().UpsertTokenMetadata(gomock.Any(), gomock.Any()).Times(0)
@@ -107,7 +107,7 @@ func TestIndexTokenMetadata_BigMapRetirementFailurePreservesSignedMetadata(t *te
 	m.store.EXPECT().UpsertTokenMetadata(gomock.Any(), gomock.Any()).Times(0)
 	m.store.EXPECT().UpsertEnrichmentSource(gomock.Any(), gomock.Any()).Times(0)
 	m.store.EXPECT().UpdateTokenMediaHealthByURL(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	m.metadataEnhancer.EXPECT().Enhance(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	m.metadataEnhancer.EXPECT().Enhance(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	queue := mocks.NewMockJobQueue(m.ctrl)
 	queue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Times(0)
 	wf := workflows.NewCoreWorkflows(m.executor, defaultCompactCoreWfConfig(), m.blacklist, queue)

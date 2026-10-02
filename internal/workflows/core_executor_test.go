@@ -1644,7 +1644,7 @@ func TestEnhanceTokenMetadata_Success(t *testing.T) {
 
 	// Mock metadata enhancer
 	mocks.metadataEnhancer.EXPECT().
-		Enhance(ctx, tokenCID, normalizedMetadata).
+		Enhance(ctx, tokenCID, normalizedMetadata, normalizedMetadata.Publisher).
 		Return(enhancedMetadata, nil)
 
 	// Mock VendorJsonHash
@@ -1708,7 +1708,7 @@ func TestEnhanceTokenMetadata_PersistsReleaseMembership(t *testing.T) {
 		GetTokenByTokenCID(ctx, tokenCID.String()).
 		Return(token, nil)
 	mocks.metadataEnhancer.EXPECT().
-		Enhance(ctx, tokenCID, normalizedMetadata).
+		Enhance(ctx, tokenCID, normalizedMetadata, normalizedMetadata.Publisher).
 		Return(enhancedMetadata, nil)
 	hash := []byte("vendorhash123")
 	mocks.metadataEnhancer.EXPECT().
@@ -1762,7 +1762,7 @@ func TestEnhanceTokenMetadata_PersistsModerationVerdict(t *testing.T) {
 		GetTokenByTokenCID(ctx, tokenCID.String()).
 		Return(token, nil)
 	mocks.metadataEnhancer.EXPECT().
-		Enhance(ctx, tokenCID, normalizedMetadata).
+		Enhance(ctx, tokenCID, normalizedMetadata, normalizedMetadata.Publisher).
 		Return(enhancedMetadata, nil)
 	mocks.metadataEnhancer.EXPECT().
 		VendorJsonHash(enhancedMetadata).
@@ -1823,7 +1823,7 @@ func TestEnhanceTokenMetadata_PersistsCleanVerdict(t *testing.T) {
 		GetTokenByTokenCID(ctx, tokenCID.String()).
 		Return(token, nil)
 	mocks.metadataEnhancer.EXPECT().
-		Enhance(ctx, tokenCID, normalizedMetadata).
+		Enhance(ctx, tokenCID, normalizedMetadata, normalizedMetadata.Publisher).
 		Return(enhancedMetadata, nil)
 	mocks.metadataEnhancer.EXPECT().
 		VendorJsonHash(enhancedMetadata).
@@ -1873,7 +1873,7 @@ func TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched(t *testing.T)
 		GetTokenByTokenCID(ctx, tokenCID.String()).
 		Return(token, nil)
 	mocks.metadataEnhancer.EXPECT().
-		Enhance(ctx, tokenCID, normalizedMetadata).
+		Enhance(ctx, tokenCID, normalizedMetadata, normalizedMetadata.Publisher).
 		Return(enhancedMetadata, nil)
 	mocks.metadataEnhancer.EXPECT().
 		VendorJsonHash(enhancedMetadata).
@@ -1911,7 +1911,7 @@ func TestEnhanceTokenMetadata_NoEnhancementAvailable(t *testing.T) {
 
 	// Mock metadata enhancer to return nil (no enhancement available)
 	mocks.metadataEnhancer.EXPECT().
-		Enhance(ctx, tokenCID, normalizedMetadata).
+		Enhance(ctx, tokenCID, normalizedMetadata, normalizedMetadata.Publisher).
 		Return(nil, nil)
 
 	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
@@ -1985,7 +1985,7 @@ func TestEnhanceTokenMetadata_EnhancerError(t *testing.T) {
 	// Mock metadata enhancer to return error
 	enhancerErr := errors.New("enhancer error")
 	mocks.metadataEnhancer.EXPECT().
-		Enhance(ctx, tokenCID, normalizedMetadata).
+		Enhance(ctx, tokenCID, normalizedMetadata, normalizedMetadata.Publisher).
 		Return(nil, enhancerErr)
 
 	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
@@ -2023,7 +2023,7 @@ func TestEnhanceTokenMetadata_VendorHashError(t *testing.T) {
 
 	// Mock metadata enhancer
 	mocks.metadataEnhancer.EXPECT().
-		Enhance(ctx, tokenCID, normalizedMetadata).
+		Enhance(ctx, tokenCID, normalizedMetadata, normalizedMetadata.Publisher).
 		Return(enhancedMetadata, nil)
 
 	// Mock VendorJsonHash to return error
@@ -2067,7 +2067,7 @@ func TestEnhanceTokenMetadata_StoreError(t *testing.T) {
 
 	// Mock metadata enhancer
 	mocks.metadataEnhancer.EXPECT().
-		Enhance(ctx, tokenCID, normalizedMetadata).
+		Enhance(ctx, tokenCID, normalizedMetadata, normalizedMetadata.Publisher).
 		Return(enhancedMetadata, nil)
 
 	// Mock VendorJsonHash

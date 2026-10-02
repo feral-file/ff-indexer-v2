@@ -178,6 +178,16 @@ UpsertTokenMetadata (executor)
 PostgreSQL
 ```
 
+**Enrichment vendor routing.** The enriching vendor is chosen by the token's *publisher*, which depends only on its contract: the publisher registry's collection list, then the contract deployer (`Resolver.ResolvePublisher`). It never depends on whether the token's own metadata fetch succeeded. That vendor also assigns the token's release, and `release_members` is last-writer-wins per token, so routing a known publisher's token to the generic OpenSea/objkt fallback would move it into a different release. Rules:
+
+| Publisher lookup | Enrichment |
+|---|---|
+| Known publisher | That vendor only. Art Blocks additionally needs the token's fetched metadata (image, `generator_url`); without it enrichment fails with `ErrArtBlocksTokenMetadataMissing` and existing enrichment and membership are kept |
+| Completed, no match | Generic fallback: OpenSea (Ethereum) or objkt (Tezos) |
+| Failed (e.g. deployer RPC error) | Skipped with an error; existing enrichment and membership are kept |
+
+When metadata was fetched, its normalized `Publisher` is reused (`PublisherUnresolved` records a failed lookup), so the deployer lookup is not repeated on the happy path.
+
 ### Contract adapter system (Ethereum)
 
 Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which predates EIP-721) are handled through a **configuration-driven adapter registry** instead of hard-coded `ownerOf` / `tokenURI` assumptions.

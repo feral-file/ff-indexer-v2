@@ -71,7 +71,7 @@ func TestEnhancer_UnsupportedRetiredGateway(t *testing.T) {
 	actual := uri.NewResolver(m.httpClient, mocks.NewMockIO(m.ctrl), &uri.Config{})
 	m.uriResolver.EXPECT().Resolve(ctx, source).DoAndReturn(actual.Resolve).AnyTimes()
 
-	result, err := m.enhancer.Enhance(ctx, cid, nil)
+	result, err := m.enhancer.Enhance(ctx, cid, nil, nil)
 	assert.ErrorIs(t, err, uri.ErrRetiredGatewayReplacement)
 	assert.Nil(t, result)
 }
@@ -96,7 +96,7 @@ func TestEnhancer_RetiredGatewayFailure(t *testing.T) {
 				m.json.EXPECT().Marshal(token).Return([]byte(`{"name":"SUNRISE"}`), nil)
 			}
 			m.uriResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Return("", assert.AnError).AnyTimes()
-			result, err := m.enhancer.Enhance(context.Background(), cid, nil)
+			result, err := m.enhancer.Enhance(context.Background(), cid, nil, nil)
 			assert.ErrorIs(t, err, assert.AnError)
 			assert.ErrorIs(t, err, uri.ErrRetiredGatewayReplacement)
 			assert.Nil(t, result, "keep the entire existing enrichment record on resolution failure")

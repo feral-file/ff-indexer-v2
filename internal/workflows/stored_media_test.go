@@ -99,7 +99,7 @@ func TestEnhanceTokenMetadata_KeepsStoredGateway(t *testing.T) {
 	}
 
 	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID.String()).Return(token, nil)
-	mocks.metadataEnhancer.EXPECT().Enhance(ctx, tokenCID, gomock.Any()).Return(enhanced, nil)
+	mocks.metadataEnhancer.EXPECT().Enhance(ctx, tokenCID, gomock.Any(), gomock.Any()).Return(enhanced, nil)
 	mocks.store.EXPECT().
 		GetEnrichmentSourceByTokenID(ctx, token.ID).
 		Return(&schema.EnrichmentSource{
@@ -145,7 +145,7 @@ func TestEnhanceTokenMetadata_FirstEnrichmentTakesResolvedGateway(t *testing.T) 
 	}
 
 	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID.String()).Return(token, nil)
-	mocks.metadataEnhancer.EXPECT().Enhance(ctx, tokenCID, gomock.Any()).Return(enhanced, nil)
+	mocks.metadataEnhancer.EXPECT().Enhance(ctx, tokenCID, gomock.Any(), gomock.Any()).Return(enhanced, nil)
 	mocks.store.EXPECT().GetEnrichmentSourceByTokenID(ctx, token.ID).Return(nil, nil)
 	mocks.metadataEnhancer.EXPECT().VendorJsonHash(enhanced).Return([]byte("hash"), nil)
 	mocks.store.EXPECT().
@@ -175,7 +175,7 @@ func TestEnhanceTokenMetadata_StoredSourceReadFailureStopsUpsert(t *testing.T) {
 	readErr := errors.New("connection reset")
 
 	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID.String()).Return(token, nil)
-	mocks.metadataEnhancer.EXPECT().Enhance(ctx, tokenCID, gomock.Any()).Return(&metadata.EnhancedMetadata{
+	mocks.metadataEnhancer.EXPECT().Enhance(ctx, tokenCID, gomock.Any(), gomock.Any()).Return(&metadata.EnhancedMetadata{
 		Vendor:   schema.VendorObjkt,
 		ImageURL: types.StringPtr(racedMediaGateway + storedMediaImageCID),
 	}, nil)

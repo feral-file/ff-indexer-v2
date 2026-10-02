@@ -42,7 +42,8 @@ func TestEnhanceTokenMetadata_RetiredGatewayPreservesDisplay(t *testing.T) {
 		mocks.NewMockFxhashClient(m.ctrl), vendor, mocks.NewMockOpenSeaClient(m.ctrl),
 		m.json, mocks.NewMockJCS(m.ctrl),
 	)
-	m.metadataEnhancer.EXPECT().Enhance(ctx, cid, (*metadata.NormalizedMetadata)(nil)).
+	m.metadataResolver.EXPECT().ResolvePublisher(ctx, cid).Return(nil, nil)
+	m.metadataEnhancer.EXPECT().Enhance(ctx, cid, (*metadata.NormalizedMetadata)(nil), (*metadata.Publisher)(nil)).
 		DoAndReturn(actual.Enhance)
 	m.store.EXPECT().GetTokenByTokenCID(ctx, cid.String()).Return(&schema.Token{ID: 1, TokenCID: cid.String()}, nil)
 	// The existing enrichment is preserved because the executor must abort
