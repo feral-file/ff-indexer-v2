@@ -178,6 +178,16 @@ UpsertTokenMetadata (executor)
 PostgreSQL
 ```
 
+**Enrichment vendor routing.** The enriching vendor is chosen by the token's *publisher*, which depends only on its contract: the publisher registry's collection list, then the contract deployer (`Resolver.ResolvePublisher`). It never depends on whether the token's own metadata fetch succeeded. That vendor also assigns the token's release, and `release_members` is last-writer-wins per token, so routing a known publisher's token to the generic OpenSea/objkt fallback would move it into a different release. Rules:
+
+| Publisher lookup | Enrichment |
+|---|---|
+| Known publisher | That publisher's designated vendor only: Art Blocks, Feral File, or fxhash APIs; OpenSea for Foundation and SuperRare, which have no dedicated client (the same vendor whether or not the fetch succeeded, so the release cannot flip). Art Blocks additionally needs the token's fetched metadata (image, `generator_url`); without it enrichment fails with `ErrArtBlocksTokenMetadataMissing` and existing enrichment and membership are kept |
+| Completed, no match | Generic fallback: OpenSea (Ethereum) or objkt (Tezos) |
+| Failed (e.g. deployer RPC error) | Skipped with an error; existing enrichment and membership are kept |
+
+When metadata was fetched, its normalized `Publisher` is reused (`PublisherUnresolved` records a failed lookup), so the deployer lookup is not repeated on the happy path. Vendor-only contracts (`metadata.source: "vendor_only"`, e.g. CryptoPunks) are resolved from the collection list only: they never fetch metadata, and a deployer lookup would add an uncacheable archive binary search per token for no possible match.
+
 ### Contract adapter system (Ethereum)
 
 Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which predates EIP-721) are handled through a **configuration-driven adapter registry** instead of hard-coded `ownerOf` / `tokenURI` assumptions.

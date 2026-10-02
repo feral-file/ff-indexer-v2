@@ -58,9 +58,9 @@ func (mr *MockMetadataResolverMockRecorder) LoadDeployerCacheFromDB(ctx any) *go
 }
 
 // RawHash mocks base method.
-func (m *MockMetadataResolver) RawHash(arg0 *metadata.NormalizedMetadata) ([]byte, []byte, error) {
+func (m *MockMetadataResolver) RawHash(metadata *metadata.NormalizedMetadata) ([]byte, []byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RawHash", arg0)
+	ret := m.ctrl.Call(m, "RawHash", metadata)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].([]byte)
 	ret2, _ := ret[2].(error)
@@ -68,9 +68,9 @@ func (m *MockMetadataResolver) RawHash(arg0 *metadata.NormalizedMetadata) ([]byt
 }
 
 // RawHash indicates an expected call of RawHash.
-func (mr *MockMetadataResolverMockRecorder) RawHash(arg0 any) *gomock.Call {
+func (mr *MockMetadataResolverMockRecorder) RawHash(metadata any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RawHash", reflect.TypeOf((*MockMetadataResolver)(nil).RawHash), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RawHash", reflect.TypeOf((*MockMetadataResolver)(nil).RawHash), metadata)
 }
 
 // Resolve mocks base method.
@@ -86,4 +86,19 @@ func (m *MockMetadataResolver) Resolve(ctx context.Context, tokenCID domain.Toke
 func (mr *MockMetadataResolverMockRecorder) Resolve(ctx, tokenCID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resolve", reflect.TypeOf((*MockMetadataResolver)(nil).Resolve), ctx, tokenCID)
+}
+
+// ResolvePublisher mocks base method.
+func (m *MockMetadataResolver) ResolvePublisher(ctx context.Context, tokenCID domain.TokenCID) (*metadata.Publisher, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolvePublisher", ctx, tokenCID)
+	ret0, _ := ret[0].(*metadata.Publisher)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResolvePublisher indicates an expected call of ResolvePublisher.
+func (mr *MockMetadataResolverMockRecorder) ResolvePublisher(ctx, tokenCID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolvePublisher", reflect.TypeOf((*MockMetadataResolver)(nil).ResolvePublisher), ctx, tokenCID)
 }

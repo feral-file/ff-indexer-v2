@@ -132,7 +132,7 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 		GetPartialBytes(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
 		Return([]byte("fake generator data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -216,7 +216,7 @@ func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {
 		GetPartialBytes(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
 		Return([]byte("fake generator data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -279,7 +279,7 @@ func TestEnhancer_Enhance_ArtBlocks_NoArtistAddress(t *testing.T) {
 		GetPartialBytes(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
 		Return([]byte("fake generator data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -307,7 +307,7 @@ func TestEnhancer_Enhance_ArtBlocks_NonEthereumChain(t *testing.T) {
 
 	// No mocks should be called since ArtBlocks enhancement is skipped for non-Ethereum chains
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.Nil(t, result) // Should return nil for non-Ethereum chains
@@ -333,7 +333,7 @@ func TestEnhancer_Enhance_NoPublisher(t *testing.T) {
 		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nil, opensea.ErrNoAPIKey)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.Nil(t, result) // Should return nil when OpenSea has no API key
@@ -359,7 +359,7 @@ func TestEnhancer_Enhance_OpenSeaNFTNotFound(t *testing.T) {
 		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "0").
 		Return(nil, opensea.ErrNFTNotFound)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.Nil(t, result, "ErrNFTNotFound must be treated as a skip, not a hard error")
@@ -388,7 +388,7 @@ func TestEnhancer_Enhance_NoPublisherName(t *testing.T) {
 		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nil, opensea.ErrNoAPIKey)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.Nil(t, result) // Should return nil when OpenSea has no API key
@@ -418,7 +418,7 @@ func TestEnhancer_Enhance_UnsupportedPublisher(t *testing.T) {
 		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nil, opensea.ErrNoAPIKey)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.Nil(t, result) // Should return nil when OpenSea has no API key
@@ -444,7 +444,7 @@ func TestEnhancer_Enhance_ArtBlocks_InvalidTokenID(t *testing.T) {
 
 	// No mocks should be called since token ID parsing fails
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -475,7 +475,7 @@ func TestEnhancer_Enhance_ArtBlocks_APIError(t *testing.T) {
 		GetProjectMetadata(gomock.Any(), 1, "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
 		Return(nil, assert.AnError)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -517,7 +517,7 @@ func TestEnhancer_Enhance_ArtBlocks_MarshalError(t *testing.T) {
 		Marshal(projectMetadata).
 		Return(nil, assert.AnError)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -647,7 +647,7 @@ func TestEnhancer_Enhance_FeralFile(t *testing.T) {
 		GetPartialBytes(gomock.Any(), expectedAnimationURL, gomock.Any()).
 		Return([]byte("fake html data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -700,7 +700,7 @@ func TestEnhancer_Enhance_FeralFile_MovesRetiredCDN(t *testing.T) {
 	mocks.httpClient.EXPECT().Head(gomock.Any(), "https://cdn.artworks.feralfile.io/previews/abc/2/index.html").Return(nil, assert.AnError)
 	mocks.httpClient.EXPECT().GetPartialBytes(gomock.Any(), expectedAnimationURL, gomock.Any()).Return([]byte("<html></html>"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -750,7 +750,7 @@ func TestEnhancer_Enhance_FeralFile_NilIndexSkipsRelease(t *testing.T) {
 		Marshal(artwork).
 		Return(vendorJSON, nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -824,7 +824,7 @@ func TestEnhancer_Enhance_FeralFile_ImageMedium(t *testing.T) {
 		GetPartialBytes(gomock.Any(), expectedImageURL, gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -907,7 +907,7 @@ func TestEnhancer_Enhance_FeralFile_MayaManStarQuest(t *testing.T) {
 		GetPartialBytes(gomock.Any(), expectedAnimationURL, gomock.Any()).
 		Return([]byte("fake html data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -1001,7 +1001,7 @@ func TestEnhancer_Enhance_FXHash(t *testing.T) {
 		GetPartialBytes(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmDisplay123", gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	require.NotNil(t, result)
@@ -1075,7 +1075,7 @@ func TestEnhancer_Enhance_FXHash_ZeroSupply(t *testing.T) {
 	mocks.httpClient.EXPECT().Head(gomock.Any(), resolvedURL).Return(nil, assert.AnError)
 	mocks.httpClient.EXPECT().GetPartialBytes(gomock.Any(), resolvedURL, gomock.Any()).Return([]byte("fake image data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	require.NotNil(t, result)
@@ -1153,7 +1153,7 @@ func TestEnhancer_Enhance_FXHash_NullFallback(t *testing.T) {
 		Resolve(gomock.Any(), artifactURI).
 		Return("https://ipfs.filebase.io/ipfs/QmArtifact456", nil)
 
-	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	require.NotNil(t, result)
@@ -1213,7 +1213,7 @@ func TestEnhancer_Enhance_ObjktCustom(t *testing.T) {
 		Marshal(objktToken).
 		Return(vendorJSON, nil)
 
-	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	require.NotNil(t, result)
@@ -1264,7 +1264,7 @@ func TestEnhancer_Enhance_ObjktCustom_ZeroEditions(t *testing.T) {
 	vendorJSON := []byte(`{"name":"Token #3","fa":{"collection_type":"custom","editions":0}}`)
 	m.json.EXPECT().Marshal(objktToken).Return(vendorJSON, nil)
 
-	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	require.NotNil(t, result)
@@ -1312,7 +1312,7 @@ func TestEnhancer_Enhance_ObjktOpen(t *testing.T) {
 		Marshal(objktToken).
 		Return(vendorJSON, nil)
 
-	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	require.NotNil(t, result)
@@ -1386,7 +1386,7 @@ func TestEnhancer_Enhance_Objkt(t *testing.T) {
 		Resolve(gomock.Any(), artifactURI).
 		Return("https://ipfs.filebase.io/ipfs/QmArtifact456", nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -1449,7 +1449,7 @@ func TestEnhancer_Enhance_Objkt_MinimalFields(t *testing.T) {
 		Marshal(objktToken).
 		Return(vendorJSON, nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -1514,7 +1514,7 @@ func TestEnhancer_Enhance_Objkt_MultipleCreators(t *testing.T) {
 		Marshal(objktToken).
 		Return(vendorJSON, nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -1570,7 +1570,7 @@ func TestEnhancer_Enhance_Objkt_CreatorWithoutAlias(t *testing.T) {
 		Marshal(objktToken).
 		Return(vendorJSON, nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -1624,7 +1624,7 @@ func TestEnhancer_Enhance_Objkt_InvalidTezosAddress(t *testing.T) {
 		Marshal(objktToken).
 		Return(vendorJSON, nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -1653,7 +1653,7 @@ func TestEnhancer_Enhance_Objkt_APIError(t *testing.T) {
 		GetToken(gomock.Any(), "KT1ErrorContract", "123").
 		Return(nil, assert.AnError)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -1694,7 +1694,7 @@ func TestEnhancer_Enhance_Objkt_MarshalError(t *testing.T) {
 		Marshal(objktToken).
 		Return(nil, assert.AnError)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -1764,7 +1764,7 @@ func TestEnhancer_Enhance_Objkt_FeralFileNotAffected(t *testing.T) {
 		GetPartialBytes(gomock.Any(), expectedImageURL, gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -1795,7 +1795,7 @@ func TestEnhancer_Enhance_Objkt_NonTezosChain(t *testing.T) {
 		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nil, opensea.ErrNoAPIKey)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.Nil(t, result) // Should return nil when OpenSea has no API key
@@ -1878,7 +1878,7 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 		GetPartialBytes(gomock.Any(), displayAnimationURL, gomock.Any()).
 		Return([]byte("fake video data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -1948,7 +1948,7 @@ func TestEnhancer_Enhance_OpenSea_MinimalFields(t *testing.T) {
 		Marshal(nftMetadata).
 		Return(vendorJSON, nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -1981,7 +1981,7 @@ func TestEnhancer_Enhance_OpenSea_NoAPIKey(t *testing.T) {
 		Return(nil, opensea.ErrNoAPIKey)
 
 	// OpenSea enrichment should return nil gracefully when no API key
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.Nil(t, result) // Should return nil when no API key
@@ -2007,7 +2007,7 @@ func TestEnhancer_Enhance_OpenSea_APIError(t *testing.T) {
 		Return(nil, assert.AnError)
 
 	// OpenSea enrichment errors should be returned as errors
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -2044,7 +2044,7 @@ func TestEnhancer_Enhance_OpenSea_MarshalError(t *testing.T) {
 		Marshal(nftMetadata).
 		Return(nil, assert.AnError)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -2109,7 +2109,7 @@ func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
 		GetPartialBytes(gomock.Any(), resolvedImageURL, gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -2156,7 +2156,7 @@ func TestEnhancer_Enhance_OpenSea_NoMintNumber_NonNumericIdentifier(t *testing.T
 		Marshal(nftMetadata).
 		Return(vendorJSON, nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -2202,7 +2202,7 @@ func TestEnhancer_Enhance_OpenSea_NoMintNumber_ZeroTokenID(t *testing.T) {
 		Marshal(nftMetadata).
 		Return(vendorJSON, nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -2275,7 +2275,7 @@ func TestEnhancer_Enhance_Objkt_URIResolverSuccess(t *testing.T) {
 		GetPartialBytes(gomock.Any(), "https://best-gateway.io/ipfs/QmTest456", gomock.Any()).
 		Return([]byte("fake data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -2348,7 +2348,7 @@ func TestEnhancer_Enhance_Objkt_URIResolverFallback(t *testing.T) {
 		GetPartialBytes(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmTest456", gomock.Any()).
 		Return([]byte("fake data"), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -2401,7 +2401,7 @@ func TestEnhancer_Enhance_OpenSea_GetCollectionTransientErrorDoesNotBlockNFTEnri
 		Marshal(nftMetadata).
 		Return([]byte(`{"identifier":"1"}`), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	require.NoError(t, err, "transient GetCollection failure must not block token enrichment")
 	require.NotNil(t, result)
@@ -2453,7 +2453,7 @@ func TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyBestEffort(t *testing.
 		Marshal(nftMetadata).
 		Return([]byte(`{"identifier":"1"}`), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -2540,7 +2540,7 @@ func enhanceObjktForModeration(t *testing.T, flag *string) *metadata.EnhancedMet
 		Return(objktToken, nil)
 	mocks.json.EXPECT().Marshal(objktToken).Return([]byte(`{}`), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, schema.VendorObjkt, result.Vendor)
@@ -2573,9 +2573,87 @@ func enhanceOpenSeaForModeration(t *testing.T, isDisabled bool) *metadata.Enhanc
 		Return(nft, nil)
 	mocks.json.EXPECT().Marshal(nft).Return([]byte(`{}`), nil)
 
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, schema.VendorOpenSea, result.Vendor)
 	return result
+}
+
+// An Art Blocks token whose own metadata fetch failed (nil meta) must not be
+// enriched at all: not through Art Blocks, whose image and generator URL come from
+// that metadata, and not through the generic OpenSea fallback, whose release
+// assignment would move the token out of its Art Blocks release.
+func TestEnhancer_Enhance_ArtBlocks_NilMetadata_SkipsWithoutFallback(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xa7d8d9ef8D8Ce8992Df33D8b8CF4Aebabd5bD270", "13000129")
+	publisherName := registry.PublisherNameArtBlocks
+	publisher := &metadata.Publisher{Name: &publisherName, URL: types.StringPtr("https://artblocks.io")}
+
+	// No client expectations: any Art Blocks or OpenSea call fails the test.
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, nil, publisher)
+
+	require.ErrorIs(t, err, metadata.ErrArtBlocksTokenMetadataMissing)
+	assert.Nil(t, result)
+}
+
+// Routing follows the publisher argument, not meta.Publisher: a caller that resolved
+// "no publisher" from the contract gets the generic fallback even if meta disagrees.
+func TestEnhancer_Enhance_RoutesOnPublisherArgument(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
+	publisherName := registry.PublisherNameArtBlocks
+	meta := &metadata.NormalizedMetadata{Publisher: &metadata.Publisher{Name: &publisherName}}
+
+	mocks.openseaClient.EXPECT().GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+		Return(nil, opensea.ErrNFTNotFound)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, meta, nil)
+
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+// Foundation and SuperRare have no dedicated client; OpenSea is their designated
+// vendor. Routing must be identical with and without the token's own metadata, so a
+// failed fetch cannot change the vendor or the release it assigns.
+func TestEnhancer_Enhance_OpenSeaDesignatedPublishers_SameVendorWithOrWithoutMetadata(t *testing.T) {
+	for _, name := range []registry.PublisherName{registry.PublisherNameFoundation, registry.PublisherNameSuperRare} {
+		for _, meta := range []*metadata.NormalizedMetadata{nil, {Raw: map[string]interface{}{"name": "x"}}} {
+			t.Run(fmt.Sprintf("%s/meta=%t", name, meta != nil), func(t *testing.T) {
+				mocks := setupTestEnhancer(t)
+				defer tearDownTestEnhancer(mocks)
+
+				tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
+				publisherName := name
+				publisher := &metadata.Publisher{Name: &publisherName}
+
+				mocks.openseaClient.EXPECT().GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+					Return(nil, opensea.ErrNFTNotFound)
+
+				result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, meta, publisher)
+
+				require.NoError(t, err)
+				assert.Nil(t, result)
+			})
+		}
+	}
+}
+
+// Off Ethereum mainnet these publishers have no vendor, matching the generic branch.
+func TestEnhancer_Enhance_OpenSeaDesignatedPublishers_NonMainnet(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumSepolia, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
+	publisherName := registry.PublisherNameFoundation
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, nil, &metadata.Publisher{Name: &publisherName})
+
+	require.NoError(t, err)
+	assert.Nil(t, result)
 }

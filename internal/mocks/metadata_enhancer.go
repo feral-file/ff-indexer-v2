@@ -44,31 +44,31 @@ func (m *MockMetadataEnhancer) EXPECT() *MockMetadataEnhancerMockRecorder {
 }
 
 // Enhance mocks base method.
-func (m *MockMetadataEnhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error) {
+func (m *MockMetadataEnhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *metadata.NormalizedMetadata, publisher *metadata.Publisher) (*metadata.EnhancedMetadata, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Enhance", ctx, tokenCID, meta)
+	ret := m.ctrl.Call(m, "Enhance", ctx, tokenCID, meta, publisher)
 	ret0, _ := ret[0].(*metadata.EnhancedMetadata)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Enhance indicates an expected call of Enhance.
-func (mr *MockMetadataEnhancerMockRecorder) Enhance(ctx, tokenCID, meta any) *gomock.Call {
+func (mr *MockMetadataEnhancerMockRecorder) Enhance(ctx, tokenCID, meta, publisher any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Enhance", reflect.TypeOf((*MockMetadataEnhancer)(nil).Enhance), ctx, tokenCID, meta)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Enhance", reflect.TypeOf((*MockMetadataEnhancer)(nil).Enhance), ctx, tokenCID, meta, publisher)
 }
 
 // VendorJsonHash mocks base method.
-func (m *MockMetadataEnhancer) VendorJsonHash(arg0 *metadata.EnhancedMetadata) ([]byte, error) {
+func (m *MockMetadataEnhancer) VendorJsonHash(metadata *metadata.EnhancedMetadata) ([]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "VendorJsonHash", arg0)
+	ret := m.ctrl.Call(m, "VendorJsonHash", metadata)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // VendorJsonHash indicates an expected call of VendorJsonHash.
-func (mr *MockMetadataEnhancerMockRecorder) VendorJsonHash(arg0 any) *gomock.Call {
+func (mr *MockMetadataEnhancerMockRecorder) VendorJsonHash(metadata any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VendorJsonHash", reflect.TypeOf((*MockMetadataEnhancer)(nil).VendorJsonHash), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VendorJsonHash", reflect.TypeOf((*MockMetadataEnhancer)(nil).VendorJsonHash), metadata)
 }

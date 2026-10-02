@@ -45,6 +45,12 @@ type NormalizedMetadata struct {
 	Artists     []Artist               `json:"artists"`
 	Publisher   *Publisher             `json:"publisher"`
 	MimeType    *string                `json:"mime_type,omitempty"`
+
+	// PublisherUnresolved is true when the publisher lookup failed (e.g. the
+	// deployer RPC errored), as opposed to completing with no registry match.
+	// A nil Publisher alone cannot tell those apart, and only the second may be
+	// routed to the generic OpenSea/objkt enrichment. Never persisted.
+	PublisherUnresolved bool `json:"-"`
 }
 
 // Resolver defines the interface for resolving metadata from a tokenCID
@@ -59,6 +65,11 @@ type Resolver interface {
 
 	// RawHash returns the hash of the raw metadata and the raw metadata itself
 	RawHash(metadata *NormalizedMetadata) ([]byte, []byte, error)
+
+	// ResolvePublisher resolves a token's publisher from its contract alone (registry
+	// collection list, then deployer). It returns (nil, nil) when the contract has no
+	// known publisher and an error when the lookup itself failed.
+	ResolvePublisher(ctx context.Context, tokenCID domain.TokenCID) (*Publisher, error)
 }
 
 type resolver struct {
@@ -115,10 +126,8 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 	chainID, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
 	// Skip on-chain metadata for vendor-only contracts (e.g. CryptoPunks); enrichment uses OpenSea.
-	if chainID == domain.ChainEthereumMainnet || chainID == domain.ChainEthereumSepolia {
-		if r.ethClient.IsVendorOnlyMetadata(contractAddress) {
-			return nil, nil
-		}
+	if r.isVendorOnly(chainID, contractAddress) {
+		return nil, nil
 	}
 
 	var metadataURI string
@@ -276,7 +285,7 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 	}
 
 	// Resolve the publisher from the token CID
-	publisher := r.resolvePublisher(ctx, tokenCID)
+	publisher, publisherUnresolved := r.normalizedPublisher(ctx, tokenCID)
 
 	// Resolve both fields before producing metadata for the atomic upsert. A
 	// retired URL with no validated replacement must leave stored metadata alone.
@@ -297,6 +306,8 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 		Description: description,
 		Artists:     artists,
 		Publisher:   publisher,
+
+		PublisherUnresolved: publisherUnresolved,
 	}
 
 	// Detect mime type from animation_url or image_url
@@ -333,7 +344,7 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 	}
 
 	// Resolve the publisher from the token CID
-	publisher := r.resolvePublisher(ctx, tokenCID)
+	publisher, publisherUnresolved := r.normalizedPublisher(ctx, tokenCID)
 
 	image, err := resolveMediaURI(ctx, r.uriResolver, image)
 	if err != nil {
@@ -352,6 +363,8 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 		Description: description,
 		Artists:     artists,
 		Publisher:   publisher,
+
+		PublisherUnresolved: publisherUnresolved,
 	}
 
 	// Detect mime type from animation_url or image_url
@@ -610,47 +623,98 @@ func (r *resolver) getContractDeployer(ctx context.Context, chainID domain.Chain
 	return deployer, nil
 }
 
-// resolvePublisher resolves the publisher from the metadata
-func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCID) *Publisher {
+// normalizedPublisher resolves the publisher stored with normalized metadata.
+// A failed lookup is logged and reported through the second return value rather
+// than failing normalization, so the fetched metadata is still stored; the
+// enrichment step uses the flag to avoid a generic-vendor fallback.
+func (r *resolver) normalizedPublisher(ctx context.Context, tokenCID domain.TokenCID) (*Publisher, bool) {
+	publisher, err := r.resolvePublisher(ctx, tokenCID)
+	if err != nil {
+		logger.WarnCtx(ctx, "failed to resolve publisher",
+			zap.Error(err),
+			zap.String("tokenCID", tokenCID.String()))
+		return nil, true
+	}
+	return publisher, false
+}
+
+// ResolvePublisher resolves a token's publisher from its contract: the registry's
+// collection list first (in memory), then the contract deployer.
+//
+// Reason: the publisher decides which vendor enriches the token, and that vendor
+// assigns the token's release. It must not depend on whether the token's own
+// metadata fetch succeeded; otherwise a transient tokenURI failure on a known
+// contract falls through to OpenSea, which moves the token into OpenSea's release.
+//
+// Constraints: (nil, nil) means "no known publisher" and is safe to route to the
+// generic vendor fallback; a non-nil error means "unknown whether a publisher
+// exists" and callers must not route that case to the generic fallback.
+//
+// Vendor-only contracts (e.g. CryptoPunks) are resolved from the collection list
+// only. Resolve skips their on-chain metadata, so before this lookup existed they
+// never reached a deployer lookup; CryptoPunks' deployment predates the registry's
+// min block, so the search ends "not found", which getContractDeployer does not
+// serve from cache. A deployer lookup there would cost an archive binary search per
+// token and make OpenSea enrichment fail on its RPC errors, for no possible match.
+func (r *resolver) ResolvePublisher(ctx context.Context, tokenCID domain.TokenCID) (*Publisher, error) {
+	chainID, _, contractAddress, _ := tokenCID.Parse()
+	if r.registry != nil && r.isVendorOnly(chainID, contractAddress) {
+		return r.collectionPublisher(chainID, contractAddress), nil
+	}
+	return r.resolvePublisher(ctx, tokenCID)
+}
+
+// resolvePublisher looks a contract up in the registry's collection list, then by
+// deployer. It assumes the caller has already excluded vendor-only contracts (the
+// normalizers only run after Resolve's vendor-only guard).
+func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCID) (*Publisher, error) {
 	if r.registry == nil {
-		return nil
+		return nil, nil
 	}
 
 	chainID, _, contractAddress, _ := tokenCID.Parse()
 
 	// First, check if the contract is in the collection addresses
-	if publisher := r.registry.LookupPublisherByCollection(chainID, contractAddress); publisher != nil {
-		name := publisher.Name
-		url := publisher.URL
-		return &Publisher{
-			Name: &name,
-			URL:  &url,
-		}
+	if publisher := r.collectionPublisher(chainID, contractAddress); publisher != nil {
+		return publisher, nil
 	}
 
 	// Second, get the deployer and check if it's in the deployer addresses
 	deployer, err := r.getContractDeployer(ctx, chainID, contractAddress)
 	if err != nil {
-		logger.WarnCtx(ctx, "failed to get contract deployer",
-			zap.Error(err),
-			zap.String("chain", string(chainID)),
-			zap.String("contract", contractAddress))
-		return nil
+		return nil, fmt.Errorf("failed to get contract deployer for %s: %w", contractAddress, err)
 	}
 
 	if deployer == "" {
-		return nil
+		return nil, nil
 	}
 
-	// Check if deployer is in registry
 	if publisher := r.registry.LookupPublisherByDeployer(chainID, deployer); publisher != nil {
-		name := publisher.Name
-		url := publisher.URL
-		return &Publisher{
-			Name: &name,
-			URL:  &url,
-		}
+		return newPublisher(publisher.Name, publisher.URL), nil
 	}
 
+	return nil, nil
+}
+
+// collectionPublisher returns the publisher whose registry collection list contains
+// the contract, or nil. It is an in-memory lookup.
+func (r *resolver) collectionPublisher(chainID domain.Chain, contractAddress string) *Publisher {
+	if publisher := r.registry.LookupPublisherByCollection(chainID, contractAddress); publisher != nil {
+		return newPublisher(publisher.Name, publisher.URL)
+	}
 	return nil
+}
+
+// isVendorOnly reports whether an Ethereum contract skips on-chain metadata; it
+// mirrors the guard at the top of Resolve.
+func (r *resolver) isVendorOnly(chainID domain.Chain, contractAddress string) bool {
+	if chainID != domain.ChainEthereumMainnet && chainID != domain.ChainEthereumSepolia {
+		return false
+	}
+	return r.ethClient.IsVendorOnlyMetadata(contractAddress)
+}
+
+// newPublisher copies a registry entry's name and URL into a Publisher.
+func newPublisher(name registry.PublisherName, url string) *Publisher {
+	return &Publisher{Name: &name, URL: &url}
 }

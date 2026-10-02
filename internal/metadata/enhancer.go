@@ -74,6 +74,10 @@ func moderationStatusFromVendorSpam(spam bool) schema.ModerationStatus {
 	return schema.ModerationStatusNone
 }
 
+// ErrArtBlocksTokenMetadataMissing is returned by Enhance for an Art Blocks token
+// whose own metadata could not be fetched; enrichment is skipped, not downgraded.
+var ErrArtBlocksTokenMetadataMissing = errors.New("art blocks enrichment needs the token's own metadata, which is unavailable")
+
 // Enhancer defines the interface for enhancing metadata from vendors
 //
 //go:generate mockgen -source=enhancer.go -destination=../mocks/metadata_enhancer.go -package=mocks -mock_names=Enhancer=MockMetadataEnhancer
@@ -81,7 +85,12 @@ type Enhancer interface {
 	// Enhance enriches metadata from vendors and retires browser-gateway media.
 	// A failed retired-gateway replacement aborts enrichment before its upsert,
 	// preserving the entire existing enrichment record for a later retry.
-	Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *NormalizedMetadata) (*EnhancedMetadata, error)
+	//
+	// publisher selects the vendor and must come from the contract (see
+	// Resolver.ResolvePublisher), not from meta: meta is nil whenever the token's
+	// own metadata fetch failed, and routing on it would send known-publisher
+	// tokens to the generic OpenSea/objkt fallback.
+	Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *NormalizedMetadata, publisher *Publisher) (*EnhancedMetadata, error)
 
 	// VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
 	VendorJsonHash(metadata *EnhancedMetadata) ([]byte, error)
@@ -132,13 +141,14 @@ func (e *enhancer) VendorJsonHash(metadata *EnhancedMetadata) ([]byte, error) {
 // Enhance enriches metadata from vendors and retires browser-gateway media.
 // A failed retired-gateway replacement aborts enrichment before its upsert,
 // preserving the entire existing enrichment record for a later retry.
-func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *NormalizedMetadata) (*EnhancedMetadata, error) {
+func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *NormalizedMetadata, publisher *Publisher) (*EnhancedMetadata, error) {
 	chain, _, contractAddress, tokenNumber := tokenCID.Parse()
 
-	// Check publisher name and route to appropriate enhancer
+	// Route on the contract's publisher; see the Enhancer interface for why it is
+	// not read from meta.
 	var publisherName registry.PublisherName
-	if meta != nil && meta.Publisher != nil && meta.Publisher.Name != nil {
-		publisherName = registry.PublisherName(*meta.Publisher.Name)
+	if publisher != nil && publisher.Name != nil {
+		publisherName = *publisher.Name
 	}
 
 	var enhancedMetadata *EnhancedMetadata
@@ -147,6 +157,13 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 	case registry.PublisherNameArtBlocks:
 		// Art Blocks Hasura resolves projects by (chain_id, id); only EVM chains are supported here.
 		if chain.IsEVM() {
+			// The token's image and generator URL only exist in its own metadata, so
+			// without it an Art Blocks enrichment would overwrite the stored media URLs
+			// with empty ones. Fail instead: existing enrichment and release membership
+			// stay intact until a later run fetches the metadata.
+			if meta == nil {
+				return nil, ErrArtBlocksTokenMetadataMissing
+			}
 			enhancedMetadata, err = e.enhanceArtBlocks(ctx, chain, contractAddress, tokenNumber, meta.Raw)
 			if err != nil {
 				return nil, fmt.Errorf("failed to enhance ArtBlocks metadata: %w", err)
@@ -170,6 +187,18 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 			enhancedMetadata, err = e.enhanceFxhash(ctx, contractAddress, tokenNumber)
 			if err != nil {
 				return nil, fmt.Errorf("failed to enhance fxhash metadata: %w", err)
+			}
+		}
+
+	case registry.PublisherNameFoundation, registry.PublisherNameSuperRare:
+		// No dedicated client: OpenSea is these publishers' designated vendor whether or
+		// not the token's own metadata was fetched, so a failed fetch yields the same
+		// vendor and release as a successful one. Kept explicit (rather than reaching the
+		// generic branch below) so it is not mistaken for the publisher-less fallback.
+		if chain == domain.ChainEthereumMainnet {
+			enhancedMetadata, err = e.enhanceOpenSea(ctx, contractAddress, tokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("failed to enhance OpenSea metadata: %w", err)
 			}
 		}
 

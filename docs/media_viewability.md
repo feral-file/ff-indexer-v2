@@ -116,8 +116,9 @@ through metadata normalization and executor error wrapping. `IndexTokenMetadata`
 returns that error before enrichment, viewability updates, notifications, or child
 media jobs: missing normalized metadata after a failed replacement must not erase
 known-publisher context and let a generic vendor overwrite preserved enrichment.
-Vendor-only tokens and unrelated metadata-fetch failures still use the existing
-vendor enrichment path. Unsupported retired gateway addresses, including IPNS
+Vendor-only tokens and unrelated metadata-fetch failures still proceed to vendor
+enrichment, routed by the contract's publisher rather than the missing metadata
+(see "Enrichment vendor routing" in `architecture.md`). Unsupported retired gateway addresses, including IPNS
 paths/subdomains and unrecognized CID forms, return the same replacement error;
 they cannot be returned as a successfully resolved URL or persisted by a rebuild.
 Retirement follows the actual hostname even when a URL contains user information;
