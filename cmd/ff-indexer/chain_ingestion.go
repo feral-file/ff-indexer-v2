@@ -66,7 +66,7 @@ func runEthereumIngestion(
 		ChainID:            cfg.Ethereum.ChainID,
 		MaxCatchupBlocks:   cfg.Ethereum.MaxCatchupBlocks,
 		ConfirmationBlocks: cfg.Ethereum.ConfirmationBlocks,
-	}, ethereumClient)
+	}, ethereumClient, clockAdapter)
 	if err != nil {
 		return err
 	}
