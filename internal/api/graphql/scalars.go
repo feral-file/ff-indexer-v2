@@ -39,7 +39,7 @@ func (j *JSON) UnmarshalGQL(v interface{}) error {
 		// Marshal the parsed JSON back to bytes
 		b, err := json.Marshal(v)
 		if err != nil {
-			return fmt.Errorf("failed to marshal JSON: %w", err)
+			return apierrors.NewValidationError(fmt.Sprintf("failed to marshal JSON: %v", err))
 		}
 		*j = JSON(b)
 		return nil
@@ -47,7 +47,7 @@ func (j *JSON) UnmarshalGQL(v interface{}) error {
 		*j = nil
 		return nil
 	default:
-		return fmt.Errorf("cannot unmarshal %T to JSON", v)
+		return apierrors.NewValidationError(fmt.Sprintf("cannot unmarshal %T to JSON", v))
 	}
 }
 
