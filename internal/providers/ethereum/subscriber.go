@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"go.uber.org/zap"
@@ -20,7 +21,8 @@ const (
 	// headBufferSize bounds queued newHeads notifications while a log fetch is
 	// in flight. Heads are coalesced on read, so the buffer absorbs a burst, not
 	// an outage: go-ethereum queues up to 20k more behind it and then drops the
-	// subscription with an error, which restarts ingestion from the cursor.
+	// subscription with an error, which SubscribeEvents re-establishes (see
+	// resubscribe) before catching up from the last emitted block.
 	headBufferSize = 64
 
 	// catchupBatchBlocks bounds one eth_getLogs fetch while filling a gap.
@@ -49,8 +51,14 @@ var ErrCatchupTooLarge = errors.New("ethereum ingestion catch-up exceeds max_cat
 type Config struct {
 	WebSocketURL string       // WebSocket URL used for the newHeads subscription
 	ChainID      domain.Chain // e.g., "eip155:1" for Ethereum mainnet
-	// MaxCatchupBlocks bounds the block range fetched to reach the chain head
-	// (from the durable cursor after a restart or socket drop). 0 = unbounded.
+	// MaxCatchupBlocks bounds the block range fetched to reach the chain head:
+	// from the durable cursor after a restart, or from the subscriber's own
+	// position after a socket drop. The two agree at batch granularity — the
+	// position advances only once a batch's progress is persisted — while
+	// within a batch the cursor may run a few blocks ahead on event-bearing
+	// flushes, so a resume re-offers at most those blocks: the runner drops the
+	// ones below its cursor and re-enqueues the rest onto the same job unique
+	// keys, so the replay is idempotent. 0 = unbounded.
 	MaxCatchupBlocks uint64
 	// ConfirmationBlocks is how many blocks behind the newest head ingestion
 	// emits: a block is fetched only once head - ConfirmationBlocks reaches it.
@@ -62,6 +70,7 @@ type ethSubscriber struct {
 	client   EthereumClient
 	chainID  domain.Chain
 	cfg      Config
+	clock    adapter.Clock
 	progress blockchain.RangeProgressHandler
 }
 
@@ -72,12 +81,19 @@ func (s *ethSubscriber) SetProgressHandler(handler blockchain.RangeProgressHandl
 	s.progress = handler
 }
 
-// NewSubscriber creates a new Ethereum event subscriber.
-func NewSubscriber(cfg Config, ethereumClient EthereumClient) (blockchain.EventSource, error) {
+// NewSubscriber creates a new Ethereum event subscriber. The clock paces the
+// resubscribe backoff so tests can pin the schedule without sleeping; it is
+// first used on the first drop, so a missing one is rejected here rather than
+// hours into a run.
+func NewSubscriber(cfg Config, ethereumClient EthereumClient, clock adapter.Clock) (blockchain.EventSource, error) {
+	if clock == nil {
+		return nil, errors.New("ethereum subscriber: clock is required")
+	}
 	return &ethSubscriber{
 		client:  ethereumClient,
 		chainID: cfg.ChainID,
 		cfg:     cfg,
+		clock:   clock,
 	}, nil
 }
 
@@ -123,39 +139,93 @@ type streamState struct {
 // Parse failures for indexable logs stop the subscription so ingestion can
 // retry from the durable cursor. Intentionally ignored logs are returned as
 // (nil, nil) from ParseEventLog and skipped.
+//
+// Resubscribe: a newHeads subscription that dies on its own (peer reset,
+// provider close, go-ethereum's notification queue overflowing) is
+// re-established here instead of ending the stream. Reason: ingestion runs in
+// the unified binary, so returning the error exited the process and took the
+// API down for every restart — the 502 windows of issue #82; the websocket
+// reset is routine for a long-lived socket, and the rpc client reconnects on
+// the next call, so the subscribe just needs repeating. The position survives
+// the drop — catch-up resumes from the last emitted block, exactly what a
+// restart would read back from the cursor — but the retained heads do not
+// (see forgetHeads). Only the initial subscribe stays fatal, so a bad URL or
+// credential still fails fast at startup. The loop lives here rather than in
+// the ingestion runner because the subscriber owns the transport and the
+// position; a chain-agnostic restart in the runner would also cover Tezos
+// SignalR drops and is a separate change.
 func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler blockchain.EventHandler) error {
-	heads := make(chan *adapter.BlockHead, headBufferSize)
-	sub, err := s.client.SubscribeNewHead(ctx, heads)
+	hs, err := s.subscribeHeads(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to new heads: %w", err)
 	}
-	defer func() {
-		logger.InfoCtx(ctx, "Unsubscribing from ethereum new heads")
-		sub.Unsubscribe()
-		logger.InfoCtx(ctx, "Unsubscribed from ethereum new heads")
-	}()
 
 	state := streamState{next: fromBlock, lowerBound: fromBlock, heads: map[uint64]*adapter.BlockHead{}}
+	retry := resubscribeBackoff{delay: resubscribeMinDelay}
+	for {
+		before := state.next
+		err := s.stream(ctx, hs, &state, handler)
+		if !errors.Is(err, errSubscriptionDropped) {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err() // shutdown raced the drop: not a recovery, don't log one
+		}
+		if state.next > before {
+			// The dead subscription emitted at least one range: the connection
+			// was healthy, so the drop is a one-off and the schedule restarts.
+			// A delivered head alone is not proof — a provider can replay the
+			// stale tip and drop — so a subscription that emits nothing before
+			// dying keeps backing off.
+			retry.reset()
+		}
+		state.forgetHeads()
+		logDrop(ctx, err, state.next, &retry)
+		if hs, err = s.resubscribe(ctx, &retry); err != nil {
+			return err
+		}
+	}
+}
+
+// stream drives ingestion from one subscription until it ends: with ctx.Err()
+// on shutdown, errSubscriptionDropped when the subscription fails on its own,
+// or the ingestion error otherwise.
+//
+// Reason: one subscription per call keeps the recovery decision — and the
+// retry state — in SubscribeEvents, which reads the position before and after
+// to judge whether the subscription was healthy. Trade-offs: heads a dying
+// subscription already delivered are still processed if the select picks them
+// before its error; that is correct (they are real heads, and the rpc client
+// reconnects for the fetch), so the position may advance between the drop and
+// its detection. Constraints: an ingestion error must go through ingestFailure
+// before it is returned, or a socket death seen first by an in-flight call
+// would end the stream as fatal.
+func (s *ethSubscriber) stream(ctx context.Context, hs headStream, state *streamState, handler blockchain.EventHandler) (err error) {
+	defer func() {
+		// The subscription is still live unless it ended on its own.
+		hs.close(ctx, !errors.Is(err, errSubscriptionDropped) && !errors.Is(err, errClientClosed))
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case err := <-sub.Err():
-			return fmt.Errorf("new heads subscription error: %w", err)
-		case head := <-heads:
-			from, to, ok, err := s.planRange(ctx, &state, append([]*adapter.BlockHead{head}, drainHeads(heads)...))
-			if err != nil {
-				return err
+		case subErr, ok := <-hs.sub.Err():
+			return subscriptionEnded(subErr, ok)
+		case head := <-hs.heads:
+			if err := s.ingestHead(ctx, hs, state, head, handler); err != nil {
+				return s.ingestFailure(ctx, hs, err)
 			}
-			if !ok {
-				continue
-			}
-			if err := s.ingestRange(ctx, from, to, handler); err != nil {
-				return err
-			}
-			state.advance(to)
 		}
 	}
+}
+
+// ingestHead plans and emits the range the received heads confirm, if any.
+func (s *ethSubscriber) ingestHead(ctx context.Context, hs headStream, state *streamState, head *adapter.BlockHead, handler blockchain.EventHandler) error {
+	from, to, ok, err := s.planRange(ctx, state, append([]*adapter.BlockHead{head}, drainHeads(hs.heads)...))
+	if err != nil || !ok {
+		return err
+	}
+	return s.ingestRange(ctx, state, from, to, handler)
 }
 
 // drainHeads returns every head already queued behind the one just read.
@@ -179,11 +249,16 @@ func drainHeads(heads <-chan *adapter.BlockHead) []*adapter.BlockHead {
 //   - at or above next: recorded; a replacement (different hash at the same
 //     height) simply overwrites — that is a shallow reorg absorbed by the
 //     confirmation lag, logged at info;
-//   - below next: an emitted height was replaced, i.e. the reorg is deeper than
-//     ConfirmationBlocks. It is logged as an error naming the affected heights
-//     and NOT re-emitted: the runner orders by number and never rewinds, so a
-//     replay would flush the open (orphaned) block, advance the cursor past the
-//     replacement, and drop it — worse than an explicit, operator-visible gap.
+//   - below next with a retained hash that differs: an emitted height was
+//     replaced, i.e. the reorg is deeper than ConfirmationBlocks. It is logged
+//     as an error naming the affected heights and NOT re-emitted: the runner
+//     orders by number and never rewinds, so a replay would flush the open
+//     (orphaned) block, advance the cursor past the replacement, and drop it —
+//     worse than an explicit, operator-visible gap;
+//   - below next with no retained hash (pruned, or forgotten across a
+//     (re)subscribe or restart): no evidence either way — a lagging backend
+//     replaying an old height looks identical to a reorg — so it is logged at
+//     info and ignored, never reported as a reorg.
 //
 // A head whose parent disagrees with the retained chain is reconciled against
 // canonical heads by number (see reconcile), so a deep reorg announced only by
@@ -211,9 +286,19 @@ func (s *ethSubscriber) planRange(ctx context.Context, st *streamState, batch []
 	}
 	// The emitted boundary must carry a canonical hash for later reconciliation
 	// to compare against. Received heads cover it in steady state; after a
-	// (re)subscribe the first head can sit above it, so fetch it once.
+	// (re)subscribe the first head can sit above it, so fetch it once. A
+	// NotFound here means a lagging backend (load-balanced providers hand out
+	// nodes a few blocks apart) has not got the block yet, not that it does not
+	// exist — the head announcing it was just received. It is retried on the
+	// next head rather than failed, since this fetch now runs after every
+	// socket drop, not only at startup.
 	if _, ok := st.heads[to]; !ok {
 		boundary, err := s.client.HeadByNumber(ctx, to)
+		if errors.Is(err, ethereum.NotFound) {
+			logger.WarnCtx(ctx, "Emitted boundary head not yet available from the node; waiting for the next head",
+				zap.Uint64("height", to), zap.Error(err))
+			return 0, 0, false, nil
+		}
 		if err != nil {
 			return 0, 0, false, fmt.Errorf("fetch emitted boundary head %d: %w", to, err)
 		}
@@ -235,6 +320,17 @@ func (s *ethSubscriber) record(ctx context.Context, st *streamState, h *adapter.
 	if n < st.next {
 		if seen && prev.Hash == h.Hash {
 			return nil // duplicate notification of an already-emitted head
+		}
+		if !seen {
+			// No retained hash at this height (pruned, or forgotten across a
+			// (re)subscribe or restart), so there is no evidence either way: a
+			// lagging backend replaying an old height looks identical to a reorg
+			// spanning the gap, which is documented as undetectable (the cursor
+			// stores no hash). Neither warrants an ERROR claiming an emitted
+			// block was replaced.
+			logger.InfoCtx(ctx, "Ignoring ethereum head below position with no retained hash to compare",
+				zap.Uint64("height", n), zap.Uint64("next", st.next), zap.String("hash", h.Hash.Hex()))
+			return nil
 		}
 		st.reportDeepReorg(ctx, n, h.Hash)
 		return nil
@@ -321,6 +417,14 @@ func (s *ethSubscriber) reconcile(ctx context.Context, st *streamState, h *adapt
 			return false, replaced, nil // nothing retained to reconcile against
 		}
 		canonical, err := s.client.HeadByNumber(ctx, k)
+		if errors.Is(err, ethereum.NotFound) {
+			// A lagging backend has not got this block yet (as with planRange's
+			// boundary fetch). Treat the incoming head as stale for now — not
+			// retained, tip unchanged — and let the next head retry the walk.
+			logger.WarnCtx(ctx, "Reconciliation head not yet available from the node; deferring to the next head",
+				zap.Uint64("height", k), zap.Error(err))
+			return true, replaced, nil
+		}
 		if err != nil {
 			return false, replaced, fmt.Errorf("reconcile reorg at height %d: %w", k, err)
 		}
@@ -367,11 +471,32 @@ func (st *streamState) advance(to uint64) {
 	}
 }
 
+// forgetHeads drops the retained chain after a subscription drop, so the new
+// subscription starts as a restart would: planRange fetches the emitted
+// boundary once and reconciliation resumes from there.
+//
+// Reason: keeping the heads would make reconcile's bridging walk fetch the
+// whole outage gap head by head (one eth_getBlockByNumber per block, before
+// the catch-up bound is even checked), and one transient failure in that walk
+// is a fatal error — the restart this change exists to avoid. Trade-off: a
+// reorg that spans the drop is not detected, the same gap a process restart
+// already has (the cursor stores no hash).
+func (st *streamState) forgetHeads() {
+	st.heads = map[uint64]*adapter.BlockHead{}
+	st.tip = 0
+}
+
 // ingestRange fetches and emits every indexable log in [from, to] in bounded
 // batches so a long catch-up streams through memory instead of materializing
 // the whole range (see catchupBatchBlocks). The catch-up bound was already
-// enforced on the whole gap by planRange.
-func (s *ethSubscriber) ingestRange(ctx context.Context, from, to uint64, handler blockchain.EventHandler) error {
+// enforced on the whole gap by planRange. The position advances batch by
+// batch, once the batch's progress is persisted, so a subscription drop
+// mid-catch-up resumes at the failed batch — at most catchupBatchBlocks-1
+// blocks behind the cursor, which event-bearing flushes may move within a
+// batch; the runner drops re-offered blocks below its cursor and re-enqueues
+// the rest onto the same job unique keys — and never from a position the
+// cursor has long passed.
+func (s *ethSubscriber) ingestRange(ctx context.Context, st *streamState, from, to uint64, handler blockchain.EventHandler) error {
 	span := to - from + 1
 	if span > 1 {
 		logger.InfoCtx(ctx, "Ethereum ingestion catching up to head",
@@ -396,13 +521,16 @@ func (s *ethSubscriber) ingestRange(ctx context.Context, from, to uint64, handle
 			}
 		}
 		// Report every batch, not the range: the runner persists the cursor
-		// before returning, so a later batch failing (and the restart it
-		// causes) never re-scans this one or trips the catch-up bound on it.
+		// before returning, so a later batch failing (and the restart or
+		// resubscribe it causes) never re-scans this one or trips the catch-up
+		// bound on it. The position moves only once the report has returned,
+		// so it never runs ahead of what is durable.
 		if s.progress != nil {
 			if err := s.progress(batchTo); err != nil {
 				return fmt.Errorf("report scanned range through %d: %w", batchTo, err)
 			}
 		}
+		st.advance(batchTo)
 		batches++
 		if batches%catchupLogEvery == 0 {
 			logger.InfoCtx(ctx, "Ethereum ingestion catch-up progress",

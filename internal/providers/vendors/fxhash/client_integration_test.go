@@ -22,7 +22,15 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 )
 
-func newIntegrationClient() fxhash.Client {
+// newIntegrationClient returns a client for the live fxhash API — or skips the
+// test: fxhash has shut down (as of 2026-10-14 its domains no longer resolve in
+// DNS), so every live call fails after retries and the package used to hit the
+// 10-minute go test timeout, failing CI for unrelated changes. The tests are
+// kept, not deleted, so they can be re-enabled by removing the skip if the API
+// ever returns.
+func newIntegrationClient(t *testing.T) fxhash.Client {
+	t.Helper()
+	t.Skip("fxhash API is shut down (api.v2.fxhash.xyz no longer resolves); live integration tests disabled")
 	return fxhash.NewClient(
 		adapter.NewHTTPClient(30*time.Second),
 		nil, // nil limiter passes through immediately
@@ -34,7 +42,7 @@ func newIntegrationClient() fxhash.Client {
 // TestGetGentk_Integration_KnownGentk fetches a well-known fxhash generative token
 // (Anticyclone #224128 on KT1U6EH...) and validates all release-relevant fields.
 func TestGetGentk_Integration_KnownGentk(t *testing.T) {
-	client := newIntegrationClient()
+	client := newIntegrationClient(t)
 	ctx := context.Background()
 
 	// Anticyclone is project 9997, minted on KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi.
@@ -78,7 +86,7 @@ func TestGetGentk_Integration_KnownGentk(t *testing.T) {
 // TestGetGentk_Integration_KnownGentk_Genesis fetches a gentk from the Genesis contract
 // (KT1KEa8...) to verify the new registry entry is reachable through the same API path.
 func TestGetGentk_Integration_KnownGentk_Genesis(t *testing.T) {
-	client := newIntegrationClient()
+	client := newIntegrationClient(t)
 	ctx := context.Background()
 
 	// Pick a low token_id from the Genesis contract. Token 1 may or may not be indexed.
@@ -103,7 +111,7 @@ func TestGetGentk_Integration_KnownGentk_Genesis(t *testing.T) {
 // TestGetGentk_Integration_NonExistentToken verifies that the client returns (nil, nil)
 // for a valid contract/tokenID pair that is not indexed by fxhash.
 func TestGetGentk_Integration_NonExistentToken(t *testing.T) {
-	client := newIntegrationClient()
+	client := newIntegrationClient(t)
 	ctx := context.Background()
 
 	// Use a clearly non-fxhash contract so the API will return null.
@@ -121,7 +129,7 @@ func TestGetGentk_Integration_NonExistentToken(t *testing.T) {
 // TestGetGentk_Integration_ContextCancellation verifies that a canceled context
 // propagates as an error rather than hanging.
 func TestGetGentk_Integration_ContextCancellation(t *testing.T) {
-	client := newIntegrationClient()
+	client := newIntegrationClient(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
@@ -136,7 +144,7 @@ func TestGetGentk_Integration_ContextCancellation(t *testing.T) {
 // TestGetGentk_Integration_MultipleTokens exercises the client against several
 // well-known fxhash gentks and logs their release metadata.
 func TestGetGentk_Integration_MultipleTokens(t *testing.T) {
-	client := newIntegrationClient()
+	client := newIntegrationClient(t)
 	ctx := context.Background()
 
 	cases := []struct {
@@ -184,7 +192,7 @@ func TestGetGentk_Integration_MultipleTokens(t *testing.T) {
 // live fxhash v2 GraphQL API. Note: project display names (e.g. "Anticyclone") are not
 // always equal to the URL slug; industrial-park is the canonical slug for GT 9997.
 func TestResolveSlug_Integration(t *testing.T) {
-	client := newIntegrationClient()
+	client := newIntegrationClient(t)
 	ctx := context.Background()
 
 	cases := []struct {
@@ -213,7 +221,7 @@ func TestResolveSlug_Integration(t *testing.T) {
 
 // TestResolveSlug_Integration_NotFound verifies unknown slugs return an error.
 func TestResolveSlug_Integration_NotFound(t *testing.T) {
-	client := newIntegrationClient()
+	client := newIntegrationClient(t)
 
 	_, err := client.ResolveSlug(context.Background(), "no-such-fxhash-slug-xyz")
 	require.Error(t, err)
@@ -223,7 +231,7 @@ func TestResolveSlug_Integration_NotFound(t *testing.T) {
 // TestGetGentksByIteration_Integration fetches iteration→token mappings for a known GT.
 // Required by IndexRelease to derive on-chain CIDs for fxhash releases.
 func TestGetGentksByIteration_Integration(t *testing.T) {
-	client := newIntegrationClient()
+	client := newIntegrationClient(t)
 	ctx := context.Background()
 
 	// Resolve slug the same way IndexRelease does when triggered by vendor_release_slug.
@@ -253,7 +261,7 @@ func TestGetGentksByIteration_Integration(t *testing.T) {
 // TestGetGentk_Integration_SlugField verifies generative_token.slug is returned by the
 // live API (used during enrichment to populate vendor_release_slug).
 func TestGetGentk_Integration_SlugField(t *testing.T) {
-	client := newIntegrationClient()
+	client := newIntegrationClient(t)
 	ctx := context.Background()
 
 	// Resolve a known GT, then fetch a gentk from the iteration range (token IDs are not

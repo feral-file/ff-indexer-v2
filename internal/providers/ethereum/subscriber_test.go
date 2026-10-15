@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/ethereum/go-ethereum"
@@ -99,9 +100,12 @@ func headFixture(t *testing.T, ctrl *gomock.Controller, initial ...*adapter.Bloc
 	return mockClient, push, subErrCh
 }
 
+// newTestSubscriber builds a subscriber with the given catch-up bound, no
+// confirmation lag, and a clock whose waits fire at once (see fastClock).
 func newTestSubscriber(t *testing.T, client ethprovider.EthereumClient, maxCatchup uint64) blockchain.EventSource {
 	t.Helper()
-	sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: maxCatchup}, client)
+	clock, _ := fastClock(gomock.NewController(t))
+	sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: maxCatchup}, client, clock)
 	require.NoError(t, err)
 	return sub
 }
@@ -261,7 +265,8 @@ func TestSubscribeEvents_CoalescesQueuedHeads(t *testing.T) {
 // newLaggedSubscriber is newTestSubscriber with a confirmation lag.
 func newLaggedSubscriber(t *testing.T, client ethprovider.EthereumClient, confirmations uint64) blockchain.EventSource {
 	t.Helper()
-	sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, ConfirmationBlocks: confirmations}, client)
+	clock, _ := fastClock(gomock.NewController(t))
+	sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, ConfirmationBlocks: confirmations}, client, clock)
 	require.NoError(t, err)
 	return sub
 }
@@ -758,7 +763,8 @@ func TestSubscribeEvents_CatchupBoundCoversPendingWindow(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		chain := &headChain{}
 		mockClient, _, _ := headFixture(t, ctrl, chain.next(111))
-		sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: 10, ConfirmationBlocks: 2}, mockClient)
+		clock, _ := fastClock(ctrl)
+		sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: 10, ConfirmationBlocks: 2}, mockClient, clock)
 		require.NoError(t, err)
 
 		err = sub.SubscribeEvents(context.Background(), 100, func(*domain.BlockchainEvent) error { return nil })
@@ -771,7 +777,8 @@ func TestSubscribeEvents_CatchupBoundCoversPendingWindow(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		chain := &headChain{}
 		mockClient, _, _ := headFixture(t, ctrl, chain.next(109))
-		sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: 10, ConfirmationBlocks: 2}, mockClient)
+		clock, _ := fastClock(ctrl)
+		sub, err := ethprovider.NewSubscriber(ethprovider.Config{ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: 10, ConfirmationBlocks: 2}, mockClient, clock)
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -832,21 +839,6 @@ func TestSubscribeEvents_SubscribeErrorFails(t *testing.T) {
 
 	err := subscriber.SubscribeEvents(context.Background(), 100, func(*domain.BlockchainEvent) error { return nil })
 	require.ErrorIs(t, err, subErr)
-}
-
-func TestSubscribeEvents_SubscriptionErrorFails(t *testing.T) {
-	t.Parallel()
-
-	ctrl := gomock.NewController(t)
-	mockClient, _, subErrCh := headFixture(t, ctrl)
-	subscriber := newTestSubscriber(t, mockClient, 0)
-
-	transportErr := errors.New("websocket closed 1006")
-	subErrCh <- transportErr
-
-	err := subscriber.SubscribeEvents(context.Background(), 100, func(*domain.BlockchainEvent) error { return nil })
-	require.ErrorIs(t, err, transportErr)
-	require.Contains(t, err.Error(), "new heads subscription error")
 }
 
 func TestSubscribeEvents_ParseErrorFails(t *testing.T) {
@@ -932,12 +924,16 @@ func TestSubscribeEvents_SkipsNilParsedEvent(t *testing.T) {
 	skipCase(t, nil, nil)
 }
 
+// mockSubscription mirrors go-ethereum's ClientSubscription contract: Err()
+// delivers at most one error and Unsubscribe closes the channel. Unsubscribe
+// is idempotent so a test may close the channel itself to simulate that.
 type mockSubscription struct {
 	errCh chan error
+	once  sync.Once
 }
 
 func (m *mockSubscription) Unsubscribe() {
-	close(m.errCh)
+	m.once.Do(func() { close(m.errCh) })
 }
 
 func (m *mockSubscription) Err() <-chan error {

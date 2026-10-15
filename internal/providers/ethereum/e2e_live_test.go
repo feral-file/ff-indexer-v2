@@ -134,7 +134,7 @@ func TestE2E_LiveSubscriberOrderedStream(t *testing.T) {
 	f := newLiveFixture(t)
 	sub, err := ethprovider.NewSubscriber(ethprovider.Config{
 		ChainID: domain.ChainEthereumMainnet, MaxCatchupBlocks: 100, ConfirmationBlocks: 1,
-	}, f.client)
+	}, f.client, adapter.NewClock())
 	require.NoError(t, err)
 
 	fromBlock := f.head - 3
