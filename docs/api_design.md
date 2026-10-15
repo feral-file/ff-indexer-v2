@@ -52,6 +52,7 @@ Rules:
 
 - Prefer **stable `code` values** and actionable **`message`** text; put specifics in **`details`** when it helps operators without breaking clients that key off `code`.
 - Document **representative examples** in OpenAPI for non-obvious validation (as with webhook and metadata trigger endpoints).
+- **GraphQL** carries the same shape in each error's `extensions` (`code`, `message`, optional `details`). A query that fails to parse or validate against the schema responds **`422`** with `code: validation_failed` and gqlparser's message (e.g. `Cannot query field "token_cid" on type "TokenList".`). Before issue #82 these were masked as `internal_error` / `Internal server error`, which made a malformed query look like a backend failure. Codes set by gqlgen handler extensions pass through verbatim (APQ's `PERSISTED_QUERY_NOT_FOUND`), since clients act on them. Resolver failures without an `APIError` stay masked as `internal_error` and are logged server-side.
 
 ## Authentication
 
