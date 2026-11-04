@@ -364,7 +364,7 @@ Materialized view tracking the most recent provenance event per token-owner pair
 
 ### releases
 
-Cross-vendor release abstraction that gives Feral File series, Art Blocks projects, fxhash generative tokens, objkt custom collections, and OpenSea token collections a stable internal id with mint-ordered members. Added in migration 018; `vendor_release_slug` column added in migration 019.
+Cross-vendor release abstraction that gives Feral File series, Art Blocks projects, fxhash generative tokens, objkt custom collections, and OpenSea token collections a stable internal id with mint-ordered members. Tokens on a shared minting contract (the publisher registry's `shared_contracts`) get no OpenSea or objkt release, because that vendor's collection is the whole platform rather than a series (see "Enrichment vendor routing" in `architecture.md`). Added in migration 018; `vendor_release_slug` column added in migration 019.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -817,6 +817,7 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 - `026.sql` - Adds the unique index `idx_address_indexing_jobs_job_id` on `address_indexing_jobs(job_id)` after deduplicating historical per-retry rows (newest row per `job_id` wins). One tracking row per queue job: closes the trigger-vs-worker create race that application-level checks cannot, since the partial active indexes only protect active rows. Run before deploying application code (standard ordering).
 - `029.sql` - Adds `address_scan_logs.block_timestamp` (BIGINT NOT NULL DEFAULT 0): the Unix block time carried on warehouse-served owner-scan logs (ff-indexer-v2 #144), so the replay's event parsing no longer pays a vendor `eth_getBlockByNumber` per distinct block for windows the log warehouse served. Vendor-served windows stage 0 and keep the block-provider fallback. Standard ordering: apply before deploying the image.
 - `030_drop_unused_indexes.sql` - Drops 35 indexes (~8.5 GB) that were unused on two axes: `pg_stat_user_indexes.idx_scan = 0` over the database's whole life (stats never reset) **and** no query path in `internal/{store,api,workflows,media,metadata}`. Includes two identical duplicate `GIN(raw)` indexes on `provenance_events` and the speculative JSONB GINs on `token_metadata`/`enrichment_sources`/`media_assets`. The matching `CREATE INDEX` statements are removed from `init_pg_db.sql`. **Must run with autocommit (outside a transaction): `DROP INDEX CONCURRENTLY` cannot run in a BEGIN/COMMIT block** (same as `017_dedup.sql`). Re-runnable (`IF EXISTS`) and reversible.
+- `033_shared_contract_releases.sql` - Data-only cleanup (ff-indexer-v2 #176): deletes `release_members` rows whose token is on a shared minting contract (SuperRare, Foundation, Rarible, Zora, OpenSea Shared Storefront, hic et nunc OBJKT) and whose release came from a vendor other than `artblocks`, `fxhash` or `feralfile`, then deletes the releases left without members. **Code first:** run after the application version that drops these releases is deployed and ff-deploy's registry copy carries `shared_contracts` (see DEVELOPMENT.md). Transactional, idempotent, not reversible in SQL.
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data

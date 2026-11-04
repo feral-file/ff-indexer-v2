@@ -143,7 +143,7 @@ func registerWorkerCore(
 	urlChecker := uri.NewURLChecker(httpClient, ioAdapter, uriConfig)
 	dataURIChecker := uri.NewDataURIChecker()
 
-	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, fxhashClient, objktClient, openseaClient, jsonAdapter, jcsAdapter)
+	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, fxhashClient, objktClient, openseaClient, jsonAdapter, jcsAdapter, publisherRegistry)
 	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, jcsAdapter, base64Adapter, dataStore, publisherRegistry)
 
 	if publisherRegistry != nil {

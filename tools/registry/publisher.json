@@ -3,6 +3,20 @@
   "min_blocks": {
     "eip155:1": 11338784
   },
+  "shared_contracts": {
+    "eip155:1": [
+      { "name": "SuperRare (SUPR)", "address": "0xb932a70a57673d89f4acffbe830e8ed7f75fb9e0" },
+      { "name": "SupeRare v1 (SUPR)", "address": "0x41A322b28D0fF354040e2CbC676F0320d8c8850d" },
+      { "name": "Foundation (FND)", "address": "0x3B3ee1931Dc30C1957379FAc9aba94D1C48a5405" },
+      { "name": "OpenSea Shared Storefront (OPENSTORE)", "address": "0x495f947276749Ce646f68AC8c248420045cb7b5e" },
+      { "name": "Rarible ERC-721 (RARI)", "address": "0x60F80121C31A0d46B5279700f9DF786054aa5eE5" },
+      { "name": "Rarible ERC-1155 (RARI)", "address": "0xd07dc4262BCDbf85190C01c996b4C06a461d2430" },
+      { "name": "Zora (ZORA)", "address": "0xabEFBc9fD2F806065b4f3C237d4b59D9A97Bcac7" }
+    ],
+    "tezos:mainnet": [
+      { "name": "hic et nunc OBJKT", "address": "KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton" }
+    ]
+  },
   "publishers": [
     {
       "name": "Feral File",

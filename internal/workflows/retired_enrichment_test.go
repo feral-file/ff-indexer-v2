@@ -40,7 +40,7 @@ func TestEnhanceTokenMetadata_RetiredGatewayPreservesDisplay(t *testing.T) {
 		m.httpClient, resolver,
 		mocks.NewMockArtBlocksClient(m.ctrl), mocks.NewMockFeralFileClient(m.ctrl),
 		mocks.NewMockFxhashClient(m.ctrl), vendor, mocks.NewMockOpenSeaClient(m.ctrl),
-		m.json, mocks.NewMockJCS(m.ctrl),
+		m.json, mocks.NewMockJCS(m.ctrl), nil,
 	)
 	m.metadataResolver.EXPECT().ResolvePublisher(ctx, cid).Return(nil, nil)
 	m.metadataEnhancer.EXPECT().Enhance(ctx, cid, (*metadata.NormalizedMetadata)(nil), (*metadata.Publisher)(nil)).

@@ -39,8 +39,15 @@ type testEnhancerMocks struct {
 	enhancer        metadata.Enhancer
 }
 
-// setupTestEnhancer creates all the mocks and enhancer for testing
+// setupTestEnhancer creates all the mocks and an enhancer with no publisher registry,
+// so no contract is a shared minting contract.
 func setupTestEnhancer(t *testing.T) *testEnhancerMocks {
+	return setupTestEnhancerWithRegistry(t, nil)
+}
+
+// setupTestEnhancerWithRegistry creates all the mocks and an enhancer that reads shared
+// minting contracts from publisherRegistry.
+func setupTestEnhancerWithRegistry(t *testing.T, publisherRegistry registry.PublisherRegistry) *testEnhancerMocks {
 	ctrl := gomock.NewController(t)
 
 	tm := &testEnhancerMocks{
@@ -66,6 +73,7 @@ func setupTestEnhancer(t *testing.T) *testEnhancerMocks {
 		tm.openseaClient,
 		tm.json,
 		tm.jcs,
+		publisherRegistry,
 	)
 
 	return tm

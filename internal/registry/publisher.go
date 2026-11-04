@@ -20,6 +20,11 @@ type PublisherRegistry interface {
 
 	// GetMinBlock returns the minimum block number used to search for deployer addresses for a given chain, if configured
 	GetMinBlock(chainID domain.Chain) (uint64, bool)
+
+	// IsSharedContract reports whether the registry lists the contract as one that many
+	// artists mint on (a platform's shared minting contract). Such a contract is never a
+	// release by itself; see SharedContract.
+	IsSharedContract(chainID domain.Chain, contractAddress string) bool
 }
 
 // PublisherName represents a publisher name constant
@@ -51,11 +56,29 @@ type PublisherInfo struct {
 	Chains map[string]PublisherChainConfig `json:"chains"` // key is chain ID like "eip155:1" or "tez:mainnet"
 }
 
+// SharedContract is a contract that many artists mint on: a platform's shared minting
+// contract (SuperRare, Foundation, Rarible, Zora, the OpenSea Shared Storefront, hic et
+// nunc's OBJKT). Such a contract is never a series by itself. A collection-level vendor
+// (OpenSea, objkt) files every token on it under one collection, so a release taken from
+// that vendor would group unrelated works by different artists as one series; the
+// enhancer drops it (ff-indexer-v2 #176). A release that names a real series inside the
+// contract (an Art Blocks project, an fxhash generative token) still stands.
+//
+// The list is independent of the publisher entries on purpose: marking a contract shared
+// must not attribute a publisher to its tokens, which the API exposes.
+type SharedContract struct {
+	// Name is a human label for maintainers (JSON has no comments); lookups ignore it.
+	Name    string `json:"name"`
+	Address string `json:"address"`
+}
+
 // PublisherRegistryData represents the structure of the registry JSON file
 type PublisherRegistryData struct {
-	Version    int               `json:"version"`
-	MinBlocks  map[string]uint64 `json:"min_blocks,omitempty"` // Optional: earliest block to search per chain (e.g., "eip155:1": 13492497)
-	Publishers []PublisherInfo   `json:"publishers"`
+	Version   int               `json:"version"`
+	MinBlocks map[string]uint64 `json:"min_blocks,omitempty"` // Optional: earliest block to search per chain (e.g., "eip155:1": 13492497)
+	// SharedContracts optionally lists shared minting contracts per chain ID (e.g. "eip155:1").
+	SharedContracts map[string][]SharedContract `json:"shared_contracts,omitempty"`
+	Publishers      []PublisherInfo             `json:"publishers"`
 }
 
 // publisherRegistry is the internal implementation of PublisherRegistry interface
@@ -65,6 +88,8 @@ type publisherRegistry struct {
 	collectionToPublisher map[string]*PublisherInfo
 	// chain:contract -> deployer lookup (for contracts deployed by known deployers)
 	deployerToPublisher map[string]*PublisherInfo
+	// chain:contract set of shared minting contracts
+	sharedContracts map[string]struct{}
 }
 
 // PublisherRegistryLoader defines the interface for loading publisher registries from files
@@ -108,6 +133,7 @@ func (l *publisherRegistryLoader) Load(filePath string) (PublisherRegistry, erro
 		data:                  &registryData,
 		collectionToPublisher: make(map[string]*PublisherInfo),
 		deployerToPublisher:   make(map[string]*PublisherInfo),
+		sharedContracts:       sharedContractSet(registryData.SharedContracts),
 	}
 
 	for i := range registryData.Publishers {
@@ -135,6 +161,18 @@ func (l *publisherRegistryLoader) Load(filePath string) (PublisherRegistry, erro
 	return registry, nil
 }
 
+// sharedContractSet indexes the registry's shared contracts by the same lowercased
+// "chain:address" key the publisher lookups use.
+func sharedContractSet(shared map[string][]SharedContract) map[string]struct{} {
+	set := make(map[string]struct{})
+	for chainID, contracts := range shared {
+		for _, contract := range contracts {
+			set[strings.ToLower(chainID)+":"+strings.ToLower(contract.Address)] = struct{}{}
+		}
+	}
+	return set
+}
+
 // LookupPublisherByCollection looks up a publisher by collection address
 func (r *publisherRegistry) LookupPublisherByCollection(chainID domain.Chain, contractAddress string) *PublisherInfo {
 	if r == nil {
@@ -160,4 +198,14 @@ func (r *publisherRegistry) GetMinBlock(chainID domain.Chain) (uint64, bool) {
 	}
 	minBlock, ok := r.data.MinBlocks[string(chainID)]
 	return minBlock, ok
+}
+
+// IsSharedContract reports whether the contract is a listed shared minting contract.
+// Lookup is case-insensitive like the publisher lookups; a nil registry lists none.
+func (r *publisherRegistry) IsSharedContract(chainID domain.Chain, contractAddress string) bool {
+	if r == nil {
+		return false
+	}
+	_, ok := r.sharedContracts[strings.ToLower(string(chainID))+":"+strings.ToLower(contractAddress)]
+	return ok
 }

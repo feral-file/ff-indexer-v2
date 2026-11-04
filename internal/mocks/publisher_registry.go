@@ -57,6 +57,20 @@ func (mr *MockPublisherRegistryMockRecorder) GetMinBlock(chainID any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMinBlock", reflect.TypeOf((*MockPublisherRegistry)(nil).GetMinBlock), chainID)
 }
 
+// IsSharedContract mocks base method.
+func (m *MockPublisherRegistry) IsSharedContract(chainID domain.Chain, contractAddress string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsSharedContract", chainID, contractAddress)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsSharedContract indicates an expected call of IsSharedContract.
+func (mr *MockPublisherRegistryMockRecorder) IsSharedContract(chainID, contractAddress any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSharedContract", reflect.TypeOf((*MockPublisherRegistry)(nil).IsSharedContract), chainID, contractAddress)
+}
+
 // LookupPublisherByCollection mocks base method.
 func (m *MockPublisherRegistry) LookupPublisherByCollection(chainID domain.Chain, contractAddress string) *registry.PublisherInfo {
 	m.ctrl.T.Helper()
