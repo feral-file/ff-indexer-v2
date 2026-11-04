@@ -23,12 +23,15 @@ const migration033Path = "../../db/migrations/033_shared_contract_releases.sql"
 // migration033Fixture seeds one membership per case the cleanup must tell apart. Token
 // and release ids are fixed so assertions can name them.
 //
-//	T1, T2  SuperRare shared contract (checksummed), OpenSea release R1 "superrare"  -> removed, R1 deleted
+//	T1, T2  SuperRare shared contract (checksummed), OpenSea release R1 "superrare"  -> removed
 //	T3      BAYC, OpenSea release R2                                                -> kept
-//	T4      hic et nunc OBJKT, objkt release R3                                     -> removed, R3 deleted
+//	T4      hic et nunc OBJKT, objkt release R3                                     -> removed
 //	T5      Foundation shared contract, Art Blocks release R4 (a series vendor)     -> kept
 //	T6      SuperRare shared contract stored lowercase, OpenSea release R5          -> removed
-//	T7      a non-shared contract in the same OpenSea release R5                    -> kept, so R5 stays
+//	T7      a non-shared contract in the same OpenSea release R5                    -> kept
+//
+// Every releases row stays, including R1 and R3 with no member left: deleting them would
+// race a worker's release-then-member write (see the file header).
 const migration033Fixture = `
 INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number) VALUES
   (1, 'eip155:1:erc721:0xb932a70A57673d89f4acfFBE830E8ed7f75Fb9e0:1', 'eip155:1', 'erc721', '0xb932a70A57673d89f4acfFBE830E8ed7f75Fb9e0', '1'),
@@ -72,11 +75,11 @@ func TestMigration033SharedContractReleases(t *testing.T) {
 	output := runPSQLFile(t, conn, migration033Path)
 	assert.Regexp(t, `(?m)^\s+4 \|\s+3$`, output, "reports 4 memberships removed from 3 releases")
 	assert.Equal(t, "3:2,5:4,7:5", runPSQL(t, conn, members))
-	assert.Equal(t, "2,4,5", runPSQL(t, conn, releases))
+	assert.Equal(t, "1,2,3,4,5", runPSQL(t, conn, releases))
 
 	runPSQLFile(t, conn, migration033Path)
 	assert.Equal(t, "3:2,5:4,7:5", runPSQL(t, conn, members))
-	assert.Equal(t, "2,4,5", runPSQL(t, conn, releases))
+	assert.Equal(t, "1,2,3,4,5", runPSQL(t, conn, releases))
 }
 
 // Every contract the cleanup matches is a shared contract in the shipped registry, so the

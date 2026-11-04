@@ -15,13 +15,16 @@
 --
 -- What this file does
 -- -------------------
---   1. Deletes every release_members row whose token is on a contract listed below and
---      whose release came from a vendor other than artblocks, fxhash or feralfile. The
---      list is the registry's "shared_contracts" at this commit; matching is
---      case-insensitive, like the registry lookup.
---   2. Deletes the releases those rows belonged to when no member is left (such as the
---      platform-wide "SuperRare" release the issue reports). A release that still has
---      members on other contracts is kept.
+-- Deletes every release_members row whose token is on a contract listed below and whose
+-- release came from a vendor other than artblocks, fxhash or feralfile. The list is the
+-- registry's "shared_contracts" at this commit; matching is case-insensitive, like the
+-- registry lookup.
+--
+-- The releases rows stay, even when no member is left (such as the platform-wide
+-- "SuperRare" release the issue reports). A memberless release groups nothing. Deleting
+-- it would race enrichment: an OpenSea collection can span shared and other contracts, and
+-- a worker that has just upserted the release for a token on another contract would then
+-- fail its member insert on the foreign key, which the metadata workflow does not retry.
 -- Token enrichment, vendor JSON and moderation verdicts are untouched. Like
 -- UpsertReleaseMember, it emits no token_events: clients see the change on their next
 -- token read (the API takes release_id and mint_number from release_members).
@@ -93,10 +96,6 @@ WHERE r.vendor NOT IN ('artblocks', 'fxhash', 'feralfile');
 
 DELETE FROM release_members
 WHERE id IN (SELECT id FROM migration_033_removed);
-
-DELETE FROM releases r
-WHERE r.id IN (SELECT release_id FROM migration_033_removed)
-  AND NOT EXISTS (SELECT 1 FROM release_members rm WHERE rm.release_id = r.id);
 
 SELECT count(*) AS release_members_removed,
        count(DISTINCT release_id) AS releases_touched
