@@ -57,6 +57,20 @@ func (mr *MockPublisherRegistryMockRecorder) GetMinBlock(chainID any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMinBlock", reflect.TypeOf((*MockPublisherRegistry)(nil).GetMinBlock), chainID)
 }
 
+// IsPlatformRelease mocks base method.
+func (m *MockPublisherRegistry) IsPlatformRelease(chainID domain.Chain, contractAddress, vendor, vendorReleaseID string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsPlatformRelease", chainID, contractAddress, vendor, vendorReleaseID)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsPlatformRelease indicates an expected call of IsPlatformRelease.
+func (mr *MockPublisherRegistryMockRecorder) IsPlatformRelease(chainID, contractAddress, vendor, vendorReleaseID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsPlatformRelease", reflect.TypeOf((*MockPublisherRegistry)(nil).IsPlatformRelease), chainID, contractAddress, vendor, vendorReleaseID)
+}
+
 // LookupPublisherByCollection mocks base method.
 func (m *MockPublisherRegistry) LookupPublisherByCollection(chainID domain.Chain, contractAddress string) *registry.PublisherInfo {
 	m.ctrl.T.Helper()

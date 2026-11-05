@@ -258,7 +258,8 @@ Some migrations introduce database constraints that application code depends on 
 6. **Resume** traffic
 
 **Exception: data backfills that depend on new code run AFTER the deploy.** A file whose
-section below says "code first" (currently `032_feralfile_cdn_move.sql`) rewrites data
+section below says "code first" (currently `032_feralfile_cdn_move.sql` and
+`033_shared_contract_releases.sql`) rewrites data
 the old application would write back. Deploy the matching application version, confirm
 no process from the previous version is still running, and only then run the backfill.
 Ordinary schema migrations in the same release still run before the deploy.
@@ -282,6 +283,26 @@ Sequence:
 
 Workers may keep running during step 3. The file's header explains why concurrent
 indexing and in-flight render jobs cannot corrupt the result. Re-running it is safe.
+
+**Migration 033 (shared-contract releases) — code first, then the cleanup:**
+
+`033_shared_contract_releases.sql` removes the release memberships in the platform-wide
+collection of a shared minting contract (OpenSea's `superrare`, `fnd`, `rarible`, `zora`;
+ff-indexer-v2 #176). A worker on the previous version re-assigns them whenever it
+re-enriches such a token. Sequence:
+
+1. Sync ff-deploy's `ansible/app_defaults/indexer/registry/publisher.json` with
+   `tools/registry/publisher.json`. Production reads that copy; without its
+   `shared_contracts` section the new code drops no release. The previous image
+   ignores the section, so put the registry sync and the image bump in one ff-deploy
+   commit.
+2. Deploy the application version that contains `dropPlatformRelease` and confirm
+   no container on the previous image is left.
+3. Optionally size the run with the query in the file's header.
+4. Run it: `psql ... -v ON_ERROR_STOP=1 -f db/migrations/033_shared_contract_releases.sql`.
+   It prints the memberships removed and the releases they belonged to.
+
+Workers may keep running during step 4. Re-running it is safe.
 
 **Migration 025 + the EVM credit guard — required ordering:**
 
