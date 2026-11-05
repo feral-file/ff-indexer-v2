@@ -21,10 +21,11 @@ type PublisherRegistry interface {
 	// GetMinBlock returns the minimum block number used to search for deployer addresses for a given chain, if configured
 	GetMinBlock(chainID domain.Chain) (uint64, bool)
 
-	// IsSharedContract reports whether the registry lists the contract as one that many
-	// artists mint on (a platform's shared minting contract). Such a contract is never a
-	// release by itself; see SharedContract.
-	IsSharedContract(chainID domain.Chain, contractAddress string) bool
+	// IsPlatformRelease reports whether a vendor's release is the platform-wide collection
+	// that a shared minting contract's tokens are filed under (see SharedContract). Such a
+	// release is never a series. vendor is the vendor name ("opensea", "objkt") and
+	// vendorReleaseID the vendor's release id (an OpenSea collection slug, an objkt KT1).
+	IsPlatformRelease(chainID domain.Chain, contractAddress string, vendor string, vendorReleaseID string) bool
 }
 
 // PublisherName represents a publisher name constant
@@ -57,19 +58,31 @@ type PublisherInfo struct {
 }
 
 // SharedContract is a contract that many artists mint on: a platform's shared minting
-// contract (SuperRare, Foundation, Rarible, Zora, the OpenSea Shared Storefront, hic et
-// nunc's OBJKT). Such a contract is never a series by itself. A collection-level vendor
-// (OpenSea, objkt) files every token on it under one collection, so a release taken from
-// that vendor would group unrelated works by different artists as one series; the
-// enhancer drops it (ff-indexer-v2 #176). A release that names a real series inside the
-// contract (an Art Blocks project, an fxhash generative token) still stands.
+// contract (SuperRare, Foundation, Rarible, Zora, hic et nunc's OBJKT). Such a contract
+// is never a series by itself. A collection-level vendor files nearly every token on it
+// under one platform-wide collection (OpenSea: "superrare", "fnd", "rarible", "zora"),
+// so a release taken from that collection would group unrelated works by different
+// artists as one series; the enhancer drops it (ff-indexer-v2 #176).
 //
-// The list is independent of the publisher entries on purpose: marking a contract shared
+// Only the platform-wide collections named in PlatformReleases are dropped, because the
+// same vendor also carves real series out of these contracts: OpenSea files XCOPY's
+// Rarible works under "xcopy-rarible" and a Gazell.io exhibition on SuperRare under its
+// own slug. Those releases stand, as do Art Blocks, fxhash and Feral File releases. The
+// OpenSea Shared Storefront is deliberately not listed: OpenSea has no platform-wide
+// collection there, every token sits in a creator-made collection (1,108 collections in
+// a 1,200-token sample).
+//
+// The list is independent of the publisher entries on purpose: listing a contract here
 // must not attribute a publisher to its tokens, which the API exposes.
 type SharedContract struct {
 	// Name is a human label for maintainers (JSON has no comments); lookups ignore it.
 	Name    string `json:"name"`
 	Address string `json:"address"`
+	// PlatformReleases maps a vendor name ("opensea", "objkt") to the vendor release ids
+	// (OpenSea collection slugs, objkt KT1 addresses) that are the contract's
+	// platform-wide collections. Load rejects an entry that names none: it would drop
+	// nothing, which is a mistake rather than a choice.
+	PlatformReleases map[string][]string `json:"platform_releases"`
 }
 
 // PublisherRegistryData represents the structure of the registry JSON file
@@ -88,8 +101,8 @@ type publisherRegistry struct {
 	collectionToPublisher map[string]*PublisherInfo
 	// chain:contract -> deployer lookup (for contracts deployed by known deployers)
 	deployerToPublisher map[string]*PublisherInfo
-	// chain:contract set of shared minting contracts
-	sharedContracts map[string]struct{}
+	// chain:contract:vendor:release set of platform-wide releases on shared contracts
+	platformReleases map[string]struct{}
 }
 
 // PublisherRegistryLoader defines the interface for loading publisher registries from files
@@ -128,12 +141,17 @@ func (l *publisherRegistryLoader) Load(filePath string) (PublisherRegistry, erro
 		return nil, fmt.Errorf("failed to parse registry JSON: %w", err)
 	}
 
+	platformReleases, err := platformReleaseSet(registryData.SharedContracts)
+	if err != nil {
+		return nil, fmt.Errorf("invalid shared_contracts: %w", err)
+	}
+
 	// Build lookup maps
 	registry := &publisherRegistry{
 		data:                  &registryData,
 		collectionToPublisher: make(map[string]*PublisherInfo),
 		deployerToPublisher:   make(map[string]*PublisherInfo),
-		sharedContracts:       sharedContractSet(registryData.SharedContracts),
+		platformReleases:      platformReleases,
 	}
 
 	for i := range registryData.Publishers {
@@ -161,16 +179,38 @@ func (l *publisherRegistryLoader) Load(filePath string) (PublisherRegistry, erro
 	return registry, nil
 }
 
-// sharedContractSet indexes the registry's shared contracts by the same lowercased
-// "chain:address" key the publisher lookups use.
-func sharedContractSet(shared map[string][]SharedContract) map[string]struct{} {
+// platformReleaseSet indexes the registry's platform-wide releases by platformReleaseKey.
+// It rejects a shared contract without an address or without a platform release, since
+// such an entry drops nothing and is a configuration mistake.
+func platformReleaseSet(shared map[string][]SharedContract) (map[string]struct{}, error) {
 	set := make(map[string]struct{})
 	for chainID, contracts := range shared {
 		for _, contract := range contracts {
-			set[strings.ToLower(chainID)+":"+strings.ToLower(contract.Address)] = struct{}{}
+			if contract.Address == "" {
+				return nil, fmt.Errorf("shared contract %q on %s has no address", contract.Name, chainID)
+			}
+			listed := 0
+			for vendor, releases := range contract.PlatformReleases {
+				for _, release := range releases {
+					if vendor == "" || release == "" {
+						return nil, fmt.Errorf("shared contract %s on %s has an empty platform release", contract.Address, chainID)
+					}
+					set[platformReleaseKey(chainID, contract.Address, vendor, release)] = struct{}{}
+					listed++
+				}
+			}
+			if listed == 0 {
+				return nil, fmt.Errorf("shared contract %s on %s lists no platform release", contract.Address, chainID)
+			}
 		}
 	}
-	return set
+	return set, nil
+}
+
+// platformReleaseKey is the lowercased "chain:address:vendor:release" lookup key, the
+// same case-insensitive scheme the publisher lookups use for "chain:address".
+func platformReleaseKey(chainID, contractAddress, vendor, vendorReleaseID string) string {
+	return strings.ToLower(chainID + ":" + contractAddress + ":" + vendor + ":" + vendorReleaseID)
 }
 
 // LookupPublisherByCollection looks up a publisher by collection address
@@ -200,12 +240,12 @@ func (r *publisherRegistry) GetMinBlock(chainID domain.Chain) (uint64, bool) {
 	return minBlock, ok
 }
 
-// IsSharedContract reports whether the contract is a listed shared minting contract.
-// Lookup is case-insensitive like the publisher lookups; a nil registry lists none.
-func (r *publisherRegistry) IsSharedContract(chainID domain.Chain, contractAddress string) bool {
+// IsPlatformRelease reports whether the release is a listed platform-wide collection of
+// a shared minting contract. Lookup is case-insensitive; a nil registry lists none.
+func (r *publisherRegistry) IsPlatformRelease(chainID domain.Chain, contractAddress string, vendor string, vendorReleaseID string) bool {
 	if r == nil {
 		return false
 	}
-	_, ok := r.sharedContracts[strings.ToLower(string(chainID))+":"+strings.ToLower(contractAddress)]
+	_, ok := r.platformReleases[platformReleaseKey(string(chainID), contractAddress, vendor, vendorReleaseID)]
 	return ok
 }

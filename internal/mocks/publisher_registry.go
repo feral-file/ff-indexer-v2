@@ -12,10 +12,10 @@ package mocks
 import (
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	registry "github.com/feral-file/ff-indexer-v2/internal/registry"
+	gomock "go.uber.org/mock/gomock"
+
 )
 
 // MockPublisherRegistry is a mock of PublisherRegistry interface.
@@ -57,18 +57,18 @@ func (mr *MockPublisherRegistryMockRecorder) GetMinBlock(chainID any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMinBlock", reflect.TypeOf((*MockPublisherRegistry)(nil).GetMinBlock), chainID)
 }
 
-// IsSharedContract mocks base method.
-func (m *MockPublisherRegistry) IsSharedContract(chainID domain.Chain, contractAddress string) bool {
+// IsPlatformRelease mocks base method.
+func (m *MockPublisherRegistry) IsPlatformRelease(chainID domain.Chain, contractAddress, vendor, vendorReleaseID string) bool {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsSharedContract", chainID, contractAddress)
+	ret := m.ctrl.Call(m, "IsPlatformRelease", chainID, contractAddress, vendor, vendorReleaseID)
 	ret0, _ := ret[0].(bool)
 	return ret0
 }
 
-// IsSharedContract indicates an expected call of IsSharedContract.
-func (mr *MockPublisherRegistryMockRecorder) IsSharedContract(chainID, contractAddress any) *gomock.Call {
+// IsPlatformRelease indicates an expected call of IsPlatformRelease.
+func (mr *MockPublisherRegistryMockRecorder) IsPlatformRelease(chainID, contractAddress, vendor, vendorReleaseID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSharedContract", reflect.TypeOf((*MockPublisherRegistry)(nil).IsSharedContract), chainID, contractAddress)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsPlatformRelease", reflect.TypeOf((*MockPublisherRegistry)(nil).IsPlatformRelease), chainID, contractAddress, vendor, vendorReleaseID)
 }
 
 // LookupPublisherByCollection mocks base method.

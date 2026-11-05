@@ -286,15 +286,17 @@ indexing and in-flight render jobs cannot corrupt the result. Re-running it is s
 
 **Migration 033 (shared-contract releases) — code first, then the cleanup:**
 
-`033_shared_contract_releases.sql` removes the release memberships that OpenSea or objkt
-assigned to tokens on shared minting contracts (ff-indexer-v2 #176). A worker on the
-previous version re-assigns them whenever it re-enriches such a token. Sequence:
+`033_shared_contract_releases.sql` removes the release memberships in the platform-wide
+collection of a shared minting contract (OpenSea's `superrare`, `fnd`, `rarible`, `zora`;
+ff-indexer-v2 #176). A worker on the previous version re-assigns them whenever it
+re-enriches such a token. Sequence:
 
 1. Sync ff-deploy's `ansible/app_defaults/indexer/registry/publisher.json` with
    `tools/registry/publisher.json`. Production reads that copy; without its
    `shared_contracts` section the new code drops no release. The previous image
-   ignores the section, so this can ship first.
-2. Deploy the application version that contains `dropSharedContractRelease` and confirm
+   ignores the section, so put the registry sync and the image bump in one ff-deploy
+   commit.
+2. Deploy the application version that contains `dropPlatformRelease` and confirm
    no container on the previous image is left.
 3. Optionally size the run with the query in the file's header.
 4. Run it: `psql ... -v ON_ERROR_STOP=1 -f db/migrations/033_shared_contract_releases.sql`.

@@ -106,8 +106,8 @@ type enhancer struct {
 	openseaClient   opensea.Client
 	json            adapter.JSON
 	jcs             adapter.JCS
-	// publisherRegistry lists the shared minting contracts on which a collection-level
-	// vendor's release is dropped (see dropSharedContractRelease). nil lists none.
+	// publisherRegistry lists the platform-wide releases of shared minting contracts,
+	// which are dropped (see dropPlatformRelease). nil lists none.
 	publisherRegistry registry.PublisherRegistry
 	// openSeaCollectionCache avoids repeated GetCollection calls when indexing many
 	// tokens from the same OpenSea release in one worker process.
@@ -116,8 +116,8 @@ type enhancer struct {
 
 // NewEnhancer creates a new metadata enhancer that routes vendor-specific enrichment
 // to ArtBlocks, Feral File, fxhash, objkt, or OpenSea depending on the publisher registry
-// entry for the token's contract. publisherRegistry supplies the shared minting
-// contracts whose collection-level releases are dropped; it may be nil (none listed).
+// entry for the token's contract. publisherRegistry supplies the platform-wide releases
+// of shared minting contracts, which are dropped; it may be nil (none listed).
 func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, feralfileClient feralfile.Client, fxhashClient fxhash.Client, objktClient objkt.Client, openseaClient opensea.Client, json adapter.JSON, jcs adapter.JCS, publisherRegistry registry.PublisherRegistry) Enhancer {
 	return &enhancer{
 		httpClient:        httpClient,
@@ -230,7 +230,7 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 	// Vendors can provide direct HTTP URLs without the per-vendor URI resolver.
 	// Apply retirement before MIME detection or any enrichment upsert.
 	if enhancedMetadata != nil {
-		e.dropSharedContractRelease(ctx, chain, contractAddress, enhancedMetadata)
+		e.dropPlatformRelease(ctx, chain, contractAddress, enhancedMetadata)
 		if err := e.resolveRetiredMedia(ctx, enhancedMetadata); err != nil {
 			return nil, err
 		}
@@ -243,48 +243,38 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 	return enhancedMetadata, nil
 }
 
-// dropSharedContractRelease clears a release that a collection-level vendor assigned to a
-// token on a shared minting contract (registry.SharedContract): a contract many artists
-// mint on is never a series.
+// dropPlatformRelease clears a release that is the platform-wide collection of a shared
+// minting contract (registry.SharedContract): a contract many artists mint on is never
+// a series.
 //
-// Reason: OpenSea files every token on SuperRare's shared contract under one collection,
-// "SuperRare", so its release grouped unrelated works by different artists as one series,
-// and ff-app showed them as one "SuperRare · 2 works" tile (ff-indexer-v2 #176).
+// Reason: OpenSea files nearly every token on SuperRare's shared contract under one
+// collection, "superrare", so its release grouped unrelated works by different artists
+// as one series, and ff-app showed them as one "SuperRare · 2 works" tile
+// (ff-indexer-v2 #176).
 //
-// Trade-offs: the release is dropped after the vendor call rather than never built, so
-// the rule sits in one place for every vendor instead of in each vendor branch; the cost
-// is OpenSea's GetCollection lookup for the shared slug, cached per process.
+// Trade-offs: the match is on the release (vendor and vendor release id), not on the
+// vendor, because the same vendor also names real series inside these contracts
+// ("xcopy-rarible" on Rarible's shared ERC-1155) and those must stand. The release is
+// dropped after the vendor call rather than never built, so the rule sits in one place
+// for every vendor; the cost is OpenSea's GetCollection lookup for the platform slug,
+// cached per process.
 //
-// Constraints: only releases from vendors that name a series inside a contract survive
-// on a shared contract (vendorNamesSeries). The vendor itself is unchanged, so a known
-// publisher's vendor still cannot flip. A dropped release writes no membership, which
-// leaves an existing release_members row in place: rows written before this rule are
-// removed by db/migrations/033_shared_contract_releases.sql.
-func (e *enhancer) dropSharedContractRelease(ctx context.Context, chain domain.Chain, contractAddress string, enhanced *EnhancedMetadata) {
-	if enhanced.Release == nil || vendorNamesSeries(enhanced.Vendor) || e.publisherRegistry == nil {
+// Constraints: the vendor, enrichment fields and moderation verdict are unchanged, so a
+// known publisher's vendor still cannot flip. A dropped release writes no membership,
+// which leaves an existing release_members row in place: rows written before this rule
+// are removed by db/migrations/033_shared_contract_releases.sql.
+func (e *enhancer) dropPlatformRelease(ctx context.Context, chain domain.Chain, contractAddress string, enhanced *EnhancedMetadata) {
+	if enhanced.Release == nil || e.publisherRegistry == nil {
 		return
 	}
-	if !e.publisherRegistry.IsSharedContract(chain, contractAddress) {
+	if !e.publisherRegistry.IsPlatformRelease(chain, contractAddress, string(enhanced.Vendor), enhanced.Release.VendorReleaseID) {
 		return
 	}
-	logger.InfoCtx(ctx, "Dropping collection-level release on a shared minting contract",
+	logger.DebugCtx(ctx, "Dropping platform-wide release on a shared minting contract",
 		zap.String("contractAddress", contractAddress),
 		zap.String("vendor", string(enhanced.Vendor)),
 		zap.String("vendorReleaseID", enhanced.Release.VendorReleaseID))
 	enhanced.Release = nil
-}
-
-// vendorNamesSeries reports whether a vendor's release is a series inside a contract
-// (an Art Blocks project, an fxhash generative token, a Feral File series) rather than
-// the contract-wide collection a marketplace (OpenSea, objkt) files tokens under. Any
-// vendor not listed here is treated as collection-level.
-func vendorNamesSeries(vendor schema.Vendor) bool {
-	switch vendor {
-	case schema.VendorArtBlocks, schema.VendorFXHash, schema.VendorFeralFile:
-		return true
-	default:
-		return false
-	}
 }
 
 // enhanceArtBlocks enhances metadata from ArtBlocks API
