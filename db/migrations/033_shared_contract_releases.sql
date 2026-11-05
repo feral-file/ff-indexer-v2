@@ -47,7 +47,8 @@
 --      confirm no process on the previous image is left.
 --   3. Run this file:  psql ... -v ON_ERROR_STOP=1 -f db/migrations/033_shared_contract_releases.sql
 -- Workers may keep running during step 3: the new code never writes one of these
--- memberships. Re-running is safe (the second run removes nothing).
+-- memberships, and a membership a worker moves to another release mid-run is kept (see
+-- the DELETE). Re-running is safe (the second run removes nothing).
 --
 -- A platform release added to the registry later needs the same cleanup for its own rows:
 -- run this file's statements with that row in the list.
@@ -116,11 +117,21 @@ JOIN migration_033_platform_releases p
  AND p.vendor = r.vendor
  AND lower(p.vendor_release_id) = lower(r.vendor_release_id);
 
-DELETE FROM release_members
-WHERE id IN (SELECT id FROM migration_033_removed);
-
+-- Delete by id AND the captured release_id. A worker may re-enrich a captured token
+-- between the snapshot above and this statement; UpsertReleaseMember keeps the row id
+-- when it moves a token to another release, so matching the id alone would delete a
+-- membership the worker just corrected (say, "superrare" -> a creator collection). The
+-- release_id check, re-evaluated on the current row version, skips it. The counts come
+-- from the rows actually deleted, not from the snapshot.
+WITH deleted AS (
+    DELETE FROM release_members rm
+    USING migration_033_removed m
+    WHERE rm.id = m.id
+      AND rm.release_id = m.release_id
+    RETURNING rm.id, rm.release_id
+)
 SELECT count(*) AS release_members_removed,
        count(DISTINCT release_id) AS releases_touched
-FROM migration_033_removed;
+FROM deleted;
 
 COMMIT;

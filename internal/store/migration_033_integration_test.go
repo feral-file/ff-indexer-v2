@@ -105,3 +105,46 @@ func TestMigration033RowsArePlatformReleasesInRegistry(t *testing.T) {
 		assert.True(t, reg.IsPlatformRelease(domain.Chain(row[1]), row[2], row[3], row[4]), "%s %s %s", row[2], row[3], row[4])
 	}
 }
+
+// migration033MovedFixture models a worker re-enriching a token while the cleanup runs:
+// T1 starts in the platform release R1 "superrare", and an event trigger that fires right
+// after the file snapshots its removal list (CREATE TABLE AS) moves T1 to the creator
+// collection R2. UpsertReleaseMember keeps the row id on such a move, so the snapshot's id
+// now names a correct membership. The trigger runs inside the migration's transaction,
+// which is enough to put that state in front of the DELETE deterministically.
+const migration033MovedFixture = `
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number) VALUES
+  (1, 'eip155:1:erc721:0xb932a70A57673d89f4acfFBE830E8ed7f75Fb9e0:1', 'eip155:1', 'erc721', '0xb932a70A57673d89f4acfFBE830E8ed7f75Fb9e0', '1');
+INSERT INTO releases (id, vendor, vendor_release_id, name) VALUES
+  (1, 'opensea', 'superrare', 'SuperRare'),
+  (2, 'opensea', 'gazellio-spatial-exhibition', 'Gazell.io Spatial Exhibition Takeover');
+INSERT INTO release_members (release_id, token_id, mint_number) VALUES (1, 1, 1);
+
+CREATE FUNCTION migration_033_move_t1() RETURNS event_trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE release_members SET release_id = 2 WHERE token_id = 1;
+END $$;
+CREATE EVENT TRIGGER migration_033_move_t1 ON ddl_command_end
+  WHEN TAG IN ('CREATE TABLE AS') EXECUTE PROCEDURE migration_033_move_t1();
+`
+
+// TestMigration033KeepsMembershipMovedDuringCleanup: a membership that enrichment moves
+// from the platform release to a creator collection after the file captured it must
+// survive, because the DELETE re-checks the release it captured, not only the row id.
+func TestMigration033KeepsMembershipMovedDuringCleanup(t *testing.T) {
+	if _, err := exec.LookPath("psql"); err != nil {
+		t.Skip("psql not available")
+	}
+
+	dbName := fmt.Sprintf("m033moved_%d", time.Now().UnixNano())
+	require.NoError(t, testDB.Exec("CREATE DATABASE "+dbName).Error)
+	t.Cleanup(func() { testDB.Exec("DROP DATABASE IF EXISTS " + dbName) })
+	conn := dsnForDatabase(t, testDSN, dbName)
+
+	runPSQLFile(t, conn, schemaPath)
+	runPSQL(t, conn, migration033MovedFixture)
+
+	output := runPSQLFile(t, conn, migration033Path)
+	assert.Regexp(t, `(?m)^\s+0 \|\s+0$`, output, "reports nothing removed: the captured membership had moved")
+	assert.Equal(t, "1:2", runPSQL(t, conn, `SELECT string_agg(token_id || ':' || release_id, ',') FROM release_members`))
+}
