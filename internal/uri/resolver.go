@@ -124,6 +124,7 @@ func (r *resolver) Resolve(ctx context.Context, uri string) (string, error) {
 	}
 
 	// Regular HTTP(S) URL. Moved hosts are rewritten so rebuilds never restore
-	// a URL whose origin no longer resolves.
-	return types.MigrateFeralFileCDN(uri), nil
+	// a URL whose origin no longer resolves, and a live gateway URL with a query
+	// directly after a bare CID gets the directory slash (types.NormalizeIPFSGatewayURL).
+	return types.NormalizeIPFSGatewayURL(types.MigrateFeralFileCDN(uri)), nil
 }

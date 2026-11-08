@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
@@ -199,6 +200,11 @@ func eligibleIPFSGateways(gateways []string) []string {
 // retried. The entry point is probe-verified before it is returned, so this can never
 // invent a URL that does not serve.
 func FindWorkingIPFSGateway(ctx context.Context, probe GatewayProbe, ref string, gateways []string) (string, error) {
+	// A bare CID followed by a query ("<cid>?fxhash=…") is probed and stored with the
+	// directory slash ("<cid>/?fxhash=…"). The probe follows the gateway's redirect and
+	// validates the index page, so without this the broken shape is accepted as healthy
+	// while a browser loading it loses the query. See domain.NormalizeIPFSRef.
+	ref = domain.NormalizeIPFSRef(ref)
 	gateways = eligibleIPFSGateways(gateways)
 	url, sawDirectoryListing, err := findWorkingGateway(ctx, probe, candidateURLs(gateways, "%s/ipfs/%s", ref), "IPFS", ref)
 	if err == nil || !sawDirectoryListing {

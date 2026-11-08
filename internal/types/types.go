@@ -194,6 +194,34 @@ func SameIPFSReference(a, b string) bool {
 	return isGatewayA && isGatewayB && refA == refB
 }
 
+// NormalizeIPFSGatewayURL returns an IPFS gateway URL with the directory slash between a
+// bare CID and its query or fragment (domain.NormalizeIPFSRef), on the same host. Any
+// other string is returned unchanged.
+//
+// Reason: vendor metadata and OpenSea animation URLs arrive as HTTP gateway URLs and
+// bypass gateway selection, so the bare "<gateway>/ipfs/<cid>?fxhash=…" shape would be
+// stored as-is and display blank (the gateway's redirect drops the query).
+func NormalizeIPFSGatewayURL(s string) string {
+	ok, ref := IsIPFSGatewayURL(s)
+	if !ok {
+		return s
+	}
+	normalized := domain.NormalizeIPFSRef(ref)
+	if normalized == ref {
+		return s
+	}
+	// ref is the exact tail of s: the pattern anchors "<cid><suffix>" to the end.
+	return s[:len(s)-len(ref)] + normalized
+}
+
+// EquivalentIPFSReference is SameIPFSReference after NormalizeIPFSGatewayURL on both
+// sides: "<cid>?q" and "<cid>/?q" address the same bytes. Use it where state keyed by
+// the old URL must follow a slash-normalized replacement (media assets). Stored-URL
+// preference stays on the exact SameIPFSReference so it can never keep the bare shape.
+func EquivalentIPFSReference(a, b string) bool {
+	return SameIPFSReference(NormalizeIPFSGatewayURL(a), NormalizeIPFSGatewayURL(b))
+}
+
 // IsArweaveGatewayURL checks if a string is a valid Arweave gateway URL
 // Returns: (isValid, txID) where txID is the transaction ID
 // Example: https://arweave.net/abc123 -> (true, "abc123")

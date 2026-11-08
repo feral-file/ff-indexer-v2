@@ -3392,13 +3392,14 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 // A concurrent insert for the new URL fails the unique constraint and with it the
 // whole propagation, which callers already treat as retryable.
 // Constraints: the asset moves only between gateway URLs for the same IPFS
-// reference, where the bytes are the same by construction. Other promotions leave
+// reference, where the bytes are the same by construction; "<cid>?q" and its
+// slash-normalized replacement "<cid>/?q" count as the same reference. Other promotions leave
 // it in place: the Arweave fallback can promote a transaction root for a sub-path,
 // and a directory promoted to its index.html entry point is a different resource.
 // Only valid inside UpdateMediaURLAndPropagate, which moves every reference from
 // the old URL in the same transaction.
 func repointMediaAsset(tx *gorm.DB, oldURL, newURL string) error {
-	if !types.SameIPFSReference(oldURL, newURL) {
+	if !types.EquivalentIPFSReference(oldURL, newURL) {
 		return nil
 	}
 	newHash := types.MD5Hash(newURL)

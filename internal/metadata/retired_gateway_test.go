@@ -103,3 +103,30 @@ func TestEnhancer_RetiredGatewayFailure(t *testing.T) {
 		})
 	}
 }
+
+// A vendor animation URL on a live gateway with the fxhash query directly after a bare
+// CID bypasses gateway selection; it must still be stored with the directory slash, or
+// the gateway's redirect drops the query and the work displays blank.
+func TestEnhancer_LiveGatewayBareCIDQueryGetsDirectorySlash(t *testing.T) {
+	m := setupTestEnhancer(t)
+	name := "spaceplant #135"
+	image := "https://i.seadn.io/preview.png"
+	animation := "https://ipfs.raribleuserdata.com/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon?fxhash=ooCaGyZkD8Yyw6zXM82kRriW6uUmWRYCSBxavnHtvyagq1EFeKu"
+	cid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "135")
+	token := &opensea.NFTMetadata{Name: &name, ImageURL: &image, DisplayAnimationURL: &animation}
+	m.openseaClient.EXPECT().GetNFT(gomock.Any(), gomock.Any(), "135").Return(token, nil)
+	m.json.EXPECT().Marshal(token).Return([]byte(`{"name":"spaceplant #135"}`), nil)
+	// The slash is applied before anything downstream sees the URL: the mime step
+	// resolves the already-slashed URL, never the bare one.
+	slashed := "https://ipfs.raribleuserdata.com/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon/?fxhash=ooCaGyZkD8Yyw6zXM82kRriW6uUmWRYCSBxavnHtvyagq1EFeKu"
+	m.uriResolver.EXPECT().Resolve(gomock.Any(), slashed).Return(slashed, nil).AnyTimes()
+	// MIME sniffing HEADs the URL without its query string, then reads the full URL.
+	m.httpClient.EXPECT().Head(gomock.Any(), gomock.Any()).Return(nil, assert.AnError).AnyTimes()
+	m.httpClient.EXPECT().GetPartialBytes(gomock.Any(), slashed, gomock.Any()).Return([]byte("<html></html>"), nil).AnyTimes()
+
+	result, err := m.enhancer.Enhance(context.Background(), cid, nil, nil)
+	assert.NoError(t, err)
+	if assert.NotNil(t, result) && assert.NotNil(t, result.AnimationURL) {
+		assert.Equal(t, slashed, *result.AnimationURL)
+	}
+}

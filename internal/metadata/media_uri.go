@@ -38,8 +38,9 @@ func resolveMediaURI(ctx context.Context, resolver uri.Resolver, source string) 
 	return domain.UriToGateway(source), nil
 }
 
-// resolveRetiredMedia validates every retired HTTP gateway in vendor media and
-// moves Feral File CDN URLs to the current origin.
+// resolveRetiredMedia validates every retired HTTP gateway in vendor media, moves
+// Feral File CDN URLs to the current origin, and gives a bare-CID-plus-query gateway
+// URL its directory slash (the same pure rewrite, see types.NormalizeIPFSGatewayURL).
 // Reason: vendor HTTP URLs can bypass per-vendor URI resolution, and enrichment
 // takes precedence over normalized metadata in display selection.
 // Trade-offs: a gateway outage delays other new vendor facts until the next
@@ -53,6 +54,9 @@ func (e *enhancer) resolveRetiredMedia(ctx context.Context, enhanced *EnhancedMe
 		}
 		if moved := types.MigrateFeralFileCDN(**target); moved != **target {
 			*target = &moved
+		}
+		if slashed := types.NormalizeIPFSGatewayURL(**target); slashed != **target {
+			*target = &slashed
 		}
 		if !types.IsBrowserIPFSGateway(**target) {
 			continue
