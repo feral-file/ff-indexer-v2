@@ -1706,8 +1706,8 @@ components:
             - type: "null"
           description: |
             Unified display field (requires `display` expansion). Merges metadata and enrichment
-            source, preferring enrichment except for OpenSea images, which prefer the original
-            metadata image. Then applies per-field health filtering via
+            source, preferring enrichment except for OpenSea image playback, which prefers the original
+            metadata image. Animated works retain the vendor poster. Then applies per-field health filtering via
             `token_media_health`: for each URL field (`animation_url`, `image_url`), only a URL
             with a `healthy` health row is returned; `broken` and `unknown` rows suppress the
             field. If no health rows exist yet for a field's source groups, the raw merged value
@@ -1826,8 +1826,8 @@ components:
     TokenDisplayResponse:
       type: object
       description: |
-        Unified token display data: enrichment generally takes precedence. OpenSea images prefer
-        the original metadata image, with enrichment as a fallback. Per-field health filtering
+        Unified token display data: enrichment generally takes precedence. OpenSea image playback prefers
+        the original metadata image, with enrichment as a fallback. Animated works retain the vendor poster. Per-field health filtering
         via `token_media_health` then applies.
 
         For each URL field (`animation_url`, `image_url`), only a URL with a `healthy` health row

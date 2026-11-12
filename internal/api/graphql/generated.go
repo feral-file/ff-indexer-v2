@@ -1907,8 +1907,8 @@ type MediaAsset {
   updated_at: Time!
 }
 
-# Unified token display data: enrichment generally takes precedence. OpenSea images prefer the
-# original metadata image, with enrichment as a fallback. Per-field health filtering via
+# Unified token display data: enrichment generally takes precedence. OpenSea image playback prefers
+# the original metadata image, with enrichment as a fallback. Animated works retain the vendor poster. Per-field health filtering via
 # token_media_health then applies. For each URL field
 # (animation_url, image_url), only a URL with a "healthy" health row is returned; "broken" and
 # "unknown" rows suppress the URL. If no health rows exist yet for a field's source groups the

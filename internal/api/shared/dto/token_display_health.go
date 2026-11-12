@@ -18,8 +18,9 @@ import (
 // Selection rule (mirrors MergeTokenDisplay precedence):
 //   - animation_url: prefer enrichment-animation if healthy; else metadata-animation if healthy;
 //     else nil (omit the field — do not serve a broken URL).
-//   - image_url: prefer the healthy metadata image for OpenSea, then fall back to
-//     healthy enrichment. Other vendors use the same order as animation.
+//   - image_url: prefer the healthy metadata image for OpenSea image playback,
+//     then fall back to healthy enrichment. Animated works retain the vendor
+//     poster because clients have no separate image MIME field.
 //
 // Constraints:
 //   - If healthRows is empty (no rows yet probed) the display is returned unchanged so tokens
@@ -85,7 +86,7 @@ func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.To
 	var imageSource healthKey
 	if hasEnrichImg || hasMetaImg {
 		switch {
-		case out.preferMetadataImage && metaImgStatus == schema.MediaHealthStatusHealthy:
+		case out.preferMetadataImage && (out.AnimationURL == nil || *out.AnimationURL == "") && metaImgStatus == schema.MediaHealthStatusHealthy:
 			metaURL := urlBySource[schema.MediaHealthSourceMetadataImage]
 			out.ImageURL = &metaURL
 			imageSource = schema.MediaHealthSourceMetadataImage

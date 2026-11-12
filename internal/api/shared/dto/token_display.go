@@ -32,7 +32,7 @@ func (t *TokenDisplayResponse) MediaURLs() []string {
 
 // MergeTokenDisplay creates a unified display response by merging metadata and enrichment source
 // Vendor fields generally take precedence. OpenSea images are resized copies,
-// so the original metadata image takes precedence when available.
+// so image playback prefers the original. Animated works retain the vendor poster.
 func MergeTokenDisplay(metadata *TokenMetadataResponse, enrichment *EnrichmentSourceResponse) *TokenDisplayResponse {
 	// If both are nil, return nil
 	if metadata == nil && enrichment == nil {
@@ -86,8 +86,10 @@ func MergeTokenDisplay(metadata *TokenMetadataResponse, enrichment *EnrichmentSo
 		if enrichment.AnimationURL == nil || *enrichment.AnimationURL == "" {
 			display.enrichmentImageMIME = enrichment.MimeType
 		}
-		display.ImageURL = metadata.ImageURL
+		// Animated works need the vendor poster: clients cannot infer an
+		// extensionless image's type from the animation's MIME field.
 		if display.AnimationURL == nil || *display.AnimationURL == "" {
+			display.ImageURL = metadata.ImageURL
 			display.MimeType = display.metadataImageMIME
 		}
 	}

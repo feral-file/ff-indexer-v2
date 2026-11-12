@@ -317,7 +317,7 @@ func TestOpenSeaImageFallbackUsesObservedMIME(t *testing.T) {
 	}{
 		{"original", schema.MediaHealthStatusHealthy, schema.MediaHealthStatusBroken, original, "image/png"},
 		{"poster fallback", schema.MediaHealthStatusBroken, schema.MediaHealthStatusBroken, poster, "image/webp"},
-		{"animation survives", schema.MediaHealthStatusHealthy, schema.MediaHealthStatusHealthy, original, "video/mp4"},
+		{"animation survives", schema.MediaHealthStatusHealthy, schema.MediaHealthStatusHealthy, poster, "video/mp4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			metadata := &dto.TokenMetadataResponse{
@@ -341,4 +341,21 @@ func TestOpenSeaImageFallbackUsesObservedMIME(t *testing.T) {
 			assert.Equal(t, ptr(tc.wantMIME), display.MimeType)
 		})
 	}
+}
+
+// TestOpenSeaAnimatedWorkKeepsPosterWithoutHealth covers unchecked tokens too:
+// the only public MIME field describes the animation, not the original image.
+func TestOpenSeaAnimatedWorkKeepsPosterWithoutHealth(t *testing.T) {
+	metadata := &dto.TokenMetadataResponse{
+		ImageURL:     ptr("https://ipfs.example/original"),
+		AnimationURL: ptr("https://example.com/work.mp4"), MimeType: ptr("video/mp4"),
+	}
+	enrichment := &dto.EnrichmentSourceResponse{
+		Vendor: string(schema.VendorOpenSea), ImageURL: ptr("https://cdn.example/poster.png"),
+		AnimationURL: ptr("https://example.com/work.mp4"), MimeType: ptr("video/mp4"),
+	}
+	display := dto.MergeTokenDisplay(metadata, enrichment)
+	assert.Equal(t, enrichment.ImageURL, display.ImageURL)
+	assert.Equal(t, enrichment.AnimationURL, display.AnimationURL)
+	assert.Equal(t, ptr("video/mp4"), display.MimeType)
 }
