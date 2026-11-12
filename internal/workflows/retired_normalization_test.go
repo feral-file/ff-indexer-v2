@@ -53,7 +53,7 @@ func TestIndexTokenMetadata_RetirementFailurePreservesEnrichment(t *testing.T) {
 	m.json.EXPECT().Marshal(response).Return([]byte(`{}`), nil).AnyTimes()
 	enhancer := metadata.NewEnhancer(m.httpClient, uriResolver,
 		mocks.NewMockArtBlocksClient(m.ctrl), mocks.NewMockFeralFileClient(m.ctrl),
-		mocks.NewMockFxhashClient(m.ctrl), vendor, mocks.NewMockOpenSeaClient(m.ctrl),
+		vendor, mocks.NewMockOpenSeaClient(m.ctrl),
 		m.json, mocks.NewMockJCS(m.ctrl), nil)
 	m.metadataEnhancer.EXPECT().Enhance(ctx, cid, (*metadata.NormalizedMetadata)(nil), gomock.Any()).DoAndReturn(enhancer.Enhance).AnyTimes()
 	m.metadataEnhancer.EXPECT().VendorJsonHash(gomock.Any()).Return([]byte{1}, nil).AnyTimes()

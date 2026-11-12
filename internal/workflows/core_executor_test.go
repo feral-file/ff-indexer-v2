@@ -1848,8 +1848,8 @@ func TestEnhanceTokenMetadata_PersistsCleanVerdict(t *testing.T) {
 // TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched pins the tri-state
 // contract at the layer where getting it wrong is silent. A vendor that publishes no
 // moderation signal leaves ModerationStatus nil; writing a zero value instead would clear a real
-// flag whenever routing changes — e.g. a gentk flagged via the objkt fallback gets
-// un-flagged the moment fxhash starts indexing it. gomock fails on any unexpected
+// flag whenever routing changes — e.g. a token flagged via objkt gets un-flagged the
+// moment a publisher entry routes it to Feral File. gomock fails on any unexpected
 // UpsertTokenModerationVerdict call, which is the assertion here.
 func TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched(t *testing.T) {
 	mocks := setupTestExecutor(t)
@@ -1861,9 +1861,9 @@ func TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched(t *testing.T)
 	normalizedMetadata := &metadata.NormalizedMetadata{Name: "Gentk"}
 	token := &schema.Token{ID: 11, TokenCID: tokenCID.String()}
 
-	// fxhash enriches this token and reports no moderation verdict.
+	// Feral File enriches this token and reports no moderation verdict.
 	enhancedMetadata := &metadata.EnhancedMetadata{
-		Vendor:           schema.VendorFXHash,
+		Vendor:           schema.VendorFeralFile,
 		VendorJSON:       []byte(`{}`),
 		Name:             types.StringPtr("Gentk"),
 		ModerationStatus: nil,

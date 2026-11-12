@@ -43,7 +43,7 @@ values computed from row sets missing each other's write).
 
 **Tri-state at the source level**: absence of a row means "no opinion", which is
 deliberately distinct from a `none` verdict. Vendors without a moderation signal
-(ArtBlocks, fxhash, Foundation, SuperRare, the feralfile *enrichment* vendor) never
+(ArtBlocks, fxhash's archived rows, Foundation, SuperRare, the feralfile *enrichment* vendor) never
 create rows (`schema.ModerationSourceForVendor` returns ok=false). A vendor API error is
 not a verdict either: the failure path (`RecordTokenModerationCheckFailure`) advances only
 scheduling state, never `verdict` or `last_checked_at`.

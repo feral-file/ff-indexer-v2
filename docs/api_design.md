@@ -147,22 +147,21 @@ Using an explicit list (instead of a contiguous range) lets callers target only 
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `vendor` | string | yes | `artblocks`, `feralfile`, `fxhash`, or `objkt` |
+| `vendor` | string | yes | `artblocks`, `feralfile`, or `objkt`. `fxhash` is rejected with 422: deriving its token IDs needs the fxhash API, which closed with the platform (existing fxhash releases stay readable) |
 | `vendor_release_id` | string | one of | Vendor-specific release key (see list releases docs for format per vendor). Mutually exclusive with `vendor_release_slug`. |
-| `vendor_release_slug` | string | one of | Human-readable URL slug from the vendor's website (e.g. `industrial-park`). The workflow resolves the slug to a canonical `vendor_release_id` via the vendor's API before CID derivation. Mutually exclusive with `vendor_release_id`. For `objkt`, slug equals the KT1 contract address (no resolution API call needed). |
+| `vendor_release_slug` | string | one of | Human-readable URL slug from the vendor's website (e.g. `data-pilgrims-01-769`). The workflow resolves the slug to a canonical `vendor_release_id` via the vendor's API before CID derivation. Mutually exclusive with `vendor_release_id`. For `objkt`, slug equals the KT1 contract address (no resolution API call needed). |
 | `mint_numbers` | int64[] | yes | Explicit 1-based list of mint positions to index (required, non-empty, max **50**, no duplicates). |
 
 **Validation:**
 - Exactly one of `vendor_release_id` or `vendor_release_slug` must be supplied.
 - `mint_numbers` must be non-empty; each value must be `≥ 1`; no duplicates; at most **50** entries per request (see `MAX_RELEASE_MINT_NUMBERS`). Clients must batch larger collections themselves by issuing multiple non-overlapping requests.
-- **Span cap for `fxhash` and `feralfile`:** `max(mint_numbers) - min(mint_numbers)` must be `≤ 1000` (see `MAX_API_VENDOR_MINT_SPAN`). These vendors fetch the full `[min, max]` interval from their vendor APIs and paginate at 100 items/page; a large sparse span (e.g. `[1, 50000]`) would force ~500 vendor API calls to index 2 mints. Split wide sparse lists into batches with span `≤ 1000`. `artblocks` and `objkt` are deterministic and not subject to this cap.
+- **Span cap for `feralfile`:** `max(mint_numbers) - min(mint_numbers)` must be `≤ 1000` (see `MAX_API_VENDOR_MINT_SPAN`). It fetches the full `[min, max]` interval from its vendor API and paginate at 100 items/page; a large sparse span (e.g. `[1, 50000]`) would force ~500 vendor API calls to index 2 mints. Split wide sparse lists into batches with span `≤ 1000`. `artblocks` and `objkt` are deterministic and not subject to this cap.
 
 **Response (`202`):** `TriggerIndexingResponse` with `job_id`. Use `GET /api/v1/jobs/{job_id}` to check whether Phase 1 (CID derivation + child-job enqueueing) succeeded. After the `job_id` reaches a terminal state, track per-token completion via `GET /api/v1/tokens?release_vendor=X&release_vendor_slug=Y&mint_number=N1&mint_number=N2&include_unviewable=true` with the same `mint_numbers` you submitted (see List tokens documentation above). `release_vendor` is required when polling by slug.
 
 **Per-vendor CID derivation strategy:**
 - `artblocks` — fully deterministic; zero API calls; `vendor_release_id` is `"{chainID}-{contract}-{projectID}"`; slug resolution calls the AB GraphQL API once.
 - `objkt` — fully deterministic; zero API calls; `vendor_release_id` is the KT1 FA2 contract address; slug equals the KT1 address (no extra call).
-- `fxhash` — calls `GetGentksByIteration([min, max])` once and filters returned gentks to only those whose iteration is in the requested `mint_numbers` set; slug resolution calls the fxhash GraphQL API once.
 - `feralfile` — calls `GetSeriesArtworks([min, max])` once and filters returned artworks to only those whose index (1-based) is in the requested `mint_numbers` set; artworks still on the Bitmark chain (not yet swapped to EVM/Tezos) are skipped and counted as `tokens_skipped`; slug resolution calls the FF series list API once.
 
 **Auth:** Open (no API key required), same as `POST /api/v1/tokens/index`. Max list cap of **50** mints per call prevents large queue floods; clients batch larger collections themselves.

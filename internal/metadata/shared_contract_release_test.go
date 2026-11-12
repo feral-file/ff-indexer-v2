@@ -13,7 +13,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -173,38 +172,33 @@ func TestEnhancer_Enhance_SharedContract_DropsObjktRelease(t *testing.T) {
 }
 
 // A vendor that names a real series inside a shared contract keeps its release: the
-// platform-wide release is matched by vendor and release id, so an fxhash generative
-// token on a contract listed with an OpenSea platform collection is untouched.
+// platform-wide release is matched by vendor and release id, so objkt's custom-collection
+// release on a contract listed with an OpenSea platform collection is untouched.
 func TestEnhancer_Enhance_SharedContract_SeriesVendorKeepsRelease(t *testing.T) {
-	const gentkContract = "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi"
+	const contract = "KT1AbcCustomArtistContract123456789"
 	path := filepath.Join(t.TempDir(), "publisher.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{
 		"version": 1,
-		"shared_contracts": {"tezos:mainnet": [{"name": "fxhash GENTK", "address": "`+gentkContract+`", "platform_releases": {"opensea": ["fxhash"], "fxhash": ["9997"]}}]},
+		"shared_contracts": {"tezos:mainnet": [{"name": "Shared", "address": "`+contract+`", "platform_releases": {"opensea": ["`+contract+`"], "objkt": ["KT1SomeOtherContract"]}}]},
 		"publishers": []
 	}`), 0o600))
 	m := setupTestEnhancerWithRegistry(t, loadPublisherRegistry(t, path))
 	defer tearDownTestEnhancer(m)
 
-	gentk := &fxhash.Gentk{
-		Iteration: "5",
-		Name:      types.StringPtr("Series #5"),
-		GenerativeToken: &fxhash.GenerativeToken{
-			ID: "9998", Name: "Series", Supply: "100",
-			Author: &fxhash.Author{Name: "Artist", WalletAccount: &fxhash.WalletAccount{Address: "tz1burnburnburnburnburnburnburjAYjjX"}},
-		},
+	token := &objkt.Token{
+		Name: types.StringPtr("Series #5"),
+		FA:   &objkt.FA{Name: "Series", Editions: 100, CollectionType: "custom"},
 	}
-	m.fxhashClient.EXPECT().GetGentk(gomock.Any(), gentkContract, "5").Return(gentk, nil)
-	m.json.EXPECT().Marshal(gentk).Return([]byte(`{}`), nil)
+	m.objktClient.EXPECT().GetToken(gomock.Any(), contract, "5").Return(token, nil)
+	m.json.EXPECT().Marshal(token).Return([]byte(`{}`), nil)
 
-	publisherName := registry.PublisherNameFXHash
-	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, gentkContract, "5")
-	result, err := m.enhancer.Enhance(context.Background(), tokenCID, nil, &metadata.Publisher{Name: &publisherName})
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, contract, "5")
+	result, err := m.enhancer.Enhance(context.Background(), tokenCID, nil, nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, schema.VendorFXHash, result.Vendor)
-	require.NotNil(t, result.Release, "generative token 9998 is not the listed platform release 9997")
-	assert.Equal(t, "9998", result.Release.VendorReleaseID)
+	assert.Equal(t, schema.VendorObjkt, result.Vendor)
+	require.NotNil(t, result.Release, "the listed contract is OpenSea's platform release, not objkt's")
+	assert.Equal(t, contract, result.Release.VendorReleaseID)
 	assert.Equal(t, int64(5), result.Release.MintNumber)
 }

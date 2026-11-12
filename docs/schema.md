@@ -111,7 +111,7 @@ These are partial indexes: a query that filters on the hash must also assert the
 
 ### enrichment_sources
 
-Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File, Objkt, OpenSea).
+Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File, Objkt, OpenSea). `fxhash` rows are an archive: fxhash closed on 2026-08-17, fxhash-published tokens are no longer enriched, so their rows are never overwritten or refreshed (#173).
 
 | Column | Type | Description |
 |--------|------|-------------|

@@ -43,7 +43,7 @@ func TestEnhanceTokenMetadata_FetchFailedKnownPublisher_NoGenericFallback(t *tes
 	actual := metadata.NewEnhancer(
 		m.httpClient, mocks.NewMockURIResolver(m.ctrl),
 		mocks.NewMockArtBlocksClient(m.ctrl), mocks.NewMockFeralFileClient(m.ctrl),
-		mocks.NewMockFxhashClient(m.ctrl), mocks.NewMockObjktClient(m.ctrl), mocks.NewMockOpenSeaClient(m.ctrl),
+		mocks.NewMockObjktClient(m.ctrl), mocks.NewMockOpenSeaClient(m.ctrl),
 		m.json, mocks.NewMockJCS(m.ctrl), nil,
 	)
 	m.metadataEnhancer.EXPECT().Enhance(ctx, ringersCID, (*metadata.NormalizedMetadata)(nil), gomock.Any()).
