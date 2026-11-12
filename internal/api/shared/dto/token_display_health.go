@@ -13,7 +13,8 @@ import "github.com/feral-file/ff-indexer-v2/internal/store/schema"
 // Selection rule (mirrors MergeTokenDisplay precedence):
 //   - animation_url: prefer enrichment-animation if healthy; else metadata-animation if healthy;
 //     else nil (omit the field — do not serve a broken URL).
-//   - image_url: same for image sources.
+//   - image_url: prefer the healthy metadata image for OpenSea, then fall back to
+//     healthy enrichment. Other vendors use the same order as animation.
 //
 // Constraints:
 //   - If healthRows is empty (no rows yet probed) the display is returned unchanged so tokens
@@ -70,15 +71,24 @@ func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.To
 	// If no animation health rows exist at all, keep the merged value unchanged (unchecked).
 
 	// --- image_url ---
-	// Precedence: enrichment-image > metadata-image > nil
+	// A healthy OpenSea copy is still useful when the original is unavailable.
 	enrichImgStatus, hasEnrichImg := statusBySource[schema.MediaHealthSourceEnrichmentImage]
 	metaImgStatus, hasMetaImg := statusBySource[schema.MediaHealthSourceMetadataImage]
 
 	if hasEnrichImg || hasMetaImg {
 		switch {
+		case out.preferMetadataImage && metaImgStatus == schema.MediaHealthStatusHealthy:
+			metaURL := urlBySource[schema.MediaHealthSourceMetadataImage]
+			out.ImageURL = &metaURL
+			if out.AnimationURL == nil || *out.AnimationURL == "" {
+				out.MimeType = out.metadataImageMIME
+			}
 		case hasEnrichImg && enrichImgStatus == schema.MediaHealthStatusHealthy:
 			enrichURL := urlBySource[schema.MediaHealthSourceEnrichmentImage]
 			out.ImageURL = &enrichURL
+			if out.preferMetadataImage && (out.AnimationURL == nil || *out.AnimationURL == "") {
+				out.MimeType = out.enrichmentImageMIME
+			}
 		case hasMetaImg && metaImgStatus == schema.MediaHealthStatusHealthy:
 			metaURL := urlBySource[schema.MediaHealthSourceMetadataImage]
 			out.ImageURL = &metaURL

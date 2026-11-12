@@ -1,7 +1,9 @@
 package dto
 
+import "github.com/feral-file/ff-indexer-v2/internal/store/schema"
+
 // TokenDisplayResponse represents unified token display data
-// It merges metadata and enrichment source, preferring enrichment source when available
+// It merges token metadata with vendor enrichment.
 type TokenDisplayResponse struct {
 	ImageURL     *string            `json:"image_url,omitempty"`
 	AnimationURL *string            `json:"animation_url,omitempty"`
@@ -10,6 +12,10 @@ type TokenDisplayResponse struct {
 	Publisher    *PublisherResponse `json:"publisher,omitempty"`
 	Artists      []ArtistResponse   `json:"artists,omitempty"`
 	MimeType     *string            `json:"mime_type,omitempty"`
+
+	preferMetadataImage bool
+	metadataImageMIME   *string
+	enrichmentImageMIME *string
 }
 
 // MediaURLs returns the media URLs from the token display
@@ -25,7 +31,8 @@ func (t *TokenDisplayResponse) MediaURLs() []string {
 }
 
 // MergeTokenDisplay creates a unified display response by merging metadata and enrichment source
-// Enrichment source takes precedence over metadata when both have the same field
+// Vendor fields generally take precedence. OpenSea images are resized copies,
+// so the original metadata image takes precedence when available.
 func MergeTokenDisplay(metadata *TokenMetadataResponse, enrichment *EnrichmentSourceResponse) *TokenDisplayResponse {
 	// If both are nil, return nil
 	if metadata == nil && enrichment == nil {
@@ -65,6 +72,23 @@ func MergeTokenDisplay(metadata *TokenMetadataResponse, enrichment *EnrichmentSo
 		}
 		if enrichment.MimeType != nil {
 			display.MimeType = enrichment.MimeType
+		}
+	}
+
+	if metadata != nil && metadata.ImageURL != nil && *metadata.ImageURL != "" &&
+		enrichment != nil && enrichment.Vendor == string(schema.VendorOpenSea) {
+		display.preferMetadataImage = true
+		// Each MIME field describes the source's preferred media, so a type
+		// inferred from an animation cannot describe the image fallback.
+		if metadata.AnimationURL == nil || *metadata.AnimationURL == "" {
+			display.metadataImageMIME = metadata.MimeType
+		}
+		if enrichment.AnimationURL == nil || *enrichment.AnimationURL == "" {
+			display.enrichmentImageMIME = enrichment.MimeType
+		}
+		display.ImageURL = metadata.ImageURL
+		if display.AnimationURL == nil || *display.AnimationURL == "" {
+			display.MimeType = display.metadataImageMIME
 		}
 	}
 

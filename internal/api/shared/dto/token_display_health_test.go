@@ -251,3 +251,55 @@ func TestApplyHealthyMediaURLs_DoesNotMutateInput(t *testing.T) {
 	// Original is unchanged
 	assert.Equal(t, animURL, *display.AnimationURL)
 }
+
+func TestOpenSeaDisplayPrefersOriginalImage(t *testing.T) {
+	const original = "https://ipfs.filebase.io/ipfs/original"
+	const thumbnail = "https://i2c.seadn.io/art.png?w=1000"
+	metadata := &dto.TokenMetadataResponse{ImageURL: ptr(original), MimeType: ptr("image/png")}
+	enrichment := &dto.EnrichmentSourceResponse{
+		Vendor: string(schema.VendorOpenSea), ImageURL: ptr(thumbnail), MimeType: ptr("image/webp"),
+	}
+
+	for _, tc := range []struct {
+		name string
+		rows []schema.TokenMediaHealth
+		want string
+		mime string
+	}{
+		{name: "unchecked", want: original, mime: "image/png"},
+		{name: "both healthy", want: original, mime: "image/png", rows: []schema.TokenMediaHealth{
+			buildHealthRow(1, schema.MediaHealthSourceMetadataImage, original, schema.MediaHealthStatusHealthy),
+			buildHealthRow(1, schema.MediaHealthSourceEnrichmentImage, thumbnail, schema.MediaHealthStatusHealthy),
+		}},
+		{name: "broken original", want: thumbnail, mime: "image/webp", rows: []schema.TokenMediaHealth{
+			buildHealthRow(1, schema.MediaHealthSourceMetadataImage, original, schema.MediaHealthStatusBroken),
+			buildHealthRow(1, schema.MediaHealthSourceEnrichmentImage, thumbnail, schema.MediaHealthStatusHealthy),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			display := dto.ApplyHealthyMediaURLs(dto.MergeTokenDisplay(metadata, enrichment), tc.rows)
+			assert.Equal(t, ptr(tc.want), display.ImageURL)
+			assert.Equal(t, ptr(tc.mime), display.MimeType)
+		})
+	}
+}
+
+func TestOpenSeaDisplayDoesNotReuseBrokenAnimationMIMEForImage(t *testing.T) {
+	const original = "https://ipfs.filebase.io/ipfs/original"
+	const animation = "https://ipfs.filebase.io/ipfs/animation"
+	metadata := &dto.TokenMetadataResponse{
+		ImageURL: ptr(original), AnimationURL: ptr(animation), MimeType: ptr("video/mp4"),
+	}
+	enrichment := &dto.EnrichmentSourceResponse{
+		Vendor: string(schema.VendorOpenSea), MimeType: ptr("image/webp"),
+	}
+	rows := []schema.TokenMediaHealth{
+		buildHealthRow(1, schema.MediaHealthSourceMetadataImage, original, schema.MediaHealthStatusHealthy),
+		buildHealthRow(1, schema.MediaHealthSourceMetadataAnimation, animation, schema.MediaHealthStatusBroken),
+	}
+
+	display := dto.ApplyHealthyMediaURLs(dto.MergeTokenDisplay(metadata, enrichment), rows)
+	assert.Equal(t, ptr(original), display.ImageURL)
+	assert.Nil(t, display.AnimationURL)
+	assert.Nil(t, display.MimeType)
+}
