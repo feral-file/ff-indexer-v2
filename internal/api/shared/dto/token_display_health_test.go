@@ -303,3 +303,42 @@ func TestOpenSeaDisplayDoesNotReuseBrokenAnimationMIMEForImage(t *testing.T) {
 	assert.Nil(t, display.AnimationURL)
 	assert.Nil(t, display.MimeType)
 }
+
+func TestOpenSeaImageFallbackUsesObservedMIME(t *testing.T) {
+	const original = "https://ipfs.example/ipfs/original"
+	const poster = "https://cdn.example/poster"
+	const animation = "https://ipfs.example/ipfs/animation"
+	for _, tc := range []struct {
+		name            string
+		originalStatus  schema.MediaHealthStatus
+		animationStatus schema.MediaHealthStatus
+		wantURL         string
+		wantMIME        string
+	}{
+		{"original", schema.MediaHealthStatusHealthy, schema.MediaHealthStatusBroken, original, "image/png"},
+		{"poster fallback", schema.MediaHealthStatusBroken, schema.MediaHealthStatusBroken, poster, "image/webp"},
+		{"animation survives", schema.MediaHealthStatusHealthy, schema.MediaHealthStatusHealthy, original, "video/mp4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			metadata := &dto.TokenMetadataResponse{
+				ImageURL: ptr(original), AnimationURL: ptr(animation), MimeType: ptr("video/mp4"),
+			}
+			enrichment := &dto.EnrichmentSourceResponse{
+				Vendor: string(schema.VendorOpenSea), ImageURL: ptr(poster), MimeType: ptr("video/mp4"),
+				AnimationURL: ptr(animation),
+			}
+			imageRow := buildHealthRow(1, schema.MediaHealthSourceMetadataImage, original, tc.originalStatus)
+			imageRow.ObservedContentType = ptr("image/png; charset=binary")
+			posterRow := buildHealthRow(1, schema.MediaHealthSourceEnrichmentImage, poster, schema.MediaHealthStatusHealthy)
+			posterRow.ObservedContentType = ptr("image/webp")
+			rows := []schema.TokenMediaHealth{
+				imageRow, posterRow,
+				buildHealthRow(1, schema.MediaHealthSourceMetadataAnimation, animation, tc.animationStatus),
+				buildHealthRow(1, schema.MediaHealthSourceEnrichmentAnimation, animation, tc.animationStatus),
+			}
+			display := dto.ApplyHealthyMediaURLs(dto.MergeTokenDisplay(metadata, enrichment), rows)
+			assert.Equal(t, ptr(tc.wantURL), display.ImageURL)
+			assert.Equal(t, ptr(tc.wantMIME), display.MimeType)
+		})
+	}
+}

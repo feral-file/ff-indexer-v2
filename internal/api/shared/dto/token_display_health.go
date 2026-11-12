@@ -1,6 +1,11 @@
 package dto
 
-import "github.com/feral-file/ff-indexer-v2/internal/store/schema"
+import (
+	"mime"
+	"strings"
+
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+)
 
 // ApplyHealthyMediaURLs filters the display URLs produced by MergeTokenDisplay against the
 // token's known health rows so the API never returns a URL that is broken.
@@ -36,6 +41,7 @@ func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.To
 	type healthKey = schema.MediaHealthSource
 	statusBySource := make(map[healthKey]schema.MediaHealthStatus, len(healthRows))
 	urlBySource := make(map[healthKey]string, len(healthRows))
+	mimeBySource := make(map[healthKey]*string, len(healthRows))
 	for _, row := range healthRows {
 		// When a source has multiple rows (shouldn't happen in normal operation, but
 		// possible during propagation windows), prefer healthy over broken.
@@ -43,6 +49,7 @@ func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.To
 		if !seen || (existing != schema.MediaHealthStatusHealthy && row.HealthStatus == schema.MediaHealthStatusHealthy) {
 			statusBySource[row.MediaSource] = row.HealthStatus
 			urlBySource[row.MediaSource] = row.MediaURL
+			mimeBySource[row.MediaSource] = row.ObservedContentType
 		}
 	}
 
@@ -75,25 +82,38 @@ func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.To
 	enrichImgStatus, hasEnrichImg := statusBySource[schema.MediaHealthSourceEnrichmentImage]
 	metaImgStatus, hasMetaImg := statusBySource[schema.MediaHealthSourceMetadataImage]
 
+	var imageSource healthKey
 	if hasEnrichImg || hasMetaImg {
 		switch {
 		case out.preferMetadataImage && metaImgStatus == schema.MediaHealthStatusHealthy:
 			metaURL := urlBySource[schema.MediaHealthSourceMetadataImage]
 			out.ImageURL = &metaURL
-			if out.AnimationURL == nil || *out.AnimationURL == "" {
-				out.MimeType = out.metadataImageMIME
-			}
+			imageSource = schema.MediaHealthSourceMetadataImage
 		case hasEnrichImg && enrichImgStatus == schema.MediaHealthStatusHealthy:
 			enrichURL := urlBySource[schema.MediaHealthSourceEnrichmentImage]
 			out.ImageURL = &enrichURL
-			if out.preferMetadataImage && (out.AnimationURL == nil || *out.AnimationURL == "") {
-				out.MimeType = out.enrichmentImageMIME
-			}
+			imageSource = schema.MediaHealthSourceEnrichmentImage
 		case hasMetaImg && metaImgStatus == schema.MediaHealthStatusHealthy:
 			metaURL := urlBySource[schema.MediaHealthSourceMetadataImage]
 			out.ImageURL = &metaURL
+			imageSource = schema.MediaHealthSourceMetadataImage
 		default:
 			out.ImageURL = nil
+		}
+	}
+
+	// A source-level MIME may describe its broken animation. Prefer the
+	// selected image's own probe so extensionless originals remain decodable,
+	// while keeping animation MIME intact whenever an animation survives.
+	if out.preferMetadataImage && imageSource != "" && (out.AnimationURL == nil || *out.AnimationURL == "") {
+		out.MimeType = out.metadataImageMIME
+		if imageSource == schema.MediaHealthSourceEnrichmentImage {
+			out.MimeType = out.enrichmentImageMIME
+		}
+		if observed := mimeBySource[imageSource]; observed != nil {
+			if imageMIME, _, err := mime.ParseMediaType(*observed); err == nil && strings.HasPrefix(imageMIME, "image/") {
+				out.MimeType = &imageMIME
+			}
 		}
 	}
 
