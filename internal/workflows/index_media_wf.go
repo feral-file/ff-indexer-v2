@@ -15,6 +15,19 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
+// isIndexableMediaURL reports whether media processing can fetch u: an absolute URL or a
+// data URI, but not onchfs://.
+//
+// Reason: onchfs://<root> parses as a URL (the root reads as a host), yet media
+// processing only fetches HTTPS and data URIs, so the job would be enqueued just to fail.
+// An onchfs work is read from chain by the player instead.
+func isIndexableMediaURL(u string) bool {
+	if types.HasOnChFSScheme(u) {
+		return false
+	}
+	return types.IsValidURL(u) || types.IsDataURI(u)
+}
+
 // IndexMultipleMediaWorkflow handles the media processing for a list of URLs
 // It triggers child workflows concurrently (fire and forget) for each URL
 func (w *mediaWorkflows) IndexMultipleMediaWorkflow(ctx context.Context, urls []string) error {
@@ -23,7 +36,7 @@ func (w *mediaWorkflows) IndexMultipleMediaWorkflow(ctx context.Context, urls []
 	// Remove duplicate URLs
 	uniqueURLs := make(map[string]bool)
 	for _, url := range urls {
-		if types.IsValidURL(url) || types.IsDataURI(url) {
+		if isIndexableMediaURL(url) {
 			uniqueURLs[url] = true
 		}
 	}

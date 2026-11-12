@@ -685,7 +685,6 @@ func TestMediaHealthSweeperConfig_EffectiveURI(t *testing.T) {
 	root := URIConfig{
 		IPFSGateways:        []string{"https://ipfs.io"},
 		ArweaveGateways:     []string{"https://arweave.net"},
-		OnchfsGateways:      []string{"https://onchfs.fxhash2.xyz"},
 		ProbeMaxBytes:       32768,
 		KnownBadPageMarkers: []string{"504 gateway time-out"},
 	}

@@ -3493,6 +3493,9 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		  -- navigation for them is refused by the SSRF policy, so they would loop as
 		  -- stalled forever. Explicitly out of L1 coverage (see docs/media_viewability.md).
 		  AND h.media_url NOT LIKE 'data:%'
+		  -- onchfs:// is read from chain by the player; the probe's browser has no reader
+		  -- for it and would loop it as stalled the same way.
+		  AND h.media_url NOT LIKE 'onchfs:%'
 		GROUP BY h.media_url, p.media_url_hash, p.captured_at, p.health_gated, p.verdict
 		-- Three priority tiers, guarding against two starvation modes at once (both bite
 		-- when the never-probed backlog is weeks long, as it is at initial rollout):

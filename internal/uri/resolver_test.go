@@ -171,19 +171,17 @@ func TestResolver_Resolve(t *testing.T) {
 			expectedErr: "no working Arweave gateway found",
 		},
 		{
-			name: "OnChFS URI resolves",
-			uri:  "onchfs://" + onchHash,
-			config: &uri.Config{
-				OnChFSGateways: []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
-				passthroughIO(mio)
-				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://onchfs.fxhash2.xyz/"+onchHash, probeRangeHeader).
-					Return(httpResp(http.StatusOK, "image/png", minimalPNG(16, 16), nil), nil).
-					AnyTimes()
-			},
-			expected: "https://onchfs.fxhash2.xyz/" + onchHash,
+			// onchfs has no gateway: the URI is canonical and resolves without a probe.
+			name:     "OnChFS URI is returned unchanged",
+			uri:      "onchfs://" + onchHash + "/?fxhash=oo1&fxiteration=140",
+			config:   &uri.Config{},
+			expected: "onchfs://" + onchHash + "/?fxhash=oo1&fxiteration=140",
+		},
+		{
+			name:     "OnChFS gateway URL is rewritten to its onchfs URI",
+			uri:      "https://onchfs.fxhash2.xyz/" + onchHash + "/?fxhash=0xb56f&fxiteration=44",
+			config:   &uri.Config{},
+			expected: "onchfs://" + onchHash + "/?fxhash=0xb56f&fxiteration=44",
 		},
 		{
 			name:        "IPFS URI with no gateways configured",

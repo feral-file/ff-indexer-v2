@@ -317,8 +317,5 @@ func UriToGateway(uri string) string {
 	if after, ok := strings.CutPrefix(uri, "ar://"); ok {
 		return fmt.Sprintf("%s/%s", DEFAULT_ARWEAVE_GATEWAY, after)
 	}
-	if after, ok := strings.CutPrefix(uri, "onchfs://"); ok {
-		return fmt.Sprintf("%s/%s", DEFAULT_ONCHFS_GATEWAY, after)
-	}
 	return uri
 }

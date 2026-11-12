@@ -67,7 +67,6 @@ func defaultConfig() *uri.Config {
 	return &uri.Config{
 		IPFSGateways:        []string{"https://ipfs.filebase.io"},
 		ArweaveGateways:     []string{"https://arweave.net"},
-		OnChFSGateways:      []string{"https://onchfs.fxhash2.xyz"},
 		KnownBadPageMarkers: []string{"504 gateway time-out"},
 	}
 }
@@ -591,19 +590,46 @@ func TestURLChecker_Check(t *testing.T) {
 			expectedURL:    strPtr("https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"),
 		},
 		{
-			name: "OnChFS URL broken - fallback resolves",
+			// No gateway serves onchfs any more, so a gateway URL is probed directly and
+			// nothing else is tried; ingest rewrites these to onchfs:// instead.
+			name: "OnChFS gateway URL broken - no gateway fallback",
 			url:  "https://onchfs.example.com/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
 				passthroughIO(mio)
 				m.EXPECT().
 					GetResponseNoRetry(gomock.Any(), "https://onchfs.example.com/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890", probeRangeHeader).
-					Return(httpResp(http.StatusInternalServerError, "", nil, nil), nil)
-				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890", probeRangeHeader).
-					Return(httpResp(http.StatusOK, "image/png", minimalPNG(16, 16), nil), nil)
+					Return(httpResp(http.StatusInternalServerError, "", nil, nil), nil).
+					Times(1)
 			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureHTTPStatus,
+		},
+		{
+			// No mocks: any network call fails the test.
+			name:           "onchfs URI with iteration query is healthy without a probe",
+			url:            "onchfs://a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890/?fxhash=oo1&fxiteration=140&fxminter=tz1abc",
+			setupMocks:     func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    strPtr("https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"),
+		},
+		{
+			name:           "bare onchfs root is healthy without a probe",
+			url:            "onchfs://a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			setupMocks:     func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {},
+			expectedStatus: uri.HealthStatusHealthy,
+		},
+		{
+			name:           "onchfs URI with a short root is invalid",
+			url:            "onchfs://a1b2c3d4/index.html",
+			setupMocks:     func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureInvalidURL,
+		},
+		{
+			name:           "onchfs URI with no root is invalid",
+			url:            "onchfs://",
+			setupMocks:     func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureInvalidURL,
 		},
 	}
 
@@ -678,7 +704,6 @@ func TestURLChecker_ssrfBlocked_skipsGatewayFallback(t *testing.T) {
 	}{
 		{name: "IPFS gateway URL", url: "http://127.0.0.1/ipfs/" + cid},
 		{name: "Arweave gateway URL", url: "http://127.0.0.1/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"},
-		{name: "OnChFS URL", url: "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"},
 	}
 
 	for _, tt := range tests {

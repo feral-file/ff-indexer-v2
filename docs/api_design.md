@@ -132,6 +132,7 @@ Design rules:
 - Comma-separated values such as `?expand=metadata,display` are invalid and return HTTP **422**.
 - Allowed values are **closed enums** per endpoint; adding a value is a **minor** API change if optional.
 - **`media_asset` / `media_assets`:** Behavior is **compositional** — it depends on which source expansions are requested (`metadata`, `enrichment_source`, `display`). New combinations must be documented to avoid surprising empty results.
+- **Media URL schemes:** `image_url` / `animation_url` (in `metadata`, `enrichment_source` and `display`) are usually `https://` or `data:`, but an fxhash work stored on onchfs is returned as its `onchfs://<root>[/path][?query]` URI, the form its on-chain metadata uses. No gateway serves onchfs since fxhash closed (2026-08-17), so clients must read it from chain (the file system contract on the token's chain) or show the image instead. Such a token can be viewable: its health is decided from the URI's form (see `docs/media_viewability.md`).
 
 ### GraphQL
 

@@ -136,8 +136,23 @@ A query directly after the CID (`…/ipfs/<cid>?fxhash=x`) must keep the URL rec
 an unrecognized URL never enters fallback, so its health row can never heal. Measured
 2026-08-13 — 3 fxhash artworks stored on `ipfs.feralfile.com` sat permanently broken for
 exactly this reason and healed to a serving gateway once recognized, `fxhash` intact so
-the promoted URL still addresses the minted iteration (same contract as OnChFS refs on
-issue #76).
+the promoted URL still addresses the minted iteration.
+
+**onchfs is a canonical URI, healthy by form.** fxhash's onchfs gateway
+(`onchfs.fxhash2.xyz`), the only one that ever existed, stopped resolving when fxhash
+closed (2026-08-17), and no other host serves onchfs. The indexer therefore stores an
+onchfs work as `onchfs://<root>[/path][?query]` — byte-identical to the `artifactUri` in
+its on-chain metadata — and never as a gateway URL: ingest returns an `onchfs://` source
+unchanged and rewrites any OnChFS gateway URL a vendor supplies back to it
+(`types.CanonicalOnChFSURI`; backfilled by `034_onchfs_canonical_uri.sql`, issue #173).
+The checker classifies it without any request: a 64-hex root (plus optional path, query
+or fragment) is `healthy`, anything else with the scheme is `broken`/`invalid_url`. The
+content is written to the file system contract and cannot vanish the way a host or a pin
+can, and a chain read would make every verdict depend on RPC uptime. The rule proves the
+reference is well formed, not that the root was written; every root the indexer held
+when it shipped was checked on chain and exists. Reading the bytes is the player's job.
+MIME detection, media processing and the L1 render probe all skip the scheme, and a
+re-index keeps the MIME type stored for the same work.
 
 **Directory entry-point retry (insurance, not the main path).** When IPFS selection fails
 and some candidate served a directory listing, selection retries once with
@@ -174,8 +189,8 @@ SSRF policy refusals are final and never trigger gateway fallback. DNS failures 
 | `known_error_page` | configured error-page marker matched | validator |
 | `zero_length` | empty body | validator |
 | `truncated` | body ended before declared length | validator |
-| `invalid_url` | URL failed basic parsing; no fetch attempted | checker |
-| `unsupported_scheme` | non-HTTP(S) scheme escaped ingest normalization; no fetch attempted | checker |
+| `invalid_url` | URL failed basic parsing, or an `onchfs://` URI lacks a 64-hex root; no fetch attempted | checker |
+| `unsupported_scheme` | non-HTTP(S) scheme (`ipfs://`, `ar://`, …) escaped ingest normalization; no fetch attempted. `onchfs://` is never this: it is canonical | checker |
 | `transport` | transport-level fetch failure with no more specific entry (TLS, protocol, non-retryable connection errors). Timeouts, cancellations and retryable connection errors are `transient_error` and never persist this reason; rows persisted before that rule heal on their next successful probe | probe |
 | `data_uri_invalid` | data: URI failed RFC 2397 parsing | data URI checker |
 | `unsupported_mime_type` | data: URI declared a mime type outside the supported set | data URI checker |
@@ -524,7 +539,8 @@ buffer is allocated.
 
 Data URIs are **out of L1 scope**: their bytes are inline and already validated by L0, and
 chromium navigation for them is refused by the SSRF policy. They are excluded in the
-render-due query rather than looping as stalled.
+render-due query rather than looping as stalled. `onchfs://` URIs are excluded the same
+way: the probe's browser has no onchfs reader and no gateway serves it.
 
 Fingerprint workflow for operators: capture the offending page once, compute its pHash,
 add it to `render_probe.known_bad_fingerprints` with a small `max_distance` (4-8) and a
@@ -541,8 +557,6 @@ The sample config ships a starter set measured against the live public gateways
 | `kubo-error-page-500` | `0x9f1f2f616060687d` | Kubo invalid-CID/error template (bit-identical on ipfs.io and dweb.link) |
 | `kubo-error-page-504` | `0x9f1f3f7170706070` | Kubo gateway-timeout template |
 | `arweave-404` | `0xcfcf6630303899d9` | arweave.net "404 - Page not found." |
-| `onchfs-not-found` | `0x9c1e1e1e1e1e1e1e` | onchfs.fxhash2.xyz resource-not-found |
-| `onchfs-bad-uri` | `0x8f0f0f0f0f078787` | onchfs.fxhash2.xyz invalid-URI |
 | `ipfs-dir-listing` | `0xe76f18183d697868` | Kubo directory listing (bit-identical on ipfs.io and dweb.link) |
 
 Why these are safe at `max_distance: 6`: the minimum Hamming distance from any of these

@@ -46,12 +46,13 @@ const (
 	// before or below content validation would otherwise be indistinguishable from
 	// never-probed rows in coverage metrics and per-reason dashboards.
 
-	// FailureInvalidURL indicates the URL failed basic parsing (no scheme or no host);
-	// no fetch was attempted.
+	// FailureInvalidURL indicates the URL failed basic parsing (no scheme or no host),
+	// or is an onchfs:// URI without a 64-hex root; no fetch was attempted.
 	FailureInvalidURL FailureReason = "invalid_url"
 	// FailureUnsupportedScheme indicates a non-HTTP(S) scheme reached the checker (an
-	// ipfs:// / ar:// / onchfs:// reference that escaped gateway normalization at
-	// ingest); no fetch was attempted. Tracked separately from invalid_url because these
+	// ipfs:// / ar:// reference that escaped gateway normalization at ingest); no fetch
+	// was attempted. onchfs:// never lands here: it is a canonical URI the checker
+	// classifies locally. Tracked separately from invalid_url because these
 	// rows are candidates for healing by normalization, not by the origin recovering.
 	FailureUnsupportedScheme FailureReason = "unsupported_scheme"
 	// FailureTransport indicates a transport-level fetch failure with no more specific

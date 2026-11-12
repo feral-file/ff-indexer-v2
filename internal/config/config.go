@@ -36,7 +36,6 @@ type LoggingConfig struct {
 type URIConfig struct {
 	IPFSGateways    []string `mapstructure:"ipfs_gateways"`
 	ArweaveGateways []string `mapstructure:"arweave_gateways"`
-	OnchfsGateways  []string `mapstructure:"onchfs_gateways"`
 	// ProbeMaxBytes caps how many body bytes a health probe reads for content validation
 	// (0 = uri.DefaultProbeMaxBytes)
 	ProbeMaxBytes int `mapstructure:"probe_max_bytes"`
@@ -485,9 +484,6 @@ func (c *MediaHealthSweeperConfig) EffectiveURI(root URIConfig) URIConfig {
 	}
 	if len(effective.ArweaveGateways) == 0 {
 		effective.ArweaveGateways = root.ArweaveGateways
-	}
-	if len(effective.OnchfsGateways) == 0 {
-		effective.OnchfsGateways = root.OnchfsGateways
 	}
 	if effective.ProbeMaxBytes <= 0 {
 		effective.ProbeMaxBytes = root.ProbeMaxBytes
@@ -1137,7 +1133,6 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("vendors.opensea_url", "https://api.opensea.io/api/v2")
 
 	// URI
-	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.feralfile.com", domain.DEFAULT_IPFS_GATEWAY})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
@@ -1357,7 +1352,6 @@ func bindAllEnvVars(v *viper.Viper) {
 		// URI
 		"uri.ipfs_gateways",
 		"uri.arweave_gateways",
-		"uri.onchfs_gateways",
 		"uri.probe_max_bytes",
 		"uri.known_bad_page_markers",
 		// Cloudflare
@@ -1408,7 +1402,6 @@ func bindAllEnvVars(v *viper.Viper) {
 		"media_health_sweeper.worker.queue_size",
 		"media_health_sweeper.uri.ipfs_gateways",
 		"media_health_sweeper.uri.arweave_gateways",
-		"media_health_sweeper.uri.onchfs_gateways",
 		"media_health_sweeper.uri.probe_max_bytes",
 		"media_health_sweeper.uri.known_bad_page_markers",
 		// Moderation Verdict Sweeper config

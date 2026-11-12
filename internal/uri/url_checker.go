@@ -54,7 +54,7 @@ const (
 // HealthCheckResult represents the result of checking a URL's health
 type HealthCheckResult struct {
 	Status      HealthStatus
-	WorkingURL  *string // Alternative working URL if found (for IPFS/Arweave/OnChFS)
+	WorkingURL  *string // Alternative working URL if found (for IPFS/Arweave)
 	Error       *string // Error message if broken
 	SSRFBlocked bool    // True when ssrf.ErrBlocked refused the fetch (policy); false for DNS (ErrResolutionFailed) or transport errors
 
@@ -386,7 +386,6 @@ type urlChecker struct {
 	probe           *contentProbe
 	ipfsGateways    []string
 	arweaveGateways []string
-	onchfsGateways  []string
 }
 
 // NewURLChecker creates a new health checker. The content validator is built from the
@@ -401,7 +400,6 @@ func NewURLChecker(httpClient adapter.HTTPClient, io adapter.IO, config *Config)
 		},
 		ipfsGateways:    config.IPFSGateways,
 		arweaveGateways: config.ArweaveGateways,
-		onchfsGateways:  config.OnChFSGateways,
 	}
 }
 
@@ -412,6 +410,11 @@ func NewURLChecker(httpClient adapter.HTTPClient, io adapter.IO, config *Config)
 // Trade-off: unsupported retired addresses require a corrected source URL before
 // they can pass health checks; automatic IPNS migration is not supported.
 func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
+	// onchfs:// is decided locally: its content lives on chain and no gateway serves it.
+	if types.HasOnChFSScheme(url) {
+		return checkOnChFSURI(url)
+	}
+
 	// Validate that this is an HTTP/HTTPS URL. Both pre-fetch rejections carry a
 	// FailureReason: they are persisted broken verdicts, and a reasonless broken row is
 	// indistinguishable from a never-probed one (its classification columns are all
@@ -438,7 +441,7 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	// 1. Always try the URL directly first (validated ranged GET)
 	result := c.probe.probe(ctx, url, true).hcr
 
-	// 2. SSRF policy refusal is final: do not run IPFS/Arweave/OnChFS fallbacks that could
+	// 2. SSRF policy refusal is final: do not run IPFS/Arweave fallbacks that could
 	// re-probe public gateways and rewrite a blocklisted origin as "healthy".
 	if result.SSRFBlocked {
 		return result
@@ -529,19 +532,33 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		})
 	}
 
-	// Check if it's an OnChFS URL - resolve the same resource across configured gateways.
-	// The reference keeps the fxhash query parameters so alternative gateways are asked for
-	// the artwork iteration a player loads, not just the bare content hash (issue #76).
-	if isOnChFS, hash := types.IsOnChFSGatewayURL(url); isOnChFS {
-		ref := OnChFSGatewayRef(url, hash)
-		logger.InfoCtx(ctx, "Direct check failed, trying OnChFS gateway resolution", zap.String("url", url), zap.String("ref", ref))
-		return c.checkGatewayFallback(ctx, result, minConclusiveGateways(c.onchfsGateways), func(ctx context.Context, probe GatewayProbe) (string, error) {
-			return FindWorkingOnChFSGateway(ctx, probe, ref, c.onchfsGateways)
-		})
-	}
-
 	// 5. For other HTTP URLs, return the original result
 	return result
+}
+
+// checkOnChFSURI classifies an onchfs:// URI without any network call: a well-formed URI
+// (64-hex root plus optional path, query or fragment) is healthy, anything else is broken
+// with invalid_url.
+//
+// Reason: onchfs content is written to the file system contract and cannot disappear the
+// way a host or a pinned file can, and fxhash's gateway, the only one that existed, is gone.
+// Probing would need a chain reader and would make every verdict depend on RPC uptime,
+// which is how these works became hidden in the first place.
+//
+// Trade-offs: the rule proves the reference is well formed, not that its root was ever
+// written. Every root the indexer held when this shipped was checked on chain and exists
+// (issue #173), and fxhash, the only producer, has closed. Whether a work renders is the
+// player's job; the render probe skips this scheme.
+func checkOnChFSURI(url string) HealthCheckResult {
+	if types.IsOnChFSURI(url) {
+		return HealthCheckResult{Status: HealthStatusHealthy}
+	}
+	errMsg := "invalid onchfs URI: expected onchfs://<64-hex root>"
+	return HealthCheckResult{
+		Status:        HealthStatusBroken,
+		Error:         &errMsg,
+		FailureReason: FailureInvalidURL,
+	}
 }
 
 // checkGatewayFallback runs a gateway resolution and maps its outcome to a health result.
@@ -783,7 +800,7 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 // broken/transport and could flip a viewable token to unviewable while the same URL
 // served moments later (seen in production after the sweep was unblocked).
 // Trade-offs: a host that times out on every attempt keeps its last conclusive verdict
-// rather than turning broken; IPFS/Arweave/OnChFS URLs still fall back to a gateway that
+// rather than turning broken; IPFS/Arweave URLs still fall back to a gateway that
 // answers, and the sweep defers these rows instead of reselecting them.
 // Constraints: SSRF refusals are classified before this and stay broken; a completed DNS
 // lookup stays broken/dns. Other net timeouts (TLS handshake, i/o timeout) and refused/
