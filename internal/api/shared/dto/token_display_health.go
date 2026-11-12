@@ -86,7 +86,9 @@ func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.To
 	var imageSource healthKey
 	if hasEnrichImg || hasMetaImg {
 		switch {
-		case out.preferMetadataImage && (out.AnimationURL == nil || *out.AnimationURL == "") && metaImgStatus == schema.MediaHealthStatusHealthy:
+		case out.preferMetadataImage && (out.AnimationURL == nil || *out.AnimationURL == "") && metaImgStatus == schema.MediaHealthStatusHealthy &&
+			!isSVGImage(urlBySource[schema.MediaHealthSourceMetadataImage], mimeBySource[schema.MediaHealthSourceMetadataImage]) &&
+			!isSVGImage(urlBySource[schema.MediaHealthSourceMetadataImage], out.metadataImageMIME):
 			metaURL := urlBySource[schema.MediaHealthSourceMetadataImage]
 			out.ImageURL = &metaURL
 			imageSource = schema.MediaHealthSourceMetadataImage

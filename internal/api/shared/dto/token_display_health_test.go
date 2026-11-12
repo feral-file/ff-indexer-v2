@@ -359,3 +359,34 @@ func TestOpenSeaAnimatedWorkKeepsPosterWithoutHealth(t *testing.T) {
 	assert.Equal(t, enrichment.AnimationURL, display.AnimationURL)
 	assert.Equal(t, ptr("video/mp4"), display.MimeType)
 }
+
+func TestOpenSeaSVGOriginalKeepsRasterPoster(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		original     string
+		metadataMIME *string
+		observedMIME *string
+	}{
+		{"metadata type", "https://ipfs.example/original", ptr("image/svg+xml"), nil},
+		{"observed type", "https://ipfs.example/original", nil, ptr("image/svg+xml")},
+		{"extension", "https://example.com/original.svg?version=1", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			metadata := &dto.TokenMetadataResponse{ImageURL: ptr(tc.original), MimeType: tc.metadataMIME}
+			enrichment := &dto.EnrichmentSourceResponse{
+				Vendor:   string(schema.VendorOpenSea),
+				ImageURL: ptr("https://cdn.example/poster.png"), MimeType: ptr("image/png"),
+			}
+			imageRow := buildHealthRow(1, schema.MediaHealthSourceMetadataImage, tc.original, schema.MediaHealthStatusHealthy)
+			imageRow.ObservedContentType = tc.observedMIME
+			posterRow := buildHealthRow(1, schema.MediaHealthSourceEnrichmentImage, *enrichment.ImageURL, schema.MediaHealthStatusHealthy)
+			posterRow.ObservedContentType = ptr("image/png")
+			display := dto.ApplyHealthyMediaURLs(dto.MergeTokenDisplay(metadata, enrichment), []schema.TokenMediaHealth{imageRow, posterRow})
+			assert.Equal(t, enrichment.ImageURL, display.ImageURL)
+			assert.Equal(t, ptr("image/png"), display.MimeType)
+			if tc.observedMIME == nil {
+				assert.Equal(t, enrichment.ImageURL, dto.MergeTokenDisplay(metadata, enrichment).ImageURL)
+			}
+		})
+	}
+}
