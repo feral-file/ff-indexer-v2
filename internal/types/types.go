@@ -210,8 +210,15 @@ func NormalizeIPFSGatewayURL(s string) string {
 	if normalized == ref {
 		return s
 	}
-	// ref is the exact tail of s: the pattern anchors "<cid><suffix>" to the end.
-	return s[:len(s)-len(ref)] + normalized
+	// Only the suffix after the CID is a literal tail of s. On a path gateway the CID
+	// precedes it in the path; on a subdomain gateway ("<cid>.ipfs.<host>?q") the CID
+	// is in the hostname and ref is reconstructed, so slicing by len(ref) would cut
+	// into the host. A CID holds none of "/?#", so the suffix opens at the first one.
+	i := strings.IndexAny(ref, "/?#")
+	if i < 0 {
+		return s
+	}
+	return s[:len(s)-len(ref[i:])] + normalized[i:]
 }
 
 // EquivalentIPFSReference is SameIPFSReference after NormalizeIPFSGatewayURL on both

@@ -1397,6 +1397,21 @@ func TestNormalizeIPFSGatewayURL(t *testing.T) {
 			expected: "https://generator.artblocks.io/1/0xabc/88?x=1",
 		},
 		{
+			name:     "subdomain gateway keeps its hostname and gets the slash in the path",
+			input:    "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.filebase.io?fxhash=oo123",
+			expected: "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.filebase.io/?fxhash=oo123",
+		},
+		{
+			name:     "subdomain gateway with a fragment only",
+			input:    "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.dweb.link#view",
+			expected: "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.dweb.link/#view",
+		},
+		{
+			name:     "subdomain gateway already slashed is unchanged",
+			input:    "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.filebase.io/?fxhash=oo123",
+			expected: "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.filebase.io/?fxhash=oo123",
+		},
+		{
 			name:     "ipfs scheme is not a gateway URL and is unchanged",
 			input:    "ipfs://" + cid + "?fxhash=oo123",
 			expected: "ipfs://" + cid + "?fxhash=oo123",
