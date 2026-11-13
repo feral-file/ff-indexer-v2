@@ -530,8 +530,10 @@ func TestURLChecker_Check(t *testing.T) {
 				m.EXPECT().
 					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid+"?fxhash=oo123", probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
+				// Fallback probes the slashed shape: a gateway answers the bare shape with a
+				// redirect that drops the query (domain.NormalizeIPFSRef).
 				m.EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"?fxhash=oo123", probeRangeHeader).
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"/?fxhash=oo123", probeRangeHeader).
 					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 				m.EXPECT().
 					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"/index.html?fxhash=oo123", probeRangeHeader).

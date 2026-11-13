@@ -1149,3 +1149,93 @@ func TestNormalizeAddresses(t *testing.T) {
 func stringPtr(s string) *string {
 	return &s
 }
+
+func TestNormalizeIPFSRef(t *testing.T) {
+	cid := "QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon"
+	tests := []struct {
+		name     string
+		ref      string
+		expected string
+	}{
+		{
+			name:     "fxhash gentk shape: bare CID with query gets the directory slash",
+			ref:      cid + "?fxhash=ooCaGyZkD8Yyw6zXM82kRriW6uUmWRYCSBxavnHtvyagq1EFeKu",
+			expected: cid + "/?fxhash=ooCaGyZkD8Yyw6zXM82kRriW6uUmWRYCSBxavnHtvyagq1EFeKu",
+		},
+		{
+			name:     "bare CID with fragment gets the directory slash",
+			ref:      cid + "#seed=1",
+			expected: cid + "/#seed=1",
+		},
+		{
+			name:     "bare CID without query is unchanged",
+			ref:      cid,
+			expected: cid,
+		},
+		{
+			name:     "trailing slash already present is unchanged",
+			ref:      cid + "/?fxhash=oo1&fxiteration=94",
+			expected: cid + "/?fxhash=oo1&fxiteration=94",
+		},
+		{
+			name:     "entry path before the query is unchanged",
+			ref:      cid + "/index.html?fxhash=oo1",
+			expected: cid + "/index.html?fxhash=oo1",
+		},
+		{
+			name:     "empty ref is unchanged",
+			ref:      "",
+			expected: "",
+		},
+		{
+			name:     "query only is unchanged",
+			ref:      "?fxhash=oo1",
+			expected: "?fxhash=oo1",
+		},
+		{
+			name:     "bare delimiter with nothing after it is unchanged",
+			ref:      cid + "?",
+			expected: cid + "?",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, NormalizeIPFSRef(tt.ref))
+		})
+	}
+}
+
+func TestUriToGateway(t *testing.T) {
+	cid := "QmQzbsQM9hd6vc821LmpHCkLXv18fZfhbJf6ygyVhqWB5a"
+	tests := []struct {
+		name     string
+		uri      string
+		expected string
+	}{
+		{
+			name:     "ipfs URI with query directly after the CID carries the directory slash",
+			uri:      "ipfs://" + cid + "?fxhash=opNGjLnKMKo55UdNaLMXPau7pZsUDZEumxzCP5A3NSPNpq29PQk",
+			expected: DEFAULT_IPFS_GATEWAY + "/ipfs/" + cid + "/?fxhash=opNGjLnKMKo55UdNaLMXPau7pZsUDZEumxzCP5A3NSPNpq29PQk",
+		},
+		{
+			name:     "ipfs URI without query is unchanged",
+			uri:      "ipfs://" + cid,
+			expected: DEFAULT_IPFS_GATEWAY + "/ipfs/" + cid,
+		},
+		{
+			name:     "arweave URI",
+			uri:      "ar://sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expected: DEFAULT_ARWEAVE_GATEWAY + "/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:     "http URL passes through",
+			uri:      "https://example.com/a.html?x=1",
+			expected: "https://example.com/a.html?x=1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, UriToGateway(tt.uri))
+		})
+	}
+}

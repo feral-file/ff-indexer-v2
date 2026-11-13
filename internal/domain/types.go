@@ -309,10 +309,33 @@ func validTokenNumber(tokenNumber string) bool {
 	return regexp.MustCompile(`^[0-9]*$`).MatchString(tokenNumber)
 }
 
+// NormalizeIPFSRef returns a gateway-relative IPFS ref ("<cid>[/path][?query][#fragment]")
+// with a "/" between a bare CID and its query or fragment.
+//
+// Reason: fxhash gentk v1/v2 metadata addresses an iteration as
+// "ipfs://<cid>?fxhash=<hash>" with no slash. Every public gateway answers that URL for a
+// directory CID with a 301 to "/ipfs/<cid>/" and drops the query, so the fxhash snippet
+// reads a null hash, throws before the sketch runs, and the work displays as a blank
+// frame while every byte check passes. "<cid>/?fxhash=…" is served directly, and a file
+// CID with a trailing slash is still served by the gateways we use, so the slash is
+// safe for both. A ref with a path, an existing trailing slash, no query, or a bare
+// delimiter with nothing after it ("<cid>?") is returned unchanged.
+func NormalizeIPFSRef(ref string) string {
+	i := strings.IndexAny(ref, "?#")
+	if i < 0 {
+		return ref
+	}
+	path, rest := ref[:i], ref[i:]
+	if path == "" || len(rest) == 1 || strings.Contains(path, "/") {
+		return ref
+	}
+	return path + "/" + rest
+}
+
 // UriToGateway converts a URI to a gateway URL
 func UriToGateway(uri string) string {
 	if after, ok := strings.CutPrefix(uri, "ipfs://"); ok {
-		return fmt.Sprintf("%s/ipfs/%s", DEFAULT_IPFS_GATEWAY, after)
+		return fmt.Sprintf("%s/ipfs/%s", DEFAULT_IPFS_GATEWAY, NormalizeIPFSRef(after))
 	}
 	if after, ok := strings.CutPrefix(uri, "ar://"); ok {
 		return fmt.Sprintf("%s/%s", DEFAULT_ARWEAVE_GATEWAY, after)

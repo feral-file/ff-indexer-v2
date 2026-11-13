@@ -1358,3 +1358,79 @@ func TestSameIPFSReference(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeIPFSGatewayURL(t *testing.T) {
+	cid := "QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon"
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "bare CID with fxhash query gets the directory slash on the same host",
+			input:    "https://ipfs.raribleuserdata.com/ipfs/" + cid + "?fxhash=ooCaGyZkD8Yyw6zXM82kRriW6uUmWRYCSBxavnHtvyagq1EFeKu",
+			expected: "https://ipfs.raribleuserdata.com/ipfs/" + cid + "/?fxhash=ooCaGyZkD8Yyw6zXM82kRriW6uUmWRYCSBxavnHtvyagq1EFeKu",
+		},
+		{
+			name:     "query and fragment",
+			input:    "https://ipfs.filebase.io/ipfs/" + cid + "?fxhash=oo123#view",
+			expected: "https://ipfs.filebase.io/ipfs/" + cid + "/?fxhash=oo123#view",
+		},
+		{
+			name:     "already slashed is unchanged",
+			input:    "https://ipfs.filebase.io/ipfs/" + cid + "/?fxhash=oo123",
+			expected: "https://ipfs.filebase.io/ipfs/" + cid + "/?fxhash=oo123",
+		},
+		{
+			name:     "path before the query is unchanged",
+			input:    "https://ipfs.filebase.io/ipfs/" + cid + "/index.html?fxhash=oo123",
+			expected: "https://ipfs.filebase.io/ipfs/" + cid + "/index.html?fxhash=oo123",
+		},
+		{
+			name:     "bare CID without query is unchanged",
+			input:    "https://ipfs.filebase.io/ipfs/" + cid,
+			expected: "https://ipfs.filebase.io/ipfs/" + cid,
+		},
+		{
+			name:     "non-gateway URL with a query is unchanged",
+			input:    "https://generator.artblocks.io/1/0xabc/88?x=1",
+			expected: "https://generator.artblocks.io/1/0xabc/88?x=1",
+		},
+		{
+			name:     "subdomain gateway keeps its hostname and gets the slash in the path",
+			input:    "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.filebase.io?fxhash=oo123",
+			expected: "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.filebase.io/?fxhash=oo123",
+		},
+		{
+			name:     "subdomain gateway with a fragment only",
+			input:    "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.dweb.link#view",
+			expected: "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.dweb.link/#view",
+		},
+		{
+			name:     "subdomain gateway already slashed is unchanged",
+			input:    "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.filebase.io/?fxhash=oo123",
+			expected: "https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.filebase.io/?fxhash=oo123",
+		},
+		{
+			name:     "ipfs scheme is not a gateway URL and is unchanged",
+			input:    "ipfs://" + cid + "?fxhash=oo123",
+			expected: "ipfs://" + cid + "?fxhash=oo123",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, NormalizeIPFSGatewayURL(tt.input))
+		})
+	}
+}
+
+func TestEquivalentIPFSReference(t *testing.T) {
+	cid := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+	bare := "https://ipfs.io/ipfs/" + cid + "?filename=preview.png"
+	slashed := "https://ipfs.filebase.io/ipfs/" + cid + "/?filename=preview.png"
+	assert.False(t, SameIPFSReference(bare, slashed), "stored-URL preference stays exact")
+	assert.True(t, EquivalentIPFSReference(bare, slashed), "assets follow the slash-normalized replacement")
+	assert.True(t, EquivalentIPFSReference("https://a.example/ipfs/"+cid, "https://b.example/ipfs/"+cid))
+	assert.False(t, EquivalentIPFSReference("https://a.example/ipfs/"+cid, "https://b.example/ipfs/"+cid+"/index.html"))
+	assert.False(t, EquivalentIPFSReference("https://a.example/ipfs/"+cid+"?x=1", "https://b.example/ipfs/"+cid+"?x=2"))
+}
