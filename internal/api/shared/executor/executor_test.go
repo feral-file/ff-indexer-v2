@@ -689,7 +689,7 @@ func TestTriggerReleaseIndexing_WhitespaceOnlySlugTreatedAsAbsent(t *testing.T) 
 func TestTriggerReleaseIndexing_ZeroMintNumberRejected(t *testing.T) {
 	t.Parallel()
 
-	for _, vendor := range []string{"artblocks", "feralfile", "fxhash", "objkt"} {
+	for _, vendor := range []string{"artblocks", "feralfile", "objkt"} {
 		vendor := vendor
 		t.Run(vendor, func(t *testing.T) {
 			t.Parallel()
@@ -735,16 +735,15 @@ func TestTriggerReleaseIndexing_OpenSeaVendorRejected(t *testing.T) {
 
 // ── API-vendor span cap (executor layer, covers the GraphQL path) ─────────────
 
-func TestTriggerReleaseIndexing_SpanTooWideForFxhash(t *testing.T) {
+// The GraphQL path calls the executor directly, so it must reject fxhash itself.
+func TestTriggerReleaseIndexing_FxhashRejected(t *testing.T) {
 	t.Parallel()
 
 	exec := newReleaseIndexingExecutor(t)
-	// span = 50000 - 1 = 49999, exceeds MAX_API_VENDOR_MINT_SPAN = 1000
-	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "some-id", "", []int64{1, 50000})
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "9997", "", []int64{1, 2})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mint_numbers span")
-	assert.Contains(t, err.Error(), "fxhash")
+	assert.Contains(t, err.Error(), "fxhash release indexing is no longer supported")
 }
 
 func TestTriggerReleaseIndexing_SpanTooWideForFeralFile(t *testing.T) {
@@ -781,12 +780,12 @@ func newReleaseIndexingExecutorWithEnqueue(t *testing.T) executor.Executor {
 	)
 }
 
-func TestTriggerReleaseIndexing_SpanAtLimitForFxhash(t *testing.T) {
+func TestTriggerReleaseIndexing_SpanAtLimitForFeralFile(t *testing.T) {
 	t.Parallel()
 
 	// span = 1001 - 1 = 1000 = MAX_API_VENDOR_MINT_SPAN — must pass span validation.
 	exec := newReleaseIndexingExecutorWithEnqueue(t)
-	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "some-id", "", []int64{1, 1001})
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "feralfile", "some-uuid", "", []int64{1, 1001})
 
 	require.NoError(t, err)
 }
@@ -880,12 +879,12 @@ func TestTriggerReleaseIndexing_WhitespacePaddedSlugIsNormalized(t *testing.T) {
 		executor.AddressIndexingThrottle{},
 	)
 
-	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "", "\t industrial-park \n", []int64{1})
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "feralfile", "", "\t data-pilgrims-01-769 \n", []int64{1})
 	require.NoError(t, err)
 
 	// Args[2] is the enqueued vendorReleaseSlug — must be trimmed.
 	require.Len(t, capturedOpts.Args, 4)
-	assert.Equal(t, "industrial-park", capturedOpts.Args[2], "vendorReleaseSlug must be normalized before enqueueing")
+	assert.Equal(t, "data-pilgrims-01-769", capturedOpts.Args[2], "vendorReleaseSlug must be normalized before enqueueing")
 }
 
 // TestGetTokens_SpamAndViewabilityFlagsMapToFilter pins the two adjacent *bool parameters

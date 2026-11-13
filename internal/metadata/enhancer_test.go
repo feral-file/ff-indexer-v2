@@ -16,7 +16,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -31,7 +30,6 @@ type testEnhancerMocks struct {
 	uriResolver     *mocks.MockURIResolver
 	artblocksClient *mocks.MockArtBlocksClient
 	feralfileClient *mocks.MockFeralFileClient
-	fxhashClient    *mocks.MockFxhashClient
 	objktClient     *mocks.MockObjktClient
 	openseaClient   *mocks.MockOpenSeaClient
 	json            *mocks.MockJSON
@@ -56,7 +54,6 @@ func setupTestEnhancerWithRegistry(t *testing.T, publisherRegistry registry.Publ
 		uriResolver:     mocks.NewMockURIResolver(ctrl),
 		artblocksClient: mocks.NewMockArtBlocksClient(ctrl),
 		feralfileClient: mocks.NewMockFeralFileClient(ctrl),
-		fxhashClient:    mocks.NewMockFxhashClient(ctrl),
 		objktClient:     mocks.NewMockObjktClient(ctrl),
 		openseaClient:   mocks.NewMockOpenSeaClient(ctrl),
 		json:            mocks.NewMockJSON(ctrl),
@@ -68,7 +65,6 @@ func setupTestEnhancerWithRegistry(t *testing.T, publisherRegistry registry.Publ
 		tm.uriResolver,
 		tm.artblocksClient,
 		tm.feralfileClient,
-		tm.fxhashClient,
 		tm.objktClient,
 		tm.openseaClient,
 		tm.json,
@@ -931,244 +927,29 @@ func TestEnhancer_Enhance_FeralFile_MayaManStarQuest(t *testing.T) {
 	assert.Equal(t, expectedDID, result.Artists[0].DID)
 }
 
-// TestEnhancer_Enhance_FXHash verifies that a fxhash token (PublisherNameFXHash) correctly
-// routes to the fxhash client, stores VendorFXHash, and populates Release from the gentk.
-func TestEnhancer_Enhance_FXHash(t *testing.T) {
-	mocks := setupTestEnhancer(t)
-	defer tearDownTestEnhancer(mocks)
-
-	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi", "42")
+// TestEnhancer_Enhance_FXHash_NoEnrichment verifies that an fxhash-published token gets no
+// vendor enrichment and calls no vendor: fxhash's API is gone, and falling through to objkt
+// would replace the archived fxhash enrichment row (#173). The mocks carry no expectations,
+// so any vendor call fails the test.
+func TestEnhancer_Enhance_FXHash_NoEnrichment(t *testing.T) {
 	publisherName := registry.PublisherNameFXHash
+	for _, chain := range []domain.Chain{domain.ChainTezosMainnet, domain.ChainEthereumMainnet} {
+		t.Run(string(chain), func(t *testing.T) {
+			m := setupTestEnhancer(t)
+			defer tearDownTestEnhancer(m)
 
-	normalizedMeta := &metadata.NormalizedMetadata{
-		Raw: map[string]interface{}{
-			"name": "Test fxhash token",
-		},
-		Publisher: &metadata.Publisher{
-			Name: &publisherName,
-			URL:  types.StringPtr("https://fxhash.xyz"),
-		},
+			tokenCID := domain.NewTokenCID(chain, domain.StandardFA2, "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "224128")
+			normalizedMeta := &metadata.NormalizedMetadata{
+				Raw:       map[string]interface{}{"name": "Winesburg, Ohio #140"},
+				Publisher: &metadata.Publisher{Name: &publisherName, URL: types.StringPtr("https://fxhash.xyz")},
+			}
+
+			result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
+
+			require.NoError(t, err)
+			assert.Nil(t, result)
+		})
 	}
-
-	// fxhash API returns a gentk with generative token data
-	iteration := "42"
-	displayURI := "ipfs://QmDisplay123"
-	tokenName := "Anticyclone #42" //nolint:gosec
-	supply := "512"
-	origSupply := "512"
-	walletAddr := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
-
-	gentk := &fxhash.Gentk{
-		Iteration:  iteration,
-		DisplayURI: &displayURI,
-		Name:       &tokenName,
-		GenerativeToken: &fxhash.GenerativeToken{
-			ID:             "9997",
-			Name:           "Anticyclone",
-			Slug:           "anticyclone",
-			Supply:         supply,
-			OriginalSupply: &origSupply,
-			Author: &fxhash.Author{
-				Name: "Ciphrd",
-				WalletAccount: &fxhash.WalletAccount{
-					Address: walletAddr,
-				},
-			},
-		},
-	}
-
-	mocks.fxhashClient.
-		EXPECT().
-		GetGentk(gomock.Any(), "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi", "42").
-		Return(gentk, nil)
-
-	vendorJSON := []byte(`{"iteration":"42","name":"Anticyclone #42","generative_token":{"id":"9997"}}`)
-	mocks.json.
-		EXPECT().
-		Marshal(gentk).
-		Return(vendorJSON, nil)
-
-	// First resolve: ipfs:// URI → gateway URL for the image
-	mocks.uriResolver.
-		EXPECT().
-		Resolve(gomock.Any(), displayURI).
-		Return("https://ipfs.filebase.io/ipfs/QmDisplay123", nil)
-
-	// MIME type detection resolves the already-resolved image URL and fetches its bytes.
-	// fxhash tokens have no AnimationURL so the image URL is used for detection.
-	mocks.uriResolver.
-		EXPECT().
-		Resolve(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmDisplay123").
-		Return("https://ipfs.filebase.io/ipfs/QmDisplay123", nil)
-	mocks.httpClient.
-		EXPECT().
-		Head(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmDisplay123").
-		Return(nil, assert.AnError)
-	mocks.httpClient.
-		EXPECT().
-		GetPartialBytes(gomock.Any(), "https://ipfs.filebase.io/ipfs/QmDisplay123", gomock.Any()).
-		Return([]byte("fake image data"), nil)
-
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
-
-	assert.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, schema.VendorFXHash, result.Vendor)
-	assert.Equal(t, vendorJSON, result.VendorJSON)
-	require.NotNil(t, result.Name)
-	assert.Equal(t, "Anticyclone #42", *result.Name)
-	require.NotNil(t, result.ImageURL)
-	assert.Equal(t, "https://ipfs.filebase.io/ipfs/QmDisplay123", *result.ImageURL)
-	require.Len(t, result.Artists, 1)
-	assert.Equal(t, "Ciphrd", result.Artists[0].Name)
-	expectedDID := domain.NewDID(walletAddr, domain.ChainTezosMainnet)
-	assert.Equal(t, expectedDID, result.Artists[0].DID)
-	require.NotNil(t, result.Release)
-	assert.Equal(t, "9997", result.Release.VendorReleaseID)
-	assert.Equal(t, int64(42), result.Release.MintNumber)
-	require.NotNil(t, result.Release.Name)
-	assert.Equal(t, "Anticyclone", *result.Release.Name)
-	require.NotNil(t, result.Release.TotalMints)
-	assert.Equal(t, int64(512), *result.Release.TotalMints)
-}
-
-// TestEnhancer_Enhance_FXHash_ZeroSupply verifies that a fxhash gentk with supply "0" does not
-// set TotalMints on the release. A zero supply would violate the DB CHECK (total_mints > 0) and
-// abort enrichment, so non-positive supply values must be treated as unknown (nil).
-func TestEnhancer_Enhance_FXHash_ZeroSupply(t *testing.T) {
-	mocks := setupTestEnhancer(t)
-	defer tearDownTestEnhancer(mocks)
-
-	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi", "1")
-	publisherName := registry.PublisherNameFXHash
-
-	normalizedMeta := &metadata.NormalizedMetadata{
-		Raw:       map[string]interface{}{"name": "Zero supply token"},
-		Publisher: &metadata.Publisher{Name: &publisherName, URL: types.StringPtr("https://fxhash.xyz")},
-	}
-
-	iteration := "1"
-	displayURI := "ipfs://QmDisplay"
-	tokenName := "Token #1"
-	zeroSupply := "0"
-	walletAddr := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
-
-	gentk := &fxhash.Gentk{
-		Iteration:  iteration,
-		DisplayURI: &displayURI,
-		Name:       &tokenName,
-		GenerativeToken: &fxhash.GenerativeToken{
-			ID:             "1234",
-			Name:           "Zero Supply Project",
-			Supply:         zeroSupply,
-			OriginalSupply: nil,
-			Author: &fxhash.Author{
-				Name:          "Artist",
-				WalletAccount: &fxhash.WalletAccount{Address: walletAddr},
-			},
-		},
-	}
-
-	mocks.fxhashClient.EXPECT().
-		GetGentk(gomock.Any(), "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi", "1").
-		Return(gentk, nil)
-
-	vendorJSON := []byte(`{"iteration":"1"}`)
-	mocks.json.EXPECT().Marshal(gentk).Return(vendorJSON, nil)
-
-	resolvedURL := "https://ipfs.filebase.io/ipfs/QmDisplay"
-	mocks.uriResolver.EXPECT().Resolve(gomock.Any(), displayURI).Return(resolvedURL, nil)
-	// MIME type detection re-resolves and probes the image URL.
-	mocks.uriResolver.EXPECT().Resolve(gomock.Any(), resolvedURL).Return(resolvedURL, nil)
-	mocks.httpClient.EXPECT().Head(gomock.Any(), resolvedURL).Return(nil, assert.AnError)
-	mocks.httpClient.EXPECT().GetPartialBytes(gomock.Any(), resolvedURL, gomock.Any()).Return([]byte("fake image data"), nil)
-
-	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
-
-	assert.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, result.Release)
-	assert.Equal(t, "1234", result.Release.VendorReleaseID)
-	// TotalMints must be nil: supply "0" must not be propagated to the DB
-	assert.Nil(t, result.Release.TotalMints, "zero vendor supply should not set TotalMints")
-}
-
-// TestEnhancer_Enhance_FXHash_NullFallback verifies that when the fxhash API returns nil
-// (gentk not indexed), the enhancer falls through to objkt enrichment.
-func TestEnhancer_Enhance_FXHash_NullFallback(t *testing.T) {
-	m := setupTestEnhancer(t)
-	defer tearDownTestEnhancer(m)
-
-	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "224128")
-	publisherName := registry.PublisherNameFXHash
-
-	normalizedMeta := &metadata.NormalizedMetadata{
-		Raw: map[string]interface{}{
-			"name": "Test fxhash token",
-		},
-		Publisher: &metadata.Publisher{
-			Name: &publisherName,
-			URL:  types.StringPtr("https://fxhash.xyz"),
-		},
-	}
-
-	// fxhash returns nil → fall through to objkt
-	m.fxhashClient.
-		EXPECT().
-		GetGentk(gomock.Any(), "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "224128").
-		Return(nil, nil)
-
-	name := "Anticyclone #224128"
-	description := "A generative artwork"
-	displayURI := "ipfs://QmDisplay123"
-	artifactURI := "ipfs://QmArtifact456"
-	mime := "image/png"
-	alias := "Artist Name"
-
-	objktToken := &objkt.Token{
-		Name:        &name,
-		Description: &description,
-		DisplayURI:  &displayURI,
-		ArtifactURI: &artifactURI,
-		Mime:        &mime,
-		Creators: []objkt.Creator{
-			{
-				Holder: objkt.Holder{
-					Address: "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb",
-					Alias:   &alias,
-				},
-			},
-		},
-	}
-
-	m.objktClient.
-		EXPECT().
-		GetToken(gomock.Any(), "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "224128").
-		Return(objktToken, nil)
-
-	vendorJSON := []byte(`{"name":"Anticyclone #224128","description":"A generative artwork"}`)
-	m.json.
-		EXPECT().
-		Marshal(objktToken).
-		Return(vendorJSON, nil)
-
-	m.uriResolver.
-		EXPECT().
-		Resolve(gomock.Any(), displayURI).
-		Return("https://ipfs.filebase.io/ipfs/QmDisplay123", nil)
-	m.uriResolver.
-		EXPECT().
-		Resolve(gomock.Any(), artifactURI).
-		Return("https://ipfs.filebase.io/ipfs/QmArtifact456", nil)
-
-	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta, normalizedMeta.Publisher)
-
-	assert.NoError(t, err)
-	require.NotNil(t, result)
-	// Should fall back to objkt vendor, not fxhash
-	assert.Equal(t, schema.VendorObjkt, result.Vendor)
-	assert.Equal(t, vendorJSON, result.VendorJSON)
-	assert.Equal(t, "Anticyclone #224128", *result.Name)
 }
 
 // TestEnhancer_Enhance_ObjktCustom verifies that an objkt token with collection_type "custom"
@@ -1337,8 +1118,6 @@ func TestEnhancer_Enhance_Objkt(t *testing.T) {
 
 	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "224128")
 	// Use a generic unknown publisher so the token routes to the default → objkt path.
-	// (Tests that used PublisherNameFXHash for this scenario were testing the old bug
-	// where fxhash fell through to objkt because there was no dedicated fxhash case.)
 	publisherName := registry.PublisherName("some_tezos_publisher")
 
 	normalizedMeta := &metadata.NormalizedMetadata{

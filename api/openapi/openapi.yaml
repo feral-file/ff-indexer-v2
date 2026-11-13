@@ -769,8 +769,8 @@ paths:
         Enqueues an IndexRelease job for an explicit list of mint numbers within a vendor release.
 
         **Phase 1** (CID derivation + IndexTokens fan-out) runs as a background job. Phase 1 is fast
-        for deterministic vendors (artblocks, objkt) and may take seconds-to-minutes for API-based
-        vendors (fxhash, feralfile) depending on list size and API latency.
+        for deterministic vendors (artblocks, objkt) and may take seconds-to-minutes for the API-based
+        vendor (feralfile) depending on list size and API latency.
 
         **Phase 2** (per-token indexing) runs independently as IndexTokens child jobs on the same queue.
 
@@ -784,8 +784,10 @@ paths:
         **Vendor strategies:**
         - `artblocks` — deterministic CID math; vendor_release_id format: `{chainID}-{contract}-{projectID}`
         - `objkt` — requires a "custom" collection contract (pre-checked via objkt API); vendor_release_id is the KT1 contract address
-        - `fxhash` — API-based; vendor_release_id is the generative token ID
         - `feralfile` — API-based; vendor_release_id is the series UUID
+
+        **Note:** `fxhash` is rejected (422): deriving its token IDs needs the fxhash API, which
+        closed with the platform on 2026-08-17. Existing fxhash releases remain readable.
 
         **Note:** `opensea` is not supported for release indexing. OpenSea tokens are indexed
         via on-chain events where mint_number is derived from the actual token identifier during enrichment.
@@ -940,7 +942,7 @@ paths:
         
         Metadata refresh includes:
         - Fetching latest on-chain metadata
-        - Enriching with vendor API data (ArtBlocks, fxhash, etc.)
+        - Enriching with vendor API data (ArtBlocks, objkt, etc.)
         - Updating media asset references
         - Refreshing enrichment sources
         
@@ -2217,8 +2219,8 @@ components:
       properties:
         vendor:
           type: string
-          description: Source vendor. opensea is not accepted for release indexing.
-          enum: [artblocks, feralfile, fxhash, objkt]
+          description: Source vendor. opensea is not accepted for release indexing; fxhash is rejected since its API closed.
+          enum: [artblocks, feralfile, objkt]
           example: objkt
         vendor_release_id:
           type: string
@@ -2226,7 +2228,6 @@ components:
             Vendor-specific release identifier. Provide exactly one of vendor_release_id or vendor_release_slug.
             - artblocks: `{chainID}-{contract}-{projectID}` (e.g. `1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78`)
             - objkt: KT1 contract address for a "custom" collection (e.g. `KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton`)
-            - fxhash: generative token ID (e.g. `9997`)
             - feralfile: series UUID
           example: KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton
         vendor_release_slug:
@@ -2234,7 +2235,7 @@ components:
           description: |
             URL slug from the vendor's website. The indexer resolves the slug to a vendor_release_id.
             For objkt, use the KT1 contract address (same as vendor_release_id).
-          example: industrial-park
+          example: data-pilgrims-01-769
         mint_numbers:
           type: array
           items:
@@ -2246,8 +2247,8 @@ components:
             Using an explicit list lets callers target only the mints that are still missing without
             re-indexing already-completed positions.
 
-            **Span cap for API-based vendors (fxhash, feralfile):** `max(mint_numbers) - min(mint_numbers)`
-            must be ≤ 1000. These vendors fetch the full `[min, max]` interval from their API and paginate
+            **Span cap for the API-based vendor (feralfile):** `max(mint_numbers) - min(mint_numbers)`
+            must be ≤ 1000. It fetches the full `[min, max]` interval from its API and paginates
             at 100 items per page; a large sparse span would force many vendor API calls to index a few
             mints. Split wide sparse lists into batches of span ≤ 1000. artblocks and objkt are
             deterministic and are not subject to this span cap.

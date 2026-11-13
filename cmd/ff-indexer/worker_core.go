@@ -18,7 +18,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
@@ -100,7 +99,6 @@ func registerWorkerCore(
 
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL, jsonAdapter)
 	feralfileClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
-	fxhashClient := fxhash.NewClient(httpClient, rateLimiter, cfg.Vendors.FxhashURL, jsonAdapter)
 	objktClient := objkt.NewClient(httpClient, rateLimiter, cfg.Vendors.ObjktURL, cfg.Vendors.ObjktAPIKey, jsonAdapter)
 	openseaClient := opensea.NewClient(httpClient, rateLimiter, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
 
@@ -142,7 +140,7 @@ func registerWorkerCore(
 	urlChecker := uri.NewURLChecker(httpClient, ioAdapter, uriConfig)
 	dataURIChecker := uri.NewDataURIChecker()
 
-	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, fxhashClient, objktClient, openseaClient, jsonAdapter, jcsAdapter, publisherRegistry)
+	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, objktClient, openseaClient, jsonAdapter, jcsAdapter, publisherRegistry)
 	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, jcsAdapter, base64Adapter, dataStore, publisherRegistry)
 
 	if publisherRegistry != nil {
@@ -188,11 +186,10 @@ func registerWorkerCore(
 			BudgetedIndexingDefaultDailyQuota:  cfg.BudgetedIndexingDefaultDailyQuota,
 			EthereumFullProvenanceDisabled:     cfg.Ethereum.FullProvenanceDisabled,
 			// Vendor clients for IndexRelease CID derivation and slug resolution.
-			// fxhash and Feral File require API calls for CID derivation.
+			// Feral File requires API calls for CID derivation.
 			// AB requires a client only for slug resolution (CID derivation is deterministic).
 			// objkt requires a client to verify the contract is a custom collection before
 			// enqueuing CIDs; only custom contracts have per-contract sequential token IDs.
-			FxhashClient:    fxhashClient,
 			FeralFileClient: feralfileClient,
 			ArtBlocksClient: artblocksClient,
 			ObjktClient:     objktClient,

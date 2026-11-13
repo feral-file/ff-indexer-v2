@@ -53,7 +53,7 @@ func TestTriggerReleaseIndexingRequest_Validate_WhitespaceOnlyID(t *testing.T) {
 func TestTriggerReleaseIndexingRequest_Validate_MintNumberZeroInvalidForAllVendors(t *testing.T) {
 	t.Parallel()
 
-	for _, vendor := range []string{"artblocks", "feralfile", "fxhash", "objkt"} {
+	for _, vendor := range []string{"artblocks", "feralfile", "objkt"} {
 		vendor := vendor
 		t.Run(vendor, func(t *testing.T) {
 			t.Parallel()
@@ -139,22 +139,22 @@ func TestTriggerReleaseIndexingRequest_Validate_TooManyMintNumbers(t *testing.T)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// API-vendor mint span cap (fxhash, feralfile)
+// API-vendor mint span cap (feralfile) and the retired fxhash vendor
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestTriggerReleaseIndexingRequest_Validate_SpanTooWideForFxhash(t *testing.T) {
+// fxhash release indexing needs the fxhash API, which closed with the platform; the
+// request is rejected with a reason rather than as an unknown vendor.
+func TestTriggerReleaseIndexingRequest_Validate_FxhashRejected(t *testing.T) {
 	t.Parallel()
 
-	// [1, 1002] has span=1001 which exceeds MAX_API_VENDOR_MINT_SPAN=1000.
-	r := &TriggerReleaseIndexingRequest{
-		Vendor:          "fxhash",
-		VendorReleaseID: "some-id",
-		MintNumbers:     []int64{1, 1002},
+	for _, r := range []*TriggerReleaseIndexingRequest{
+		{Vendor: "fxhash", VendorReleaseID: "9997", MintNumbers: []int64{1, 2}},
+		{Vendor: "fxhash", VendorReleaseSlug: "industrial-park", MintNumbers: []int64{1}},
+	} {
+		err := r.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "fxhash release indexing is no longer supported")
 	}
-	err := r.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mint_numbers span")
-	assert.Contains(t, err.Error(), "fxhash")
 }
 
 func TestTriggerReleaseIndexingRequest_Validate_SpanTooWideForFeralFile(t *testing.T) {
@@ -171,13 +171,13 @@ func TestTriggerReleaseIndexingRequest_Validate_SpanTooWideForFeralFile(t *testi
 	assert.Contains(t, err.Error(), "feralfile")
 }
 
-func TestTriggerReleaseIndexingRequest_Validate_SpanAtLimitForFxhash(t *testing.T) {
+func TestTriggerReleaseIndexingRequest_Validate_SpanAtLimitForFeralFile(t *testing.T) {
 	t.Parallel()
 
 	// [1, 1001] has span=1000 which equals MAX_API_VENDOR_MINT_SPAN — should pass.
 	r := &TriggerReleaseIndexingRequest{
-		Vendor:          "fxhash",
-		VendorReleaseID: "some-id",
+		Vendor:          "feralfile",
+		VendorReleaseID: "some-uuid",
 		MintNumbers:     []int64{1, 1001},
 	}
 	err := r.Validate()
