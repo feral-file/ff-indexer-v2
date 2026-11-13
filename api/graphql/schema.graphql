@@ -151,8 +151,9 @@ type MediaAsset {
   updated_at: Time!
 }
 
-# Unified token display data: merges metadata and enrichment source (enrichment takes precedence),
-# then applies per-field health filtering via token_media_health. For each URL field
+# Unified token display data: enrichment generally takes precedence. OpenSea image playback prefers
+# the original metadata image, with enrichment as a fallback. Animated works and SVG originals retain the vendor poster. Per-field health filtering via
+# token_media_health then applies. For each URL field
 # (animation_url, image_url), only a URL with a "healthy" health row is returned; "broken" and
 # "unknown" rows suppress the URL. If no health rows exist yet for a field's source groups the
 # raw merged value for that field is returned unchanged.

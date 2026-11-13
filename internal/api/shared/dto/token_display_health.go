@@ -1,6 +1,11 @@
 package dto
 
-import "github.com/feral-file/ff-indexer-v2/internal/store/schema"
+import (
+	"mime"
+	"strings"
+
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+)
 
 // ApplyHealthyMediaURLs filters the display URLs produced by MergeTokenDisplay against the
 // token's known health rows so the API never returns a URL that is broken.
@@ -13,7 +18,9 @@ import "github.com/feral-file/ff-indexer-v2/internal/store/schema"
 // Selection rule (mirrors MergeTokenDisplay precedence):
 //   - animation_url: prefer enrichment-animation if healthy; else metadata-animation if healthy;
 //     else nil (omit the field — do not serve a broken URL).
-//   - image_url: same for image sources.
+//   - image_url: prefer the healthy metadata image for OpenSea image playback,
+//     then fall back to healthy enrichment. Animated works retain the vendor
+//     poster because clients have no separate image MIME field.
 //
 // Constraints:
 //   - If healthRows is empty (no rows yet probed) the display is returned unchanged so tokens
@@ -35,6 +42,7 @@ func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.To
 	type healthKey = schema.MediaHealthSource
 	statusBySource := make(map[healthKey]schema.MediaHealthStatus, len(healthRows))
 	urlBySource := make(map[healthKey]string, len(healthRows))
+	mimeBySource := make(map[healthKey]*string, len(healthRows))
 	for _, row := range healthRows {
 		// When a source has multiple rows (shouldn't happen in normal operation, but
 		// possible during propagation windows), prefer healthy over broken.
@@ -42,6 +50,7 @@ func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.To
 		if !seen || (existing != schema.MediaHealthStatusHealthy && row.HealthStatus == schema.MediaHealthStatusHealthy) {
 			statusBySource[row.MediaSource] = row.HealthStatus
 			urlBySource[row.MediaSource] = row.MediaURL
+			mimeBySource[row.MediaSource] = row.ObservedContentType
 		}
 	}
 
@@ -70,20 +79,44 @@ func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.To
 	// If no animation health rows exist at all, keep the merged value unchanged (unchecked).
 
 	// --- image_url ---
-	// Precedence: enrichment-image > metadata-image > nil
+	// A healthy OpenSea copy is still useful when the original is unavailable.
 	enrichImgStatus, hasEnrichImg := statusBySource[schema.MediaHealthSourceEnrichmentImage]
 	metaImgStatus, hasMetaImg := statusBySource[schema.MediaHealthSourceMetadataImage]
 
+	var imageSource healthKey
 	if hasEnrichImg || hasMetaImg {
 		switch {
+		case out.preferMetadataImage && (out.AnimationURL == nil || *out.AnimationURL == "") && metaImgStatus == schema.MediaHealthStatusHealthy &&
+			!isSVGImage(urlBySource[schema.MediaHealthSourceMetadataImage], mimeBySource[schema.MediaHealthSourceMetadataImage]) &&
+			!isSVGImage(urlBySource[schema.MediaHealthSourceMetadataImage], out.metadataImageMIME):
+			metaURL := urlBySource[schema.MediaHealthSourceMetadataImage]
+			out.ImageURL = &metaURL
+			imageSource = schema.MediaHealthSourceMetadataImage
 		case hasEnrichImg && enrichImgStatus == schema.MediaHealthStatusHealthy:
 			enrichURL := urlBySource[schema.MediaHealthSourceEnrichmentImage]
 			out.ImageURL = &enrichURL
+			imageSource = schema.MediaHealthSourceEnrichmentImage
 		case hasMetaImg && metaImgStatus == schema.MediaHealthStatusHealthy:
 			metaURL := urlBySource[schema.MediaHealthSourceMetadataImage]
 			out.ImageURL = &metaURL
+			imageSource = schema.MediaHealthSourceMetadataImage
 		default:
 			out.ImageURL = nil
+		}
+	}
+
+	// A source-level MIME may describe its broken animation. Prefer the
+	// selected image's own probe so extensionless originals remain decodable,
+	// while keeping animation MIME intact whenever an animation survives.
+	if out.preferMetadataImage && imageSource != "" && (out.AnimationURL == nil || *out.AnimationURL == "") {
+		out.MimeType = out.metadataImageMIME
+		if imageSource == schema.MediaHealthSourceEnrichmentImage {
+			out.MimeType = out.enrichmentImageMIME
+		}
+		if observed := mimeBySource[imageSource]; observed != nil {
+			if imageMIME, _, err := mime.ParseMediaType(*observed); err == nil && strings.HasPrefix(imageMIME, "image/") {
+				out.MimeType = &imageMIME
+			}
 		}
 	}
 
