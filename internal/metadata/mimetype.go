@@ -17,6 +17,8 @@ import (
 // detectMimeType detects the MIME type of the artwork from the resolved URL
 // It first checks animation_url, and if not present, falls back to image_url
 // Returns nil if no URL is available or if detection fails
+// An onchfs:// target returns nil without any request: no gateway serves onchfs, so
+// there is nothing to ask (keepStoredMetadataMedia keeps a type detected earlier)
 func detectMimeType(
 	ctx context.Context,
 	httpClient adapter.HTTPClient,
@@ -49,6 +51,10 @@ func detectMimeType(
 		return nil
 	}
 
+	if types.HasOnChFSScheme(resolvedURL) {
+		return nil
+	}
+
 	logger.DebugCtx(ctx, "Resolved URL for mime type detection",
 		zap.String("original", targetURL),
 		zap.String("resolved", resolvedURL))
@@ -58,8 +64,8 @@ func detectMimeType(
 	var mimeType string
 
 	// Cut the query params from the URL
-	// Some gateways like https://onchfs.fxhash2.xyz don't support HEAD requests with query params
-	// so cut the query params from the URL will be safe to get the content-type
+	// Some gateways don't support HEAD requests with query params (fxhash's onchfs
+	// gateway rejected them), so HEAD the bare path to get the content-type
 	headURL := resolvedURL
 	if parts := strings.Split(headURL, "?"); len(parts) > 0 {
 		headURL = parts[0]

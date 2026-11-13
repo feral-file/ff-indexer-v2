@@ -215,6 +215,7 @@ func IsArweaveGatewayURL(s string) (bool, string) {
 
 // IsOnChFSGatewayURL checks if a string is a valid OnChFS gateway URL
 // OnChFS uses Keccak-256 hashes which are 64 hex characters long
+// No gateway serves onchfs any more; CanonicalOnChFSURI rewrites these to onchfs:// URIs
 // Returns: (isValid, hash) where hash is the Keccak-256 hash with optional path/query
 // Examples:
 //   - https://onchfs.fxhash2.xyz/0123456789abcdef... (64 hex chars)

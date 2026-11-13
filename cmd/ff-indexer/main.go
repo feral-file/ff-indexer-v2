@@ -164,7 +164,6 @@ func run() int {
 	uriResolverConfig := &uri.Config{
 		IPFSGateways:        sweeperURI.IPFSGateways,
 		ArweaveGateways:     sweeperURI.ArweaveGateways,
-		OnChFSGateways:      sweeperURI.OnchfsGateways,
 		ProbeMaxBytes:       sweeperURI.ProbeMaxBytes,
 		KnownBadPageMarkers: sweeperURI.KnownBadPageMarkers,
 	}

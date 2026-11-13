@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -14,40 +13,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
-
-// OnChFSGatewayRef derives the gateway-relative reference for an OnChFS gateway URL: the
-// content hash plus any path suffix, query string and fragment that address one artwork
-// iteration. Pass the result to FindWorkingOnChFSGateway so alternative gateways are probed
-// for the resource a player would load.
-//
-// Reason: types.IsOnChFSGatewayURL reports only the 64-hex hash. Rebuilding a probe URL from
-// that alone silently drops the fxhash/fxiteration/fxminter parameters, which both mis-reports
-// health (issue #76) and would rewrite the stored URL to one that no longer identifies the
-// iteration.
-//
-// Constraints: falls back to hash when rawURL cannot be parsed or its path does not carry the
-// expected hash, so a malformed stored URL degrades to the previous behavior instead of
-// producing a nonsensical probe.
-func OnChFSGatewayRef(rawURL, hash string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return hash
-	}
-
-	ref := strings.TrimPrefix(u.EscapedPath(), "/")
-	if !strings.HasPrefix(ref, hash) {
-		return hash
-	}
-
-	if u.RawQuery != "" {
-		ref += "?" + u.RawQuery
-	}
-	if f := u.EscapedFragment(); f != "" {
-		ref += "#" + f
-	}
-
-	return ref
-}
 
 // GatewayProbe validates that a candidate gateway URL serves usable content, returning nil
 // on success.
@@ -221,7 +186,7 @@ func FindWorkingIPFSGateway(ctx context.Context, probe GatewayProbe, ref string,
 }
 
 // candidateURLs builds one probe URL per gateway; format is the family's URL shape
-// ("%s/ipfs/%s" for IPFS, "%s/%s" for Arweave and OnChFS).
+// ("%s/ipfs/%s" for IPFS, "%s/%s" for Arweave).
 func candidateURLs(gateways []string, format, ref string) []string {
 	urls := make([]string, len(gateways))
 	for i, gw := range gateways {
@@ -232,7 +197,7 @@ func candidateURLs(gateways []string, format, ref string) []string {
 
 // directoryEntryRef rewrites a directory ref to its index.html entry point, keeping any
 // query and fragment: fxhash-style artworks address an iteration via query parameters
-// (the same contract OnChFSGatewayRef preserves, issue #76), so the entry point must be
+// (issue #76), so the entry point must be
 // inserted before them, not appended after. Not ok when the ref already targets
 // index.html — there is nothing further to try.
 func directoryEntryRef(ref string) (string, bool) {
@@ -251,24 +216,5 @@ func directoryEntryRef(ref string) (string, bool) {
 // It probes all gateways in parallel and returns the first whose content validates.
 func FindWorkingArweaveGateway(ctx context.Context, probe GatewayProbe, txID string, gateways []string) (string, error) {
 	url, _, err := findWorkingGateway(ctx, probe, candidateURLs(gateways, "%s/%s", txID), "Arweave", txID)
-	return url, err
-}
-
-// FindWorkingOnChFSGateway finds a working OnChFS gateway for the given resource reference.
-// It probes all gateways in parallel and returns the first whose content validates.
-//
-// The ref parameter is a gateway-relative reference: a Keccak-256 hash (64 hex characters)
-// optionally followed by a path suffix, query string and fragment.
-//
-// Reason: fxhash OnChFS artworks are addressed by content hash *plus* query parameters
-// (fxhash/fxiteration/fxminter). A gateway can serve the bare hash while failing the specific
-// iteration a viewer requests, so probing the hash alone answers a different question than
-// "can this media be played" — see issue #76.
-//
-// Constraints: ref must be passed through verbatim. Callers that hold a full gateway URL should
-// derive it with OnChFSGatewayRef rather than reducing the URL to its hash. Any fragment is
-// carried for the returned URL only; net/http never puts a fragment on the wire.
-func FindWorkingOnChFSGateway(ctx context.Context, probe GatewayProbe, ref string, gateways []string) (string, error) {
-	url, _, err := findWorkingGateway(ctx, probe, candidateURLs(gateways, "%s/%s", ref), "OnChFS", ref)
 	return url, err
 }

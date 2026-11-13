@@ -26,8 +26,6 @@ type Config struct {
 	IPFSGateways []string
 	// ArweaveGateways is the list of Arweave gateways to try
 	ArweaveGateways []string
-	// OnChFSGateways is the list of OnChFS gateways to try
-	OnChFSGateways []string
 	// ProbeMaxBytes caps how many body bytes a health probe reads for content validation
 	// (0 = DefaultProbeMaxBytes)
 	ProbeMaxBytes int
@@ -57,8 +55,10 @@ func (c *Config) probeMaxBytes() int {
 //go:generate mockgen -source=resolver.go -destination=../mocks/uri_resolver.go -package=mocks -mock_names=Resolver=MockURIResolver
 type Resolver interface {
 	// Resolve resolves the URI to a canonical URL
-	// It handles special URL schemes like ipfs://, ar:// and onchfs://
+	// It handles special URL schemes like ipfs:// and ar://
 	// Returns the canonical URL
+	// onchfs:// URIs are returned unchanged, and OnChFS gateway URLs are rewritten to
+	// their onchfs:// URI: no gateway serves onchfs, so the URI is the canonical form
 	// It probes candidate gateway URLs with a validated ranged GET (content must look
 	// like media, not a directory listing or error page) and returns the first that passes
 	// An ipfs:// ref whose gateways all serve directory listings is a directory artifact
@@ -104,9 +104,14 @@ func (r *resolver) Resolve(ctx context.Context, uri string) (string, error) {
 		return FindWorkingArweaveGateway(ctx, r.probe.gatewayProbe, txID, r.config.ArweaveGateways)
 	}
 
-	// Handle OnChFS URLs
-	if hash, ok := strings.CutPrefix(uri, "onchfs://"); ok {
-		return FindWorkingOnChFSGateway(ctx, r.probe.gatewayProbe, hash, r.config.OnChFSGateways)
+	// OnChFS has no gateway left (fxhash's closed with the platform), so an onchfs:// URI
+	// is itself the canonical media URL: players read it from chain. A gateway URL that
+	// vendors still supply is turned back into the URI it was derived from.
+	if types.HasOnChFSScheme(uri) {
+		return uri, nil
+	}
+	if canonical := types.CanonicalOnChFSURI(uri); canonical != uri {
+		return canonical, nil
 	}
 
 	// Vendor metadata may already contain an HTTP gateway URL. Treat a retired

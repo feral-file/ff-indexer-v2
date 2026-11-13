@@ -135,7 +135,6 @@ func registerWorkerCore(
 	uriConfig := &uri.Config{
 		IPFSGateways:        cfg.URI.IPFSGateways,
 		ArweaveGateways:     cfg.URI.ArweaveGateways,
-		OnChFSGateways:      cfg.URI.OnchfsGateways,
 		ProbeMaxBytes:       cfg.URI.ProbeMaxBytes,
 		KnownBadPageMarkers: cfg.URI.KnownBadPageMarkers,
 	}

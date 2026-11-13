@@ -190,7 +190,7 @@ Reference mapping between original URLs and provider-hosted URLs with variants.
 - `(provider, provider_asset_id)` (unique)
 - `(source_url, provider)` (unique)
 
-**Note**: A row is found by the exact `source_url` of the token's media, not by content. When media health promotes another gateway for the same IPFS reference, `UpdateMediaURLAndPropagate` rewrites `source_url` and its hash to the promoted URL in the same transaction, so the asset follows the tokens. If the promoted URL already has a row for that provider, that row is kept and the old one stays unreferenced. Other promotions (Arweave, OnChFS, a directory promoted to its `index.html` entry point) leave the row in place.
+**Note**: A row is found by the exact `source_url` of the token's media, not by content. When media health promotes another gateway for the same IPFS reference, `UpdateMediaURLAndPropagate` rewrites `source_url` and its hash to the promoted URL in the same transaction, so the asset follows the tokens. If the promoted URL already has a row for that provider, that row is kept and the old one stays unreferenced. Other promotions (Arweave, a directory promoted to its `index.html` entry point) leave the row in place.
 
 ### token_media_health
 
@@ -227,7 +227,7 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 **Purpose**:
 - Enables API clients to filter out tokens with broken media URLs
 - Tracks health of both metadata and enrichment source URLs
-- Supports alternative gateway discovery for IPFS/Arweave/OnChFS
+- Supports alternative gateway discovery for IPFS/Arweave; `onchfs://` URIs are stored as-is and checked locally (no gateway serves onchfs)
 - Animation URLs have precedence over image URLs for filtering
 
 **Note**: The `media_url_hash` column uses MD5 hashing to enable efficient URL lookups without index size limitations. This is particularly important for long URLs that would otherwise exceed PostgreSQL's B-tree index size limits.
@@ -818,6 +818,8 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 - `029.sql` - Adds `address_scan_logs.block_timestamp` (BIGINT NOT NULL DEFAULT 0): the Unix block time carried on warehouse-served owner-scan logs (ff-indexer-v2 #144), so the replay's event parsing no longer pays a vendor `eth_getBlockByNumber` per distinct block for windows the log warehouse served. Vendor-served windows stage 0 and keep the block-provider fallback. Standard ordering: apply before deploying the image.
 - `030_drop_unused_indexes.sql` - Drops 35 indexes (~8.5 GB) that were unused on two axes: `pg_stat_user_indexes.idx_scan = 0` over the database's whole life (stats never reset) **and** no query path in `internal/{store,api,workflows,media,metadata}`. Includes two identical duplicate `GIN(raw)` indexes on `provenance_events` and the speculative JSONB GINs on `token_metadata`/`enrichment_sources`/`media_assets`. The matching `CREATE INDEX` statements are removed from `init_pg_db.sql`. **Must run with autocommit (outside a transaction): `DROP INDEX CONCURRENTLY` cannot run in a BEGIN/COMMIT block** (same as `017_dedup.sql`). Re-runnable (`IF EXISTS`) and reversible.
 - `033_shared_contract_releases.sql` - Data-only cleanup (ff-indexer-v2 #176): deletes `release_members` rows whose token is on a shared minting contract (SuperRare, Foundation, Rarible, Zora, hic et nunc OBJKT) and whose release is that contract's platform-wide collection (`superrare`, `fnd`, `rarible`, `zora`, the OBJKT KT1); creator-level collections on the same contracts are kept. Release rows stay, even when left without members: deleting them would race a worker's release-then-member write. **Code first:** run after the application version that drops these releases is deployed and ff-deploy's registry copy carries `shared_contracts` (see DEVELOPMENT.md). Transactional, idempotent, not reversible in SQL.
+
+- `034_onchfs_canonical_uri.sql` - Data-only backfill (ff-indexer-v2 #173): rewrites stored OnChFS gateway URLs (`https://onchfs.fxhash2.xyz/<root>…`, dead since fxhash closed) to their `onchfs://<root>…` URI in `token_metadata`, `enrichment_sources`, `token_media_health` and `media_assets`, emits `metadata_updated` / `enrichment_updated` token events, resets the moved health rows to `unknown` for a prompt local re-check, and deletes the gateway rows in `media_render_probes`. **Code first** and autocommit (per-batch commits), like 032; see DEVELOPMENT.md. Idempotent.
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data
