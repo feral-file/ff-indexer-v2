@@ -20,7 +20,7 @@ const migration035Path = "../../db/migrations/035_ipfs_directory_slash.sql"
 const migration035Fixture = `
 INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number)
 SELECT i, 'tezos:mainnet:fa2:KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE:' || i, 'tezos:mainnet', 'fa2', 'KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE', i::text
-FROM generate_series(1, 5) i;
+FROM generate_series(1, 7) i;
 
 -- T1: gentk work. On-chain animation_url is the bare shape, the objkt enrichment repeats
 -- it. The metadata row is healthy (the probe followed the redirect, as in production);
@@ -81,6 +81,33 @@ VALUES (5, 'https://ipfs.filebase.io/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs
         md5('https://ipfs.filebase.io/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon/index.html?fxhash=oo5'));
 INSERT INTO enrichment_sources (token_id, vendor, animation_url, animation_url_hash)
 VALUES (5, 'opensea', 'https://generator.artblocks.io/1/0xabc/88?x=1', md5('https://generator.artblocks.io/1/0xabc/88?x=1'));
+
+-- T6: after #178 deployed, L1 gated the SLASHED URL (fingerprint) for token 4, which a
+-- re-index already moved; token 6 is still on the healthy bare URL and viewable. The gate
+-- must travel to token 6, with token 4's reason.
+INSERT INTO token_media_health (token_id, media_url, media_url_hash, media_source, health_status, failure_reason, last_error)
+VALUES (4, 'https://ipfs.filebase.io/ipfs/QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n/?fxhash=oo6',
+        md5('https://ipfs.filebase.io/ipfs/QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n/?fxhash=oo6'),
+        'metadata_animation', 'broken', 'render_known_bad', 'matched fingerprint error-page'),
+       (6, 'https://ipfs.filebase.io/ipfs/QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n?fxhash=oo6',
+        md5('https://ipfs.filebase.io/ipfs/QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n?fxhash=oo6'),
+        'metadata_animation', 'healthy', NULL, NULL);
+INSERT INTO media_render_probes (media_url_hash, media_url, verdict, health_gated, last_error)
+VALUES (md5('https://ipfs.filebase.io/ipfs/QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n/?fxhash=oo6'),
+        'https://ipfs.filebase.io/ipfs/QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n/?fxhash=oo6',
+        'known_bad_fingerprint', true, 'matched fingerprint error-page');
+
+-- T7: a gated slashed URL no health row references yet (blank verdict); token 7's bare
+-- animation row is healthy and its image too. The reason derives from the verdict, and
+-- the token stays non-viewable because a gated animation exists.
+INSERT INTO token_media_health (token_id, media_url, media_url_hash, media_source, health_status)
+VALUES (7, 'https://ipfs.filebase.io/ipfs/QmNsX6YWEtKB87XHNrg357MMQREAShYcVD6qPsT31N6sbP?seed=7',
+        md5('https://ipfs.filebase.io/ipfs/QmNsX6YWEtKB87XHNrg357MMQREAShYcVD6qPsT31N6sbP?seed=7'), 'metadata_animation', 'healthy'),
+       (7, 'https://ipfs.example.com/ipfs/QmB', md5('https://ipfs.example.com/ipfs/QmB'), 'metadata_image', 'healthy');
+INSERT INTO media_render_probes (media_url_hash, media_url, verdict, health_gated, last_error)
+VALUES (md5('https://ipfs.filebase.io/ipfs/QmNsX6YWEtKB87XHNrg357MMQREAShYcVD6qPsT31N6sbP/?seed=7'),
+        'https://ipfs.filebase.io/ipfs/QmNsX6YWEtKB87XHNrg357MMQREAShYcVD6qPsT31N6sbP/?seed=7', 'blank', true, 'blank frame');
+UPDATE tokens SET is_viewable = true WHERE id IN (1, 6, 7);
 `
 
 // TestMigration035IPFSDirectorySlash runs db/migrations/035_ipfs_directory_slash.sql
@@ -150,7 +177,22 @@ func TestMigration035IPFSDirectorySlash(t *testing.T) {
 			   FROM token_media_health WHERE token_id = 1`))
 		assert.Equal(t, slashed+","+slashed,
 			q(`SELECT string_agg(media_url, ',') FROM token_media_health WHERE token_id = 1 AND media_source LIKE '%animation'`))
-		assert.Equal(t, "https://example.com/kept.html", q(`SELECT string_agg(media_url, ',') FROM media_render_probes`))
+		assert.Equal(t, "https://example.com/kept.html", q(`SELECT string_agg(media_url, ',') FROM media_render_probes WHERE NOT health_gated`),
+			"the bare URL's probe is dropped")
+	})
+
+	t.Run("a gate the slashed URL already holds travels to the moved row", func(t *testing.T) {
+		assert.Equal(t, "broken|render_known_bad|matched fingerprint error-page",
+			q(`SELECT health_status || '|' || failure_reason || '|' || last_error FROM token_media_health WHERE token_id = 6`),
+			"the reason comes from the sibling row already on the gated URL")
+		assert.Equal(t, "broken|render_blank|blank frame",
+			q(`SELECT health_status || '|' || failure_reason || '|' || last_error FROM token_media_health
+			   WHERE token_id = 7 AND media_source = 'metadata_animation'`),
+			"with no sibling, the reason derives from the probe verdict")
+		assert.Equal(t, "6|false,7|false", q(`SELECT string_agg(id || '|' || is_viewable, ',' ORDER BY id) FROM tokens WHERE id IN (6, 7)`))
+		assert.Equal(t, `6|{"is_viewable": false}`+"\n"+`7|{"is_viewable": false}`,
+			q(`SELECT token_id || '|' || metadata::text FROM token_events WHERE event_type = 'viewability_changed' ORDER BY token_id`))
+		assert.Equal(t, "t", q(`SELECT is_viewable FROM tokens WHERE id = 1`), "tokens without an inherited gate are not recomputed")
 	})
 
 	t.Run("an existing slashed row wins the unique key", func(t *testing.T) {

@@ -40,9 +40,14 @@
 --         serves the same bytes, and the API serves an animation URL only while its row
 --         is 'healthy', so resetting to 'unknown' as 034 does would blank
 --         display.animation_url on ~42k displaying works until the sweeper got round to
---         them (~20k rows/hour). Only a render gate (failure_reason 'render_%') does not
---         travel: it judged the query-less render, so that row becomes 'unknown' and is
---         backdated for a prompt re-check. None existed on 2026-11-17.
+--         them (~20k rows/hour). A render gate on the BARE URL (failure_reason
+--         'render_%') does not travel: it judged the query-less render, so that row
+--         becomes 'unknown' and is backdated for a prompt re-check. A gate the SLASHED
+--         URL already holds (L1 can gate it after #178 deploys, before this file reaches
+--         a token still on the bare URL) does travel, as store.activeRenderGate requires:
+--         the moved row becomes broken with that gate's reason, and the token's
+--         is_viewable is recomputed in SQL with its 'viewability_changed' token event.
+--         None of either existed on 2026-11-17 (L1 runs in shadow mode).
 --   Raw payloads (vendor_json, origin_json, latest_json) are left verbatim.
 --
 -- Deploy ordering (REQUIRED)
@@ -213,6 +218,11 @@ DECLARE
     v_total_h  bigint := 0;
     v_targets  text[];
     v_target   text;
+    v_moved    bigint[];
+    v_gated    bigint[];
+    v_unviewed bigint;
+    v_total_g  bigint := 0;
+    v_total_v  bigint := 0;
 BEGIN
     IF p_batch_size < 1 THEN
         RAISE EXCEPTION 'p_batch_size must be >= 1';
@@ -317,23 +327,95 @@ BEGIN
         ) d
         WHERE h.id = d.id AND d.rn > 1;
 
-        -- Move in place, keeping the L0 verdict (same bytes). A render gate judged the
-        -- query-less render, so only a gated row is reset for a prompt re-check.
-        UPDATE token_media_health h
-        SET media_url       = migration_035_slash(h.media_url),
-            media_url_hash  = md5(migration_035_slash(h.media_url)),
-            health_status   = CASE WHEN h.failure_reason LIKE 'render\_%' THEN 'unknown'::media_health_status ELSE h.health_status END,
-            failure_reason  = CASE WHEN h.failure_reason LIKE 'render\_%' THEN NULL ELSE h.failure_reason END,
-            last_error      = CASE WHEN h.failure_reason LIKE 'render\_%' THEN NULL ELSE h.last_error END,
-            last_checked_at = CASE WHEN h.failure_reason LIKE 'render\_%' THEN 'epoch'::timestamptz ELSE h.last_checked_at END
-        WHERE h.token_id = ANY (v_ids) AND migration_035_is_bare(h.media_url);
-        GET DIAGNOSTICS v_health = ROW_COUNT;
+        -- Move in place, keeping the L0 verdict (same bytes). A render gate on the bare
+        -- URL judged the query-less render, so such a row is reset for a prompt re-check.
+        WITH moved AS (
+            UPDATE token_media_health h
+            SET media_url       = migration_035_slash(h.media_url),
+                media_url_hash  = md5(migration_035_slash(h.media_url)),
+                health_status   = CASE WHEN h.failure_reason LIKE 'render\_%' THEN 'unknown'::media_health_status ELSE h.health_status END,
+                failure_reason  = CASE WHEN h.failure_reason LIKE 'render\_%' THEN NULL ELSE h.failure_reason END,
+                last_error      = CASE WHEN h.failure_reason LIKE 'render\_%' THEN NULL ELSE h.last_error END,
+                last_checked_at = CASE WHEN h.failure_reason LIKE 'render\_%' THEN 'epoch'::timestamptz ELSE h.last_checked_at END
+            WHERE h.token_id = ANY (v_ids) AND migration_035_is_bare(h.media_url)
+            RETURNING h.id
+        )
+        SELECT array_agg(id), count(*) INTO v_moved, v_health FROM moved;
+
+        -- A gate the SLASHED URL already holds does travel (store.activeRenderGate: every
+        -- writer that creates or moves health rows must consult it). After #178 deploys,
+        -- L1 can gate a slashed URL before this backfill reaches a token still on the
+        -- bare one. The probe row is the authority and is locked as activeRenderGate
+        -- locks it; the reason comes from a sibling health row, else from the verdict.
+        WITH gate AS (
+            SELECT p.media_url_hash, p.last_error,
+                   coalesce((SELECT s.failure_reason FROM token_media_health s
+                             WHERE s.media_url_hash = p.media_url_hash
+                               AND s.failure_reason LIKE 'render\_%' LIMIT 1),
+                            CASE p.verdict WHEN 'known_bad_fingerprint' THEN 'render_known_bad'
+                                           WHEN 'stalled' THEN 'render_stalled'
+                                           ELSE 'render_blank' END) AS reason
+            FROM media_render_probes p
+            WHERE p.health_gated
+              AND p.media_url_hash IN (SELECT media_url_hash FROM token_media_health WHERE id = ANY (v_moved))
+            FOR UPDATE OF p
+        ), inherited AS (
+            UPDATE token_media_health h
+            SET health_status  = 'broken',
+                failure_reason = g.reason,
+                last_error     = g.last_error
+            FROM gate g
+            WHERE h.id = ANY (v_moved) AND h.media_url_hash = g.media_url_hash
+            RETURNING h.token_id
+        )
+        SELECT array_agg(DISTINCT token_id) INTO v_gated FROM inherited;
+
+        -- Tokens that inherited a gate: recompute is_viewable exactly as
+        -- BatchUpdateTokensViewability does (healthy, ungated animation; else no
+        -- animation and a healthy, ungated image) and record its token event. The
+        -- token.viewability.changed webhook is enqueued by application code only; see
+        -- "Migration 035" in DEVELOPMENT.md.
+        IF v_gated IS NOT NULL THEN
+            WITH nv AS (
+                SELECT t.id, t.is_viewable AS old_viewable,
+                       (EXISTS (SELECT 1 FROM token_media_health tmh
+                                WHERE tmh.token_id = t.id AND tmh.health_status = 'healthy'
+                                  AND tmh.media_source IN ('metadata_animation', 'enrichment_animation')
+                                  AND NOT EXISTS (SELECT 1 FROM media_render_probes p
+                                                  WHERE p.media_url_hash = tmh.media_url_hash AND p.health_gated))
+                        OR (NOT EXISTS (SELECT 1 FROM token_media_health tmh
+                                        WHERE tmh.token_id = t.id
+                                          AND tmh.media_source IN ('metadata_animation', 'enrichment_animation'))
+                            AND EXISTS (SELECT 1 FROM token_media_health tmh
+                                        WHERE tmh.token_id = t.id AND tmh.health_status = 'healthy'
+                                          AND tmh.media_source IN ('metadata_image', 'enrichment_image')
+                                          AND NOT EXISTS (SELECT 1 FROM media_render_probes p
+                                                          WHERE p.media_url_hash = tmh.media_url_hash AND p.health_gated)))
+                       ) AS new_viewable
+                FROM tokens t
+                WHERE t.id = ANY (v_gated)
+            ), upd AS (
+                UPDATE tokens t SET is_viewable = nv.new_viewable
+                FROM nv
+                WHERE t.id = nv.id AND t.is_viewable <> nv.new_viewable
+                RETURNING t.id, nv.new_viewable
+            )
+            INSERT INTO token_events (token_id, event_type, owner_address, occurred_at, metadata, created_at)
+            SELECT id, 'viewability_changed', NULL, clock_timestamp(),
+                   jsonb_build_object('is_viewable', new_viewable), clock_timestamp()
+            FROM upd;
+            GET DIAGNOSTICS v_unviewed = ROW_COUNT;
+            v_total_g := v_total_g + coalesce(array_length(v_gated, 1), 0);
+            v_total_v := v_total_v + v_unviewed;
+        END IF;
+        v_moved := NULL;
+        v_gated := NULL;
 
         v_total_e := v_total_e + v_enriched;
         v_total_m := v_total_m + v_meta;
         v_total_h := v_total_h + v_health;
-        RAISE NOTICE 'migration_035: through token_id % | enrichment % | metadata % | health % (totals % / % / %)',
-            v_last, v_enriched, v_meta, v_health, v_total_e, v_total_m, v_total_h;
+        RAISE NOTICE 'migration_035: through token_id % | enrichment % | metadata % | health % (totals % / % / %; inherited gates % tokens, viewability changed %)',
+            v_last, v_enriched, v_meta, v_health, v_total_e, v_total_m, v_total_h, v_total_g, v_total_v;
         COMMIT;
     END LOOP;
 END $$;
