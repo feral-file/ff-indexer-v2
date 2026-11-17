@@ -194,6 +194,69 @@ func SameIPFSReference(a, b string) bool {
 	return isGatewayA && isGatewayB && refA == refB
 }
 
+// NormalizeIPFSGatewayURL returns an IPFS gateway URL with the directory slash between a
+// bare CID and its query or fragment (domain.NormalizeIPFSRef), on the same host. Any
+// other string is returned unchanged.
+//
+// Reason: vendor metadata and OpenSea animation URLs arrive as HTTP gateway URLs and
+// bypass gateway selection, so the bare "<gateway>/ipfs/<cid>?fxhash=…" shape would be
+// stored as-is and display blank (the gateway's redirect drops the query).
+func NormalizeIPFSGatewayURL(s string) string {
+	ok, ref := IsIPFSGatewayURL(s)
+	if !ok {
+		return s
+	}
+	normalized := domain.NormalizeIPFSRef(ref)
+	if normalized == ref {
+		return s
+	}
+	// Only the suffix after the CID is a literal tail of s. On a path gateway the CID
+	// precedes it in the path; on a subdomain gateway ("<cid>.ipfs.<host>?q") the CID
+	// is in the hostname and ref is reconstructed, so slicing by len(ref) would cut
+	// into the host. A CID holds none of "/?#", so the suffix opens at the first one.
+	i := strings.IndexAny(ref, "/?#")
+	if i < 0 {
+		return s
+	}
+	return s[:len(s)-len(ref[i:])] + normalized[i:]
+}
+
+// BareIPFSGatewayURL is the inverse of NormalizeIPFSGatewayURL: for a gateway URL whose
+// CID is followed by "/" and a non-empty query or fragment, it returns the same URL
+// without that slash. Any other string yields ("", false).
+//
+// Reason: media assets processed before the directory slash existed are keyed by the
+// hash of the bare URL. Lookups for the slashed URL use this alias to find them, so a
+// slash-only re-index keeps its processed media without moving the asset away from
+// tokens that still reference the bare URL (media_assets allows one row per provider
+// asset, so it cannot be copied either).
+// Constraints: the alias is accepted only when normalizing it reproduces s exactly, so
+// it can never pair two different resources.
+func BareIPFSGatewayURL(s string) (string, bool) {
+	ok, ref := IsIPFSGatewayURL(s)
+	if !ok {
+		return "", false
+	}
+	i := strings.IndexAny(ref, "/?#")
+	if i < 0 || !strings.HasPrefix(ref[i:], "/?") && !strings.HasPrefix(ref[i:], "/#") {
+		return "", false
+	}
+	suffix := ref[i:]
+	bare := s[:len(s)-len(suffix)] + suffix[1:]
+	if NormalizeIPFSGatewayURL(bare) != s {
+		return "", false
+	}
+	return bare, true
+}
+
+// EquivalentIPFSReference is SameIPFSReference after NormalizeIPFSGatewayURL on both
+// sides: "<cid>?q" and "<cid>/?q" address the same bytes. Use it where state keyed by
+// the old URL must follow a slash-normalized replacement (media assets). Stored-URL
+// preference stays on the exact SameIPFSReference so it can never keep the bare shape.
+func EquivalentIPFSReference(a, b string) bool {
+	return SameIPFSReference(NormalizeIPFSGatewayURL(a), NormalizeIPFSGatewayURL(b))
+}
+
 // IsArweaveGatewayURL checks if a string is a valid Arweave gateway URL
 // Returns: (isValid, txID) where txID is the transaction ID
 // Example: https://arweave.net/abc123 -> (true, "abc123")

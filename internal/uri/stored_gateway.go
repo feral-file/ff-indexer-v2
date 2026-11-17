@@ -17,13 +17,19 @@ import "github.com/feral-file/ff-indexer-v2/internal/types"
 // the migration. Only IPFS is covered: the Arweave reference taken from a gateway
 // URL drops the path that selects the resource, so two URLs could not be compared
 // safely. References must match exactly, so a bare directory URL still heals to the
-// index.html entry point that resolution selects.
+// index.html entry point that resolution selects. A stored bare "<cid>?q" whose
+// resolution is the slashed "<cid>/?q" keeps its host and gains only the slash, so the
+// new URL stays the exact alias of the old one and processed media keyed by the bare
+// URL is still found (types.BareIPFSGatewayURL); the bare shape itself is never kept.
 func PreferStoredGatewayURL(resolved string, stored *string) string {
 	if stored == nil || *stored == resolved || types.IsBrowserIPFSGateway(*stored) {
 		return resolved
 	}
-	if !types.SameIPFSReference(resolved, *stored) {
-		return resolved
+	if types.SameIPFSReference(resolved, *stored) {
+		return *stored
 	}
-	return *stored
+	if slashed := types.NormalizeIPFSGatewayURL(*stored); slashed != *stored && types.SameIPFSReference(resolved, slashed) {
+		return slashed
+	}
+	return resolved
 }

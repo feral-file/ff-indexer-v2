@@ -15,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
@@ -377,4 +378,55 @@ func TestIndexMultipleTokensMetadata_LargeList_Enqueues(t *testing.T) {
 	}
 	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil, true, nil).Times(20)
 	require.NoError(t, f.Wf.IndexMultipleTokensMetadata(f.Ctx, list))
+}
+
+// Other tokens moved by a gateway promotion during this token's health check get the
+// same token.viewability.changed event the sweeper emits; the indexed token keeps its
+// own indexing event.
+func TestIndexTokenMetadata_WebhookPromotedSiblingViewabilityChanged(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, false)
+	defer f.Ctrl.Finish()
+	var events []webhook.WebhookEvent
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, o jobs.EnqueueOptions) (any, bool, error) {
+			if o.Kind == "NotifyWebhookClients" && len(o.Args) > 0 {
+				if ev, ok := o.Args[0].(webhook.WebhookEvent); ok {
+					events = append(events, ev)
+				}
+			}
+			return nil, true, nil
+		}).AnyTimes()
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE", "502864")
+	sibling := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE", "261209")
+	normalized := &metadata.NormalizedMetadata{Animation: "https://ipfs.filebase.io/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon/?fxhash=oo1"}
+	health := &workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{normalized.Animation},
+		PromotedChanges: []store.TokenViewabilityChange{
+			{TokenID: 2, TokenCID: sibling.String(), OldViewable: false, NewViewable: true},
+		},
+	}
+	indexTokenMetadataCore(t, f.Exec, tokenCID, normalized, nil, health)
+
+	require.NoError(t, f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil))
+
+	var viewability []webhook.TokenViewabilityChanged
+	var indexingViewable int
+	for _, ev := range events {
+		switch ev.EventType {
+		case webhook.EventTypeTokenViewabilityChanged:
+			data, ok := ev.Data.(webhook.TokenViewabilityChanged)
+			require.True(t, ok)
+			viewability = append(viewability, data)
+		case webhook.EventTypeTokenIndexingViewable:
+			indexingViewable++
+		}
+	}
+	require.Len(t, viewability, 1, "exactly one viewability event, for the sibling")
+	require.Equal(t, sibling.String(), viewability[0].TokenCID)
+	require.Equal(t, "261209", viewability[0].TokenNumber)
+	require.True(t, viewability[0].IsViewable)
+	require.Equal(t, 1, indexingViewable, "the indexed token keeps its own indexing event")
 }

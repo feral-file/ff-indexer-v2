@@ -7319,6 +7319,150 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		assert.Nil(t, moved)
 	})
 
+	t.Run("slash-only re-index keeps the shared processed asset for both tokens", func(t *testing.T) {
+		// Two tokens share a processed image at the bare "<cid>?q" URL. Re-indexing
+		// stores the slashed "<cid>/?q" for one token through the metadata upsert and
+		// for the other through the enrichment upsert; neither path moves the asset.
+		// Both must still find it, and so must anything still holding the bare URL.
+		const cid = "QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon"
+		bare := "https://ipfs.example.com/ipfs/" + cid + "?filename=preview.png"
+		slashed := "https://ipfs.example.com/ipfs/" + cid + "/?filename=preview.png"
+		asset := createAsset(t, bare, "slash-alias-asset")
+
+		ids := make([]uint64, 2)
+		for i, number := range []string{"1", "2"} {
+			mint := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000178178", number, "0xowner178")
+			require.NoError(t, store.CreateTokenMint(ctx, mint))
+			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
+			require.NoError(t, err)
+			ids[i] = token.ID
+			require.NoError(t, store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+				TokenID: token.ID, OriginJSON: datatypes.JSON(`{}`), LatestJSON: datatypes.JSON(`{}`),
+				EnrichmentLevel: schema.EnrichmentLevelNone, LastRefreshedAt: time.Now().UTC(), ImageURL: &bare,
+			}))
+		}
+
+		require.NoError(t, store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID: ids[0], OriginJSON: datatypes.JSON(`{}`), LatestJSON: datatypes.JSON(`{}`),
+			EnrichmentLevel: schema.EnrichmentLevelNone, LastRefreshedAt: time.Now().UTC(), ImageURL: &slashed,
+		}))
+		require.NoError(t, store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
+			TokenID: ids[1], Vendor: schema.VendorOpenSea, VendorJSON: datatypes.JSON(`{}`), ImageURL: &slashed,
+		}))
+
+		viaSlashed, err := store.GetMediaAssetBySourceURL(ctx, slashed, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, viaSlashed, "the slashed URL must find the asset processed under its bare alias")
+		assert.Equal(t, asset.ID, viaSlashed.ID, "the same asset, not a new upload")
+		assert.Equal(t, slashed, viaSlashed.SourceURL, "returned under the URL the caller asked for")
+
+		viaBare, err := store.GetMediaAssetBySourceURL(ctx, bare, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, viaBare, "tokens still on the bare URL keep the asset")
+		assert.Equal(t, asset.ID, viaBare.ID)
+
+		bulk, err := store.GetMediaAssetsBySourceURLs(ctx, []string{bare, slashed})
+		require.NoError(t, err)
+		byHash := make(map[string]int64)
+		for _, a := range bulk {
+			byHash[a.SourceURLHash] = a.ID
+		}
+		assert.Equal(t, asset.ID, byHash[types.MD5Hash(slashed)], "bulk lookup keys the alias hit by the slashed URL")
+		assert.Equal(t, asset.ID, byHash[types.MD5Hash(bare)], "bulk lookup still keys the asset by its bare URL")
+	})
+
+	// promotionFixture puts token 1 on the slashed URL and token 2 on the bare URL of
+	// the same reference on one host, with the processed asset under the bare URL (the
+	// state a slash-only re-index of token 1 leaves behind).
+	promotionFixture := func(t *testing.T, contract, cid string) (ids [2]uint64, bare, slashed string, asset *schema.MediaAsset) {
+		bare = "https://old.example.com/ipfs/" + cid + "?filename=preview.png"
+		slashed = "https://old.example.com/ipfs/" + cid + "/?filename=preview.png"
+		asset = createAsset(t, bare, "promotion-"+contract[len(contract)-6:])
+		for i, u := range []string{slashed, bare} {
+			mint := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, contract, fmt.Sprint(i+1), "0xowner178")
+			require.NoError(t, store.CreateTokenMint(ctx, mint))
+			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
+			require.NoError(t, err)
+			ids[i] = token.ID
+			url := u
+			require.NoError(t, store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+				TokenID: token.ID, OriginJSON: datatypes.JSON(`{}`), LatestJSON: datatypes.JSON(`{}`),
+				EnrichmentLevel: schema.EnrichmentLevelNone, LastRefreshedAt: time.Now().UTC(), ImageURL: &url,
+			}))
+		}
+		return ids, bare, slashed, asset
+	}
+
+	// assertBothFollow checks that both tokens now reference newURL and find the asset.
+	assertBothFollow := func(t *testing.T, ids [2]uint64, newURL string, asset *schema.MediaAsset) {
+		for _, id := range ids {
+			md, err := store.GetTokenMetadataByTokenID(ctx, id)
+			require.NoError(t, err)
+			require.NotNil(t, md.ImageURL)
+			assert.Equal(t, newURL, *md.ImageURL, "every token on either URL form follows the promotion")
+		}
+		got, err := store.GetMediaAssetBySourceURL(ctx, newURL, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, got, "the promoted URL must find the processed asset")
+		assert.Equal(t, asset.ID, got.ID)
+		bulk, err := store.GetMediaAssetsBySourceURLs(ctx, []string{newURL})
+		require.NoError(t, err)
+		require.Len(t, bulk, 1)
+		assert.Equal(t, asset.ID, bulk[0].ID)
+	}
+
+	t.Run("promoting a slashed URL carries the asset held by its bare alias", func(t *testing.T) {
+		ids, bare, slashed, asset := promotionFixture(t, "0x0000000000000000000000000000000000178301", "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
+		newURL := "https://new.example.com/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/?filename=preview.png"
+		// The sweeper collects the tokens to recompute before promoting; both forms count.
+		for _, u := range []string{slashed, bare} {
+			tokenIDs, err := store.GetTokenIDsByMediaURL(ctx, u)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, ids[:], tokenIDs, "tokens on either URL form are affected by promoting %s", u)
+		}
+		require.NoError(t, store.UpdateMediaURLAndPropagate(ctx, slashed, newURL, nil, nil))
+		assertBothFollow(t, ids, newURL, asset)
+	})
+
+	t.Run("promoting a bare URL carries its slashed sibling along", func(t *testing.T) {
+		ids, bare, _, asset := promotionFixture(t, "0x0000000000000000000000000000000000178302", "QmZTR5bcpQD7cFgTorqxZDYaew1Wqgfbd2ud9QqGPAkK2V")
+		newURL := "https://new.example.com/ipfs/QmZTR5bcpQD7cFgTorqxZDYaew1Wqgfbd2ud9QqGPAkK2V/?filename=preview.png"
+		require.NoError(t, store.UpdateMediaURLAndPropagate(ctx, bare, newURL, nil, nil))
+		assertBothFollow(t, ids, newURL, asset)
+	})
+
+	t.Run("promotion prefers the exact URL's own asset over its alias", func(t *testing.T) {
+		const cid = "QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n"
+		ids, _, slashed, _ := promotionFixture(t, "0x0000000000000000000000000000000000178303", cid)
+		own := createAsset(t, slashed, "promotion-own-slashed")
+		newURL := "https://new.example.com/ipfs/" + cid + "/?filename=preview.png"
+		require.NoError(t, store.UpdateMediaURLAndPropagate(ctx, slashed, newURL, nil, nil))
+		assertBothFollow(t, ids, newURL, own)
+	})
+
+	t.Run("a slashed URL's own asset wins over its bare alias", func(t *testing.T) {
+		const cid = "QmT78zSuBmuS4z925WZfrqQ1qHaJ56DQaTfyMUF7F8ff5o"
+		bare := "https://ipfs.example.com/ipfs/" + cid + "?filename=own.png"
+		slashed := "https://ipfs.example.com/ipfs/" + cid + "/?filename=own.png"
+		createAsset(t, bare, "alias-loses-bare")
+		own := createAsset(t, slashed, "alias-loses-slashed")
+
+		got, err := store.GetMediaAssetBySourceURL(ctx, slashed, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, own.ID, got.ID)
+
+		bulk, err := store.GetMediaAssetsBySourceURLs(ctx, []string{slashed})
+		require.NoError(t, err)
+		var forSlashed []int64
+		for _, a := range bulk {
+			if a.SourceURLHash == types.MD5Hash(slashed) {
+				forSlashed = append(forSlashed, a.ID)
+			}
+		}
+		assert.Equal(t, []int64{own.ID}, forSlashed, "exactly one asset per URL and provider")
+	})
+
 	t.Run("BatchUpdateTokensViewability respects animation URL priority", func(t *testing.T) {
 		sharedImageURL := "https://example.com/shared-image.jpg"
 

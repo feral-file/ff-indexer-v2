@@ -123,6 +123,29 @@ func TestResolver_Resolve(t *testing.T) {
 			expected: "https://ipfs.filebase.io/ipfs/" + cid + "/index.html",
 		},
 		{
+			name: "IPFS ref with the fxhash query directly after the CID is probed and stored with the directory slash",
+			uri:  "ipfs://" + cid + "?fxhash=ooCaGyZkD8Yyw6zXM82kRriW6uUmWRYCSBxavnHtvyagq1EFeKu",
+			config: &uri.Config{
+				IPFSGateways: []string{"https://ipfs.filebase.io"},
+			},
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// Only the slashed shape is probed: gateways answer the bare shape with a
+				// redirect that drops the query, so a stored bare URL displays blank.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.filebase.io/ipfs/"+cid+"/?fxhash=ooCaGyZkD8Yyw6zXM82kRriW6uUmWRYCSBxavnHtvyagq1EFeKu", probeRangeHeader).
+					Return(httpResp(http.StatusOK, "text/html", htmlArtworkDoc(), nil), nil).
+					AnyTimes()
+			},
+			expected: "https://ipfs.filebase.io/ipfs/" + cid + "/?fxhash=ooCaGyZkD8Yyw6zXM82kRriW6uUmWRYCSBxavnHtvyagq1EFeKu",
+		},
+		{
+			name:     "HTTP gateway URL on a live host with the query directly after the CID gets the directory slash without probing",
+			uri:      "https://ipfs.raribleuserdata.com/ipfs/" + cid + "?fxhash=oo123#view",
+			config:   defaultConfig(),
+			expected: "https://ipfs.raribleuserdata.com/ipfs/" + cid + "/?fxhash=oo123#view",
+		},
+		{
 			name: "IPFS directory CID with no index.html entry point stays unresolved",
 			uri:  "ipfs://" + cid,
 			config: &uri.Config{

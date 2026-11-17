@@ -51,6 +51,24 @@ func TestPreferStoredGatewayURL(t *testing.T) {
 			want:     resolved,
 		},
 		{
+			name:     "a stored bare CID-plus-query URL keeps its host and gains only the slash",
+			resolved: resolved + "/?fxhash=abc",
+			stored:   ptr("https://gateway-a.example.com/ipfs/" + cid + "?fxhash=abc"),
+			want:     "https://gateway-a.example.com/ipfs/" + cid + "/?fxhash=abc",
+		},
+		{
+			name:     "a stored bare URL with a different query takes the resolved URL",
+			resolved: resolved + "/?fxhash=abc",
+			stored:   ptr("https://gateway-a.example.com/ipfs/" + cid + "?fxhash=xyz"),
+			want:     resolved + "/?fxhash=abc",
+		},
+		{
+			name:     "a stored bare URL on a retired browser gateway is never kept",
+			resolved: resolved + "/?fxhash=abc",
+			stored:   ptr("https://ipfs.io/ipfs/" + cid + "?fxhash=abc"),
+			want:     resolved + "/?fxhash=abc",
+		},
+		{
 			name:     "a retired browser gateway is never kept",
 			resolved: resolved,
 			stored:   ptr("https://ipfs.io/ipfs/" + cid),

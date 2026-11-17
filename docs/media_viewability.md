@@ -154,6 +154,30 @@ when it shipped was checked on chain and exists. Reading the bytes is the player
 MIME detection, media processing and the L1 render probe all skip the scheme, and a
 re-index keeps the MIME type stored for the same work.
 
+**Bare CID with a query gets the directory slash (main path).** fxhash gentk v1/v2
+metadata addresses an iteration as `ipfs://<cid>?fxhash=<hash>`, no slash. Every public
+gateway answers `/ipfs/<cid>?fxhash=…` for a directory CID with a 301 to `/ipfs/<cid>/`
+and drops the query; the fxhash snippet then reads a null hash, throws before the sketch
+runs, and the work displays as a uniform frame. The probe follows that redirect, validates
+`index.html`, and would store the bare shape as healthy. `domain.NormalizeIPFSRef` rewrites
+the ref to `<cid>/?fxhash=…` before candidates are built (`FindWorkingIPFSGateway`) and in
+the default-gateway fallback (`UriToGateway`); `types.NormalizeIPFSGatewayURL` applies the
+same rewrite to HTTP gateway URLs that bypass selection (a live-host URL in metadata, vendor
+media in `resolveRetiredMedia`), so the stored URL is the one a browser can load. Processed
+media survives the rewrite: re-index keeps the stored host and adds only the slash
+(`PreferStoredGatewayURL`), and media-asset lookups for a slashed URL fall back to the asset
+stored under its bare alias (`types.BareIPFSGatewayURL`, `mediaAssetLookupURLs`), so tokens
+on either shape share one asset (`media_assets` allows one row per provider asset, so it is
+neither copied nor moved by the upserts). A health-check promotion moves both same-host forms
+together (`ipfsURLForms` in `UpdateMediaURLAndPropagate`): every token on either form follows
+the promoted URL, and the asset moves with them, the exact form's own asset first. The bare shape itself is never kept.
+A file CID with a trailing slash is still served by the gateways in use. Measured
+2026-11-06 on a shared 23-work playlist: 3 of its 4 fxhash works carried the bare shape
+and rendered blank (white, black, light gray) on an FF1 while passing every byte check;
+the fourth, minted with the slash, displayed. Stored rows with the bare shape heal on
+re-index; a direct health check alone does not heal them, because
+the bare URL still answers 200 through the redirect.
+
 **Directory entry-point retry (insurance, not the main path).** When IPFS selection fails
 and some candidate served a directory listing, selection retries once with
 `<ref>/index.html`, query and fragment preserved. It has healed **0** production rows and

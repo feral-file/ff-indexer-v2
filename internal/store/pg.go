@@ -2222,23 +2222,51 @@ func (s *pgStore) GetMediaAssetByID(ctx context.Context, id int64) (*schema.Medi
 	return &media, nil
 }
 
-// GetMediaAssetBySourceURL retrieves a media asset by source URL
+// GetMediaAssetBySourceURL retrieves a media asset by source URL. A slashed IPFS
+// gateway URL ("<cid>/?q") falls back to the asset stored under its bare alias
+// ("<cid>?q"), returned under the requested URL; see mediaAssetLookupURLs.
 func (s *pgStore) GetMediaAssetBySourceURL(ctx context.Context, sourceURL string, provider schema.StorageProvider) (*schema.MediaAsset, error) {
 	if sourceURL == "" {
 		return nil, nil
 	}
 
-	sourceURLHash := types.MD5Hash(sourceURL)
-	var media schema.MediaAsset
-	err := s.db.WithContext(ctx).
-		Where("source_url_hash = ? AND provider = ?", sourceURLHash, provider).First(&media).Error
-	if err != nil {
+	for _, candidate := range mediaAssetLookupURLs(sourceURL) {
+		var media schema.MediaAsset
+		err := s.db.WithContext(ctx).
+			Where("source_url_hash = ? AND provider = ?", types.MD5Hash(candidate), provider).First(&media).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+			continue
 		}
-		return nil, fmt.Errorf("failed to get media asset by source URL: %w", err)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get media asset by source URL: %w", err)
+		}
+		return asRequestedMediaAsset(media, sourceURL), nil
 	}
-	return &media, nil
+	return nil, nil
+}
+
+// mediaAssetLookupURLs returns the source URLs whose assets serve sourceURL: the URL
+// itself, then the bare alias of a slashed IPFS gateway URL (types.BareIPFSGatewayURL).
+//
+// Reason: re-indexing rewrites "<gw>/ipfs/<cid>?q" to "<gw>/ipfs/<cid>/?q" through
+// the metadata and enrichment upserts, which do not move media assets. The asset
+// cannot move there either: another token may still reference the bare URL, and
+// media_assets holds one row per provider asset, so it cannot be copied. Resolving the
+// alias at read time keeps the processed media for both tokens.
+// Trade-offs: one extra hash per slashed URL in lookups; the exact URL always wins.
+func mediaAssetLookupURLs(sourceURL string) []string {
+	if bare, ok := types.BareIPFSGatewayURL(sourceURL); ok {
+		return []string{sourceURL, bare}
+	}
+	return []string{sourceURL}
+}
+
+// asRequestedMediaAsset returns asset keyed by requestedURL, the URL a caller looked up,
+// so callers that index assets by source URL hash find an alias hit under their own key.
+func asRequestedMediaAsset(asset schema.MediaAsset, requestedURL string) *schema.MediaAsset {
+	asset.SourceURL = requestedURL
+	asset.SourceURLHash = types.MD5Hash(requestedURL)
+	return &asset
 }
 
 // GetMediaAssetsBySourceURLs retrieves media assets by multiple source URLs
@@ -2249,16 +2277,23 @@ func (s *pgStore) GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []s
 
 	urlHashes := make([]string, 0, len(sourceURLs))
 	seen := make(map[string]bool)
+	// aliasOf maps a bare alias hash to the slashed URLs that requested it.
+	aliasOf := make(map[string][]string)
 	for _, url := range sourceURLs {
 		if url == "" {
 			continue
 		}
-		hash := types.MD5Hash(url)
-		if seen[hash] {
-			continue
+		for i, candidate := range mediaAssetLookupURLs(url) {
+			hash := types.MD5Hash(candidate)
+			if i > 0 {
+				aliasOf[hash] = append(aliasOf[hash], url)
+			}
+			if seen[hash] {
+				continue
+			}
+			seen[hash] = true
+			urlHashes = append(urlHashes, hash)
 		}
-		seen[hash] = true
-		urlHashes = append(urlHashes, hash)
 	}
 	if len(urlHashes) == 0 {
 		return []schema.MediaAsset{}, nil
@@ -2271,7 +2306,32 @@ func (s *pgStore) GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []s
 	if err != nil {
 		return nil, fmt.Errorf("failed to get media assets by source URLs: %w", err)
 	}
-	return mediaAssets, nil
+	return withAliasedMediaAssets(mediaAssets, aliasOf), nil
+}
+
+// withAliasedMediaAssets adds, for each asset found under a bare alias, a copy keyed by
+// every slashed URL that requested it, unless that URL already has its own asset for
+// the provider (the exact URL always wins). See mediaAssetLookupURLs.
+func withAliasedMediaAssets(assets []schema.MediaAsset, aliasOf map[string][]string) []schema.MediaAsset {
+	if len(aliasOf) == 0 {
+		return assets
+	}
+	have := make(map[string]bool, len(assets))
+	for _, asset := range assets {
+		have[asset.SourceURLHash+"|"+string(asset.Provider)] = true
+	}
+	result := assets
+	for _, asset := range assets {
+		for _, requested := range aliasOf[asset.SourceURLHash] {
+			key := types.MD5Hash(requested) + "|" + string(asset.Provider)
+			if have[key] {
+				continue
+			}
+			have[key] = true
+			result = append(result, *asRequestedMediaAsset(asset, requested))
+		}
+	}
+	return result
 }
 
 // CreateMediaAsset creates a new media asset record
@@ -3041,15 +3101,22 @@ func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Dura
 	return urls, nil
 }
 
-// GetTokenIDsByMediaURL returns all token IDs that use a specific URL
+// GetTokenIDsByMediaURL returns all token IDs that use a specific URL, including tokens
+// on its same-host bare or slashed IPFS sibling (ipfsURLForms).
+// Reason: a promotion of url moves both forms (UpdateMediaURLAndPropagate), so the
+// sweeper's viewability recompute must cover every token that promotion can change.
 func (s *pgStore) GetTokenIDsByMediaURL(ctx context.Context, url string) ([]uint64, error) {
-	urlHash := types.MD5Hash(url)
+	forms := ipfsURLForms(url)
+	urlHashes := make([]string, len(forms))
+	for i, form := range forms {
+		urlHashes[i] = types.MD5Hash(form)
+	}
 	var tokenIDs []uint64
 	err := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Select("token_id").
 		Distinct("token_id").
-		Where("media_url_hash = ?", urlHash).
+		Where("media_url_hash IN ?", urlHashes).
 		Pluck("token_id", &tokenIDs).Error
 
 	if err != nil {
@@ -3275,6 +3342,12 @@ func nullableString(s *string) interface{} {
 // UpdateMediaURLAndPropagate updates a URL across token_media_health, the source tables
 // (metadata/enrichment) and media_assets in a transaction.
 //
+// The old URL's bare and slashed IPFS forms on the same host ("<cid>?q", "<cid>/?q",
+// see ipfsURLForms) are promoted together: they are one resource, and the processed
+// asset may sit under either (media-asset lookups resolve the slashed form through
+// its bare alias). Promoting only the exact form would strand the asset, or the
+// sibling tokens, on the old gateway; promoting both also heals the bare shape.
+//
 // Reason: the promoted row carries the fallback probe's OWN observations
 // (observedContentType/sniffedContentType, nil → NULL), not the replaced URL's — the
 // winning gateway's bytes were just content-validated, and leaving the columns NULL
@@ -3291,7 +3364,11 @@ func nullableString(s *string) interface{} {
 // next probe. The gate is read under lockURLGate so a concurrent gate/release
 // serializes against this promotion.
 func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string, observedContentType, sniffedContentType *string) error {
-	oldHash := types.MD5Hash(oldURL)
+	oldForms := ipfsURLForms(oldURL)
+	oldHashes := make([]string, len(oldForms))
+	for i, form := range oldForms {
+		oldHashes[i] = types.MD5Hash(form)
+	}
 	newHash := types.MD5Hash(newURL)
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -3327,7 +3404,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 		}
 
 		if err := tx.Model(&schema.TokenMediaHealth{}).
-			Where("media_url_hash = ?", oldHash).
+			Where("media_url_hash IN ?", oldHashes).
 			Updates(health).Error; err != nil {
 			return fmt.Errorf("failed to update token_media_health: %w", err)
 		}
@@ -3338,7 +3415,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 		// sequentially scans the table (592k seq scans on prod before this, ~2.5 s per UPDATE
 		// under load). A NULL url has no hash to match, so the extra predicate changes nothing.
 		if err := tx.Model(&schema.TokenMetadata{}).
-			Where("image_url_hash = ? AND image_url IS NOT NULL", oldHash).
+			Where("image_url_hash IN ? AND image_url IS NOT NULL", oldHashes).
 			Updates(map[string]interface{}{
 				"image_url":      newURL,
 				"image_url_hash": newHash,
@@ -3348,7 +3425,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 
 		// 3. Update token_metadata.animation_url
 		if err := tx.Model(&schema.TokenMetadata{}).
-			Where("animation_url_hash = ? AND animation_url IS NOT NULL", oldHash).
+			Where("animation_url_hash IN ? AND animation_url IS NOT NULL", oldHashes).
 			Updates(map[string]interface{}{
 				"animation_url":      newURL,
 				"animation_url_hash": newHash,
@@ -3358,7 +3435,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 
 		// 4. Update enrichment_sources.image_url
 		if err := tx.Model(&schema.EnrichmentSource{}).
-			Where("image_url_hash = ? AND image_url IS NOT NULL", oldHash).
+			Where("image_url_hash IN ? AND image_url IS NOT NULL", oldHashes).
 			Updates(map[string]interface{}{
 				"image_url":      newURL,
 				"image_url_hash": newHash,
@@ -3368,7 +3445,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 
 		// 5. Update enrichment_sources.animation_url
 		if err := tx.Model(&schema.EnrichmentSource{}).
-			Where("animation_url_hash = ? AND animation_url IS NOT NULL", oldHash).
+			Where("animation_url_hash IN ? AND animation_url IS NOT NULL", oldHashes).
 			Updates(map[string]interface{}{
 				"animation_url":      newURL,
 				"animation_url_hash": newHash,
@@ -3377,7 +3454,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 		}
 
 		// 6. Move the media asset with the references it serves
-		return repointMediaAsset(tx, oldURL, newURL)
+		return repointMediaAsset(tx, oldForms, newURL)
 	})
 }
 
@@ -3391,29 +3468,48 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 // kept and the old row stays behind unreferenced; no rows are merged or deleted.
 // A concurrent insert for the new URL fails the unique constraint and with it the
 // whole propagation, which callers already treat as retryable.
-// Constraints: the asset moves only between gateway URLs for the same IPFS
-// reference, where the bytes are the same by construction. Other promotions leave
-// it in place: the Arweave fallback can promote a transaction root for a sub-path,
-// and a directory promoted to its index.html entry point is a different resource.
-// Only valid inside UpdateMediaURLAndPropagate, which moves every reference from
-// the old URL in the same transaction.
-func repointMediaAsset(tx *gorm.DB, oldURL, newURL string) error {
-	if !types.SameIPFSReference(oldURL, newURL) {
-		return nil
-	}
+// Constraints: oldForms is the replaced URL followed by its same-host bare/slashed
+// sibling (ipfsURLForms); they are tried in that order, so the exact URL's own asset
+// wins and the sibling's moves only when the exact URL has none. The asset moves only
+// between gateway URLs for the same IPFS reference, where the bytes are the same by
+// construction; "<cid>?q" and "<cid>/?q" count as the same reference. Other
+// promotions leave it in place: the Arweave fallback can promote a transaction root
+// for a sub-path, and a directory promoted to its index.html entry point is a
+// different resource. Only valid inside UpdateMediaURLAndPropagate, which moves
+// every reference from the old forms in the same transaction.
+func repointMediaAsset(tx *gorm.DB, oldForms []string, newURL string) error {
 	newHash := types.MD5Hash(newURL)
-	err := tx.Exec(`
-		UPDATE media_assets AS old
-		SET source_url = ?, source_url_hash = ?
-		WHERE old.source_url_hash = ?
-		  AND NOT EXISTS (
-			SELECT 1 FROM media_assets AS existing
-			WHERE existing.source_url_hash = ? AND existing.provider = old.provider
-		  )`, newURL, newHash, types.MD5Hash(oldURL), newHash).Error
-	if err != nil {
-		return fmt.Errorf("failed to re-point media_assets: %w", err)
+	for _, oldURL := range oldForms {
+		if oldURL == newURL || !types.EquivalentIPFSReference(oldURL, newURL) {
+			continue
+		}
+		err := tx.Exec(`
+			UPDATE media_assets AS old
+			SET source_url = ?, source_url_hash = ?
+			WHERE old.source_url_hash = ?
+			  AND NOT EXISTS (
+				SELECT 1 FROM media_assets AS existing
+				WHERE existing.source_url_hash = ? AND existing.provider = old.provider
+			  )`, newURL, newHash, types.MD5Hash(oldURL), newHash).Error
+		if err != nil {
+			return fmt.Errorf("failed to re-point media_assets: %w", err)
+		}
 	}
 	return nil
+}
+
+// ipfsURLForms returns u followed by its same-host bare or slashed sibling
+// ("<gw>/ipfs/<cid>?q" <-> "<gw>/ipfs/<cid>/?q"), or u alone when it has none.
+// Reason: the two forms address one resource, and state keyed by either must move
+// together on promotion; see UpdateMediaURLAndPropagate.
+func ipfsURLForms(u string) []string {
+	if bare, ok := types.BareIPFSGatewayURL(u); ok {
+		return []string{u, bare}
+	}
+	if slashed := types.NormalizeIPFSGatewayURL(u); slashed != u {
+		return []string{u, slashed}
+	}
+	return []string{u}
 }
 
 // GetURLsDueForRenderProbe returns L0-healthy media URLs due for an L1 render probe.

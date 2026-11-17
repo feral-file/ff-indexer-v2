@@ -194,6 +194,30 @@ func (w *coreWorkflows) triggerWebhookTokenIndexingNotification(ctx context.Cont
 	w.triggerWebhookNotification(ctx, webhookEvent)
 }
 
+// triggerWebhookTokenViewabilityChanged emits token.viewability.changed for a token whose
+// is_viewable flag changed outside its own indexing run (e.g. moved by another token's
+// gateway promotion). Same event shape as the sweeper's and the render probe's, so
+// subscribers see one consistent viewability stream.
+func (w *coreWorkflows) triggerWebhookTokenViewabilityChanged(ctx context.Context, tokenCID domain.TokenCID, isViewable bool) {
+	chain, standard, contract, tokenNumber := tokenCID.Parse()
+	eventID := ulid.MustNewDefault(time.Now()).String()
+	w.triggerWebhookNotification(ctx, webhook.WebhookEvent{
+		EventID:   eventID,
+		EventType: webhook.EventTypeTokenViewabilityChanged,
+		Timestamp: time.Now().UTC(),
+		Data: webhook.TokenViewabilityChanged{
+			EventData: webhook.EventData{
+				TokenCID:    tokenCID.String(),
+				Chain:       string(chain),
+				Standard:    string(standard),
+				Contract:    contract,
+				TokenNumber: tokenNumber,
+			},
+			IsViewable: isViewable,
+		},
+	})
+}
+
 // triggerWebhookNotification triggers a webhook notification workflow (fire-and-forget)
 func (w *coreWorkflows) triggerWebhookNotification(ctx context.Context, event webhook.WebhookEvent) {
 	uk := "webhook-notify-" + event.EventID
