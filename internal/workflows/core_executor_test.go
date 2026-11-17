@@ -5406,6 +5406,11 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_Propagates(t *testi
 	}
 	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{token.ID}).Return(changes, nil)
 
+	// The promotion also moved other tokens on the dead URL (or its bare/slashed
+	// sibling); their viewability is recomputed in a separate batch.
+	mocks.store.EXPECT().GetTokenIDsByMediaURL(ctx, workingURL).Return([]uint64{token.ID, 9, 7}, nil)
+	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{7, 9}).Return(nil, nil)
+
 	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{deadURL})
 
 	assert.NoError(t, err)
@@ -5680,4 +5685,57 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardKeepsBurnedStat
 
 	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, nil)
 	assert.NoError(t, err)
+}
+
+// TestCheckMediaURLsHealthAndUpdateViewability_PromotedTokenLookupFailureIsNonFatal pins
+// that a failure to find or recompute the other tokens moved by a promotion never fails
+// the indexed token: its own viewability result stands.
+func TestCheckMediaURLsHealthAndUpdateViewability_PromotedTokenLookupFailureIsNonFatal(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "tezos-mainnet:fa2:KT1TEST:178" //nolint:gosec
+	deadURL := "https://ipfs.feralfile.com/ipfs/QmPjZona8QEqqvSK5wfx5Wr9aCeVrow3kisRjU1yHQZdtd?fxhash=oo1"
+	workingURL := "https://ipfs.filebase.io/ipfs/QmPjZona8QEqqvSK5wfx5Wr9aCeVrow3kisRjU1yHQZdtd/?fxhash=oo1"
+
+	mocks.urlChecker.EXPECT().Check(ctx, deadURL).
+		Return(uri.HealthCheckResult{Status: uri.HealthStatusHealthy, WorkingURL: &workingURL})
+	mocks.store.EXPECT().UpdateMediaURLAndPropagate(ctx, deadURL, workingURL, gomock.Nil(), gomock.Nil()).Return(nil)
+	token := &schema.Token{ID: 5, TokenCID: tokenCID}
+	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID).Return(token, nil)
+	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityChange{{TokenID: token.ID, TokenCID: tokenCID, NewViewable: true}}, nil)
+	mocks.store.EXPECT().GetTokenIDsByMediaURL(ctx, workingURL).Return(nil, fmt.Errorf("db error"))
+
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{deadURL})
+	require.NoError(t, err)
+	assert.True(t, result.IsViewable)
+	assert.Equal(t, []string{workingURL}, result.HealthyURLs)
+}
+
+// TestCheckMediaURLsHealthAndUpdateViewability_PromotedTokenRecomputeFailureIsNonFatal is
+// the recompute-side counterpart of the lookup test above.
+func TestCheckMediaURLsHealthAndUpdateViewability_PromotedTokenRecomputeFailureIsNonFatal(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "tezos-mainnet:fa2:KT1TEST:179" //nolint:gosec
+	deadURL := "https://ipfs.feralfile.com/ipfs/QmPjZona8QEqqvSK5wfx5Wr9aCeVrow3kisRjU1yHQZdtd?fxhash=oo2"
+	workingURL := "https://ipfs.filebase.io/ipfs/QmPjZona8QEqqvSK5wfx5Wr9aCeVrow3kisRjU1yHQZdtd/?fxhash=oo2"
+
+	mocks.urlChecker.EXPECT().Check(ctx, deadURL).
+		Return(uri.HealthCheckResult{Status: uri.HealthStatusHealthy, WorkingURL: &workingURL})
+	mocks.store.EXPECT().UpdateMediaURLAndPropagate(ctx, deadURL, workingURL, gomock.Nil(), gomock.Nil()).Return(nil)
+	token := &schema.Token{ID: 6, TokenCID: tokenCID}
+	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID).Return(token, nil)
+	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityChange{{TokenID: token.ID, TokenCID: tokenCID, NewViewable: true}}, nil)
+	mocks.store.EXPECT().GetTokenIDsByMediaURL(ctx, workingURL).Return([]uint64{token.ID, 8}, nil)
+	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{8}).Return(nil, fmt.Errorf("db error"))
+
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{deadURL})
+	require.NoError(t, err)
+	assert.True(t, result.IsViewable)
 }

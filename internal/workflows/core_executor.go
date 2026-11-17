@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -793,6 +794,8 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 	}
 
 	var healthyURLs []string
+	// promotedTokenIDs collects other tokens moved by a promotion (see recomputePromotedTokens).
+	promotedTokenIDs := make(map[uint64]struct{})
 
 	if len(mediaURLs) > 0 {
 		// Use goroutines to check URLs in parallel
@@ -918,6 +921,7 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 						// Propagation succeeded: the working URL is now canonical in health table,
 						// metadata, and enrichment_sources. Use it for downstream media indexing.
 						healthyURLs = append(healthyURLs, *result.workingURL)
+						e.collectPromotedTokens(ctx, *result.workingURL, token.ID, promotedTokenIDs)
 					}
 				} else {
 					// Original URL is directly reachable
@@ -962,6 +966,7 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 	if err != nil {
 		return nil, fmt.Errorf("failed to update token viewability: %w", err)
 	}
+	e.recomputePromotedTokens(ctx, promotedTokenIDs)
 
 	// If there are changes, return the new viewability status
 	if len(changes) > 0 {
@@ -1971,4 +1976,45 @@ func (e *coreExecutor) UpsertReleaseMetadata(ctx context.Context, vendor schema.
 		return fmt.Errorf("failed to upsert release metadata: %w", err)
 	}
 	return nil
+}
+
+// collectPromotedTokens adds to into the IDs of every token other than self that now
+// references workingURL after a successful promotion.
+//
+// Reason: UpdateMediaURLAndPropagate moves every token on the replaced URL, and on its
+// same-host bare/slashed sibling, to workingURL and marks their health rows. Their
+// is_viewable flag is derived from those rows, so it must be recomputed too; the
+// promotion also refreshes last_checked_at, so the sweeper would not revisit them for
+// a full recheck interval.
+// Trade-offs: a lookup failure is logged, not returned; the token being indexed is
+// unaffected, and the flags heal on the next sweep of workingURL.
+func (e *coreExecutor) collectPromotedTokens(ctx context.Context, workingURL string, self uint64, into map[uint64]struct{}) {
+	ids, err := e.store.GetTokenIDsByMediaURL(ctx, workingURL)
+	if err != nil {
+		logger.ErrorCtx(ctx, err, zap.String("working_url", workingURL))
+		return
+	}
+	for _, id := range ids {
+		if id != self {
+			into[id] = struct{}{}
+		}
+	}
+}
+
+// recomputePromotedTokens recomputes viewability for tokens collected by
+// collectPromotedTokens, separately from the indexed token so its own result and
+// error contract stay unchanged. A failure is logged for the same reason as above.
+func (e *coreExecutor) recomputePromotedTokens(ctx context.Context, tokenIDs map[uint64]struct{}) {
+	if len(tokenIDs) == 0 {
+		return
+	}
+	ids := make([]uint64, 0, len(tokenIDs))
+	for id := range tokenIDs {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	if _, err := e.store.BatchUpdateTokensViewability(ctx, ids); err != nil {
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to update viewability of promoted tokens: %w", err),
+			zap.Uint64s("token_ids", ids))
+	}
 }

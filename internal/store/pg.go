@@ -3101,15 +3101,22 @@ func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Dura
 	return urls, nil
 }
 
-// GetTokenIDsByMediaURL returns all token IDs that use a specific URL
+// GetTokenIDsByMediaURL returns all token IDs that use a specific URL, including tokens
+// on its same-host bare or slashed IPFS sibling (ipfsURLForms).
+// Reason: a promotion of url moves both forms (UpdateMediaURLAndPropagate), so the
+// sweeper's viewability recompute must cover every token that promotion can change.
 func (s *pgStore) GetTokenIDsByMediaURL(ctx context.Context, url string) ([]uint64, error) {
-	urlHash := types.MD5Hash(url)
+	forms := ipfsURLForms(url)
+	urlHashes := make([]string, len(forms))
+	for i, form := range forms {
+		urlHashes[i] = types.MD5Hash(form)
+	}
 	var tokenIDs []uint64
 	err := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Select("token_id").
 		Distinct("token_id").
-		Where("media_url_hash = ?", urlHash).
+		Where("media_url_hash IN ?", urlHashes).
 		Pluck("token_id", &tokenIDs).Error
 
 	if err != nil {

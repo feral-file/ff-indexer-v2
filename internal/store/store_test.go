@@ -7412,8 +7412,14 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 	}
 
 	t.Run("promoting a slashed URL carries the asset held by its bare alias", func(t *testing.T) {
-		ids, _, slashed, asset := promotionFixture(t, "0x0000000000000000000000000000000000178301", "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
+		ids, bare, slashed, asset := promotionFixture(t, "0x0000000000000000000000000000000000178301", "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
 		newURL := "https://new.example.com/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/?filename=preview.png"
+		// The sweeper collects the tokens to recompute before promoting; both forms count.
+		for _, u := range []string{slashed, bare} {
+			tokenIDs, err := store.GetTokenIDsByMediaURL(ctx, u)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, ids[:], tokenIDs, "tokens on either URL form are affected by promoting %s", u)
+		}
 		require.NoError(t, store.UpdateMediaURLAndPropagate(ctx, slashed, newURL, nil, nil))
 		assertBothFollow(t, ids, newURL, asset)
 	})
