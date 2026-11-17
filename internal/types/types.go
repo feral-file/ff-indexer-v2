@@ -221,6 +221,34 @@ func NormalizeIPFSGatewayURL(s string) string {
 	return s[:len(s)-len(ref[i:])] + normalized[i:]
 }
 
+// BareIPFSGatewayURL is the inverse of NormalizeIPFSGatewayURL: for a gateway URL whose
+// CID is followed by "/" and a non-empty query or fragment, it returns the same URL
+// without that slash. Any other string yields ("", false).
+//
+// Reason: media assets processed before the directory slash existed are keyed by the
+// hash of the bare URL. Lookups for the slashed URL use this alias to find them, so a
+// slash-only re-index keeps its processed media without moving the asset away from
+// tokens that still reference the bare URL (media_assets allows one row per provider
+// asset, so it cannot be copied either).
+// Constraints: the alias is accepted only when normalizing it reproduces s exactly, so
+// it can never pair two different resources.
+func BareIPFSGatewayURL(s string) (string, bool) {
+	ok, ref := IsIPFSGatewayURL(s)
+	if !ok {
+		return "", false
+	}
+	i := strings.IndexAny(ref, "/?#")
+	if i < 0 || !strings.HasPrefix(ref[i:], "/?") && !strings.HasPrefix(ref[i:], "/#") {
+		return "", false
+	}
+	suffix := ref[i:]
+	bare := s[:len(s)-len(suffix)] + suffix[1:]
+	if NormalizeIPFSGatewayURL(bare) != s {
+		return "", false
+	}
+	return bare, true
+}
+
 // EquivalentIPFSReference is SameIPFSReference after NormalizeIPFSGatewayURL on both
 // sides: "<cid>?q" and "<cid>/?q" address the same bytes. Use it where state keyed by
 // the old URL must follow a slash-normalized replacement (media assets). Stored-URL

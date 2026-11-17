@@ -163,15 +163,18 @@ runs, and the work displays as a uniform frame. The probe follows that redirect,
 the ref to `<cid>/?fxhash=…` before candidates are built (`FindWorkingIPFSGateway`) and in
 the default-gateway fallback (`UriToGateway`); `types.NormalizeIPFSGatewayURL` applies the
 same rewrite to HTTP gateway URLs that bypass selection (a live-host URL in metadata, vendor
-media in `resolveRetiredMedia`), so the stored URL is the one a browser can load. A media
-asset keyed by the bare URL follows its slashed replacement (`EquivalentIPFSReference` in
-`repointMediaAsset`); stored-URL preference stays exact so it can never keep the bare shape.
+media in `resolveRetiredMedia`), so the stored URL is the one a browser can load. Processed
+media survives the rewrite: re-index keeps the stored host and adds only the slash
+(`PreferStoredGatewayURL`), and media-asset lookups for a slashed URL fall back to the asset
+stored under its bare alias (`types.BareIPFSGatewayURL`, `mediaAssetLookupURLs`), so tokens
+on either shape share one asset (`media_assets` allows one row per provider asset, so it is
+neither copied nor moved by the upserts). A health-check promotion still moves the asset
+(`EquivalentIPFSReference` in `repointMediaAsset`). The bare shape itself is never kept.
 A file CID with a trailing slash is still served by the gateways in use. Measured
 2026-11-06 on a shared 23-work playlist: 3 of its 4 fxhash works carried the bare shape
 and rendered blank (white, black, light gray) on an FF1 while passing every byte check;
 the fourth, minted with the slash, displayed. Stored rows with the bare shape heal on
-re-index (the stored-URL preference compares refs exactly, so `<cid>?q` and `<cid>/?q`
-differ and the resolved URL wins); a direct health check alone does not heal them, because
+re-index; a direct health check alone does not heal them, because
 the bare URL still answers 200 through the redirect.
 
 **Directory entry-point retry (insurance, not the main path).** When IPFS selection fails

@@ -7319,6 +7319,81 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		assert.Nil(t, moved)
 	})
 
+	t.Run("slash-only re-index keeps the shared processed asset for both tokens", func(t *testing.T) {
+		// Two tokens share a processed image at the bare "<cid>?q" URL. Re-indexing
+		// stores the slashed "<cid>/?q" for one token through the metadata upsert and
+		// for the other through the enrichment upsert; neither path moves the asset.
+		// Both must still find it, and so must anything still holding the bare URL.
+		const cid = "QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon"
+		bare := "https://ipfs.example.com/ipfs/" + cid + "?filename=preview.png"
+		slashed := "https://ipfs.example.com/ipfs/" + cid + "/?filename=preview.png"
+		asset := createAsset(t, bare, "slash-alias-asset")
+
+		ids := make([]uint64, 2)
+		for i, number := range []string{"1", "2"} {
+			mint := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000178178", number, "0xowner178")
+			require.NoError(t, store.CreateTokenMint(ctx, mint))
+			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
+			require.NoError(t, err)
+			ids[i] = token.ID
+			require.NoError(t, store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+				TokenID: token.ID, OriginJSON: datatypes.JSON(`{}`), LatestJSON: datatypes.JSON(`{}`),
+				EnrichmentLevel: schema.EnrichmentLevelNone, LastRefreshedAt: time.Now().UTC(), ImageURL: &bare,
+			}))
+		}
+
+		require.NoError(t, store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID: ids[0], OriginJSON: datatypes.JSON(`{}`), LatestJSON: datatypes.JSON(`{}`),
+			EnrichmentLevel: schema.EnrichmentLevelNone, LastRefreshedAt: time.Now().UTC(), ImageURL: &slashed,
+		}))
+		require.NoError(t, store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
+			TokenID: ids[1], Vendor: schema.VendorOpenSea, VendorJSON: datatypes.JSON(`{}`), ImageURL: &slashed,
+		}))
+
+		viaSlashed, err := store.GetMediaAssetBySourceURL(ctx, slashed, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, viaSlashed, "the slashed URL must find the asset processed under its bare alias")
+		assert.Equal(t, asset.ID, viaSlashed.ID, "the same asset, not a new upload")
+		assert.Equal(t, slashed, viaSlashed.SourceURL, "returned under the URL the caller asked for")
+
+		viaBare, err := store.GetMediaAssetBySourceURL(ctx, bare, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, viaBare, "tokens still on the bare URL keep the asset")
+		assert.Equal(t, asset.ID, viaBare.ID)
+
+		bulk, err := store.GetMediaAssetsBySourceURLs(ctx, []string{bare, slashed})
+		require.NoError(t, err)
+		byHash := make(map[string]int64)
+		for _, a := range bulk {
+			byHash[a.SourceURLHash] = a.ID
+		}
+		assert.Equal(t, asset.ID, byHash[types.MD5Hash(slashed)], "bulk lookup keys the alias hit by the slashed URL")
+		assert.Equal(t, asset.ID, byHash[types.MD5Hash(bare)], "bulk lookup still keys the asset by its bare URL")
+	})
+
+	t.Run("a slashed URL's own asset wins over its bare alias", func(t *testing.T) {
+		const cid = "QmT78zSuBmuS4z925WZfrqQ1qHaJ56DQaTfyMUF7F8ff5o"
+		bare := "https://ipfs.example.com/ipfs/" + cid + "?filename=own.png"
+		slashed := "https://ipfs.example.com/ipfs/" + cid + "/?filename=own.png"
+		createAsset(t, bare, "alias-loses-bare")
+		own := createAsset(t, slashed, "alias-loses-slashed")
+
+		got, err := store.GetMediaAssetBySourceURL(ctx, slashed, schema.StorageProviderCloudflare)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, own.ID, got.ID)
+
+		bulk, err := store.GetMediaAssetsBySourceURLs(ctx, []string{slashed})
+		require.NoError(t, err)
+		var forSlashed []int64
+		for _, a := range bulk {
+			if a.SourceURLHash == types.MD5Hash(slashed) {
+				forSlashed = append(forSlashed, a.ID)
+			}
+		}
+		assert.Equal(t, []int64{own.ID}, forSlashed, "exactly one asset per URL and provider")
+	})
+
 	t.Run("BatchUpdateTokensViewability respects animation URL priority", func(t *testing.T) {
 		sharedImageURL := "https://example.com/shared-image.jpg"
 

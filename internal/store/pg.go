@@ -2222,23 +2222,51 @@ func (s *pgStore) GetMediaAssetByID(ctx context.Context, id int64) (*schema.Medi
 	return &media, nil
 }
 
-// GetMediaAssetBySourceURL retrieves a media asset by source URL
+// GetMediaAssetBySourceURL retrieves a media asset by source URL. A slashed IPFS
+// gateway URL ("<cid>/?q") falls back to the asset stored under its bare alias
+// ("<cid>?q"), returned under the requested URL; see mediaAssetLookupURLs.
 func (s *pgStore) GetMediaAssetBySourceURL(ctx context.Context, sourceURL string, provider schema.StorageProvider) (*schema.MediaAsset, error) {
 	if sourceURL == "" {
 		return nil, nil
 	}
 
-	sourceURLHash := types.MD5Hash(sourceURL)
-	var media schema.MediaAsset
-	err := s.db.WithContext(ctx).
-		Where("source_url_hash = ? AND provider = ?", sourceURLHash, provider).First(&media).Error
-	if err != nil {
+	for _, candidate := range mediaAssetLookupURLs(sourceURL) {
+		var media schema.MediaAsset
+		err := s.db.WithContext(ctx).
+			Where("source_url_hash = ? AND provider = ?", types.MD5Hash(candidate), provider).First(&media).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+			continue
 		}
-		return nil, fmt.Errorf("failed to get media asset by source URL: %w", err)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get media asset by source URL: %w", err)
+		}
+		return asRequestedMediaAsset(media, sourceURL), nil
 	}
-	return &media, nil
+	return nil, nil
+}
+
+// mediaAssetLookupURLs returns the source URLs whose assets serve sourceURL: the URL
+// itself, then the bare alias of a slashed IPFS gateway URL (types.BareIPFSGatewayURL).
+//
+// Reason: re-indexing rewrites "<gw>/ipfs/<cid>?q" to "<gw>/ipfs/<cid>/?q" through
+// the metadata and enrichment upserts, which do not move media assets. The asset
+// cannot move there either: another token may still reference the bare URL, and
+// media_assets holds one row per provider asset, so it cannot be copied. Resolving the
+// alias at read time keeps the processed media for both tokens.
+// Trade-offs: one extra hash per slashed URL in lookups; the exact URL always wins.
+func mediaAssetLookupURLs(sourceURL string) []string {
+	if bare, ok := types.BareIPFSGatewayURL(sourceURL); ok {
+		return []string{sourceURL, bare}
+	}
+	return []string{sourceURL}
+}
+
+// asRequestedMediaAsset returns asset keyed by requestedURL, the URL a caller looked up,
+// so callers that index assets by source URL hash find an alias hit under their own key.
+func asRequestedMediaAsset(asset schema.MediaAsset, requestedURL string) *schema.MediaAsset {
+	asset.SourceURL = requestedURL
+	asset.SourceURLHash = types.MD5Hash(requestedURL)
+	return &asset
 }
 
 // GetMediaAssetsBySourceURLs retrieves media assets by multiple source URLs
@@ -2249,16 +2277,23 @@ func (s *pgStore) GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []s
 
 	urlHashes := make([]string, 0, len(sourceURLs))
 	seen := make(map[string]bool)
+	// aliasOf maps a bare alias hash to the slashed URLs that requested it.
+	aliasOf := make(map[string][]string)
 	for _, url := range sourceURLs {
 		if url == "" {
 			continue
 		}
-		hash := types.MD5Hash(url)
-		if seen[hash] {
-			continue
+		for i, candidate := range mediaAssetLookupURLs(url) {
+			hash := types.MD5Hash(candidate)
+			if i > 0 {
+				aliasOf[hash] = append(aliasOf[hash], url)
+			}
+			if seen[hash] {
+				continue
+			}
+			seen[hash] = true
+			urlHashes = append(urlHashes, hash)
 		}
-		seen[hash] = true
-		urlHashes = append(urlHashes, hash)
 	}
 	if len(urlHashes) == 0 {
 		return []schema.MediaAsset{}, nil
@@ -2271,7 +2306,32 @@ func (s *pgStore) GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []s
 	if err != nil {
 		return nil, fmt.Errorf("failed to get media assets by source URLs: %w", err)
 	}
-	return mediaAssets, nil
+	return withAliasedMediaAssets(mediaAssets, aliasOf), nil
+}
+
+// withAliasedMediaAssets adds, for each asset found under a bare alias, a copy keyed by
+// every slashed URL that requested it, unless that URL already has its own asset for
+// the provider (the exact URL always wins). See mediaAssetLookupURLs.
+func withAliasedMediaAssets(assets []schema.MediaAsset, aliasOf map[string][]string) []schema.MediaAsset {
+	if len(aliasOf) == 0 {
+		return assets
+	}
+	have := make(map[string]bool, len(assets))
+	for _, asset := range assets {
+		have[asset.SourceURLHash+"|"+string(asset.Provider)] = true
+	}
+	result := assets
+	for _, asset := range assets {
+		for _, requested := range aliasOf[asset.SourceURLHash] {
+			key := types.MD5Hash(requested) + "|" + string(asset.Provider)
+			if have[key] {
+				continue
+			}
+			have[key] = true
+			result = append(result, *asRequestedMediaAsset(asset, requested))
+		}
+	}
+	return result
 }
 
 // CreateMediaAsset creates a new media asset record

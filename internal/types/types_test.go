@@ -1434,3 +1434,33 @@ func TestEquivalentIPFSReference(t *testing.T) {
 	assert.False(t, EquivalentIPFSReference("https://a.example/ipfs/"+cid, "https://b.example/ipfs/"+cid+"/index.html"))
 	assert.False(t, EquivalentIPFSReference("https://a.example/ipfs/"+cid+"?x=1", "https://b.example/ipfs/"+cid+"?x=2"))
 }
+
+func TestBareIPFSGatewayURL(t *testing.T) {
+	cid := "QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon"
+	sub := "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+	tests := []struct {
+		name  string
+		input string
+		bare  string
+		ok    bool
+	}{
+		{"slashed query", "https://ipfs.filebase.io/ipfs/" + cid + "/?fxhash=oo1", "https://ipfs.filebase.io/ipfs/" + cid + "?fxhash=oo1", true},
+		{"slashed fragment", "https://ipfs.filebase.io/ipfs/" + cid + "/#view", "https://ipfs.filebase.io/ipfs/" + cid + "#view", true},
+		{"subdomain gateway", "https://" + sub + ".ipfs.dweb.link/?fxhash=oo1", "https://" + sub + ".ipfs.dweb.link?fxhash=oo1", true},
+		{"already bare", "https://ipfs.filebase.io/ipfs/" + cid + "?fxhash=oo1", "", false},
+		{"slash with nothing after it", "https://ipfs.filebase.io/ipfs/" + cid + "/", "", false},
+		{"slash with empty query", "https://ipfs.filebase.io/ipfs/" + cid + "/?", "", false},
+		{"path before the query", "https://ipfs.filebase.io/ipfs/" + cid + "/index.html?fxhash=oo1", "", false},
+		{"not a gateway URL", "https://example.com/a/?x=1", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bare, ok := BareIPFSGatewayURL(tt.input)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.bare, bare)
+			if ok {
+				assert.Equal(t, tt.input, NormalizeIPFSGatewayURL(bare), "the alias must round-trip")
+			}
+		})
+	}
+}
