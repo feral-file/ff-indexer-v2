@@ -190,6 +190,9 @@ type MediaURLToCheck struct {
 type MediaHealthCheckResult struct {
 	IsViewable  bool     `json:"is_viewable"`
 	HealthyURLs []string `json:"healthy_urls"`
+	// PromotedChanges are viewability changes of OTHER tokens that a gateway promotion
+	// during this check moved along with the indexed token; the caller notifies them.
+	PromotedChanges []store.TokenViewabilityChange `json:"promoted_changes,omitempty"`
 }
 
 // coreExecutor is the concrete implementation of CoreExecutor.
@@ -966,13 +969,14 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 	if err != nil {
 		return nil, fmt.Errorf("failed to update token viewability: %w", err)
 	}
-	e.recomputePromotedTokens(ctx, promotedTokenIDs)
+	promotedChanges := e.recomputePromotedTokens(ctx, promotedTokenIDs)
 
 	// If there are changes, return the new viewability status
 	if len(changes) > 0 {
 		return &MediaHealthCheckResult{
-			IsViewable:  changes[0].NewViewable,
-			HealthyURLs: healthyURLs,
+			IsViewable:      changes[0].NewViewable,
+			HealthyURLs:     healthyURLs,
+			PromotedChanges: promotedChanges,
 		}, nil
 	}
 
@@ -988,8 +992,9 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 	}
 
 	return &MediaHealthCheckResult{
-		IsViewable:  viewabilityInfo[0].IsViewable,
-		HealthyURLs: healthyURLs,
+		IsViewable:      viewabilityInfo[0].IsViewable,
+		HealthyURLs:     healthyURLs,
+		PromotedChanges: promotedChanges,
 	}, nil
 }
 
@@ -2003,18 +2008,23 @@ func (e *coreExecutor) collectPromotedTokens(ctx context.Context, workingURL str
 
 // recomputePromotedTokens recomputes viewability for tokens collected by
 // collectPromotedTokens, separately from the indexed token so its own result and
-// error contract stay unchanged. A failure is logged for the same reason as above.
-func (e *coreExecutor) recomputePromotedTokens(ctx context.Context, tokenIDs map[uint64]struct{}) {
+// error contract stay unchanged, and returns the changes so the workflow can emit
+// token.viewability.changed for them (the executor holds no job queue). A failure is
+// logged for the same reason as above and yields no changes.
+func (e *coreExecutor) recomputePromotedTokens(ctx context.Context, tokenIDs map[uint64]struct{}) []store.TokenViewabilityChange {
 	if len(tokenIDs) == 0 {
-		return
+		return nil
 	}
 	ids := make([]uint64, 0, len(tokenIDs))
 	for id := range tokenIDs {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	if _, err := e.store.BatchUpdateTokensViewability(ctx, ids); err != nil {
+	changes, err := e.store.BatchUpdateTokensViewability(ctx, ids)
+	if err != nil {
 		logger.ErrorCtx(ctx, fmt.Errorf("failed to update viewability of promoted tokens: %w", err),
 			zap.Uint64s("token_ids", ids))
+		return nil
 	}
+	return changes
 }

@@ -5409,7 +5409,8 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_Propagates(t *testi
 	// The promotion also moved other tokens on the dead URL (or its bare/slashed
 	// sibling); their viewability is recomputed in a separate batch.
 	mocks.store.EXPECT().GetTokenIDsByMediaURL(ctx, workingURL).Return([]uint64{token.ID, 9, 7}, nil)
-	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{7, 9}).Return(nil, nil)
+	siblingChanges := []store.TokenViewabilityChange{{TokenID: 7, TokenCID: "tezos-mainnet:fa2:KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE:7", OldViewable: false, NewViewable: true}} //nolint:gosec
+	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{7, 9}).Return(siblingChanges, nil)
 
 	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{deadURL})
 
@@ -5418,6 +5419,8 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_Propagates(t *testi
 	assert.True(t, result.IsViewable)
 	// HealthyURLs must contain the working URL so downstream media indexing targets it
 	assert.Equal(t, []string{workingURL}, result.HealthyURLs)
+	// Sibling changes are returned for the workflow to notify; the token's own result stands.
+	assert.Equal(t, siblingChanges, result.PromotedChanges)
 }
 
 // TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_FallsBackToMarkBroken
@@ -5738,4 +5741,5 @@ func TestCheckMediaURLsHealthAndUpdateViewability_PromotedTokenRecomputeFailureI
 	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{deadURL})
 	require.NoError(t, err)
 	assert.True(t, result.IsViewable)
+	assert.Empty(t, result.PromotedChanges, "a failed recompute reports no sibling changes")
 }

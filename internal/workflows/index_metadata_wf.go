@@ -171,6 +171,11 @@ func (w *coreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.
 	} else {
 		w.triggerWebhookTokenIndexingNotification(ctx, tokenCID, webhook.EventTypeTokenIndexingUnviewable, address)
 	}
+	// Other tokens a gateway promotion moved along with this one changed viewability too;
+	// notify them the way the sweeper does.
+	for _, change := range result.PromotedChanges {
+		w.triggerWebhookTokenViewabilityChanged(ctx, domain.TokenCID(change.TokenCID), change.NewViewable)
+	}
 
 	// Step 4: Trigger media indexing workflow (fire and forget) - only for healthy URLs
 	// This should not fail the parent workflow.
