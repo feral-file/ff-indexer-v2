@@ -23,7 +23,7 @@ func (w *mediaWorkflows) IndexMultipleMediaWorkflow(ctx context.Context, urls []
 	// Remove duplicate URLs
 	uniqueURLs := make(map[string]bool)
 	for _, url := range urls {
-		if types.IsValidURL(url) || types.IsDataURI(url) {
+		if isIndexableMediaURL(url) {
 			uniqueURLs[url] = true
 		}
 	}

@@ -1,7 +1,15 @@
 package dto
 
+import (
+	"mime"
+	"net/url"
+	"strings"
+
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+)
+
 // TokenDisplayResponse represents unified token display data
-// It merges metadata and enrichment source, preferring enrichment source when available
+// It merges token metadata with vendor enrichment.
 type TokenDisplayResponse struct {
 	ImageURL     *string            `json:"image_url,omitempty"`
 	AnimationURL *string            `json:"animation_url,omitempty"`
@@ -10,6 +18,10 @@ type TokenDisplayResponse struct {
 	Publisher    *PublisherResponse `json:"publisher,omitempty"`
 	Artists      []ArtistResponse   `json:"artists,omitempty"`
 	MimeType     *string            `json:"mime_type,omitempty"`
+
+	preferMetadataImage bool
+	metadataImageMIME   *string
+	enrichmentImageMIME *string
 }
 
 // MediaURLs returns the media URLs from the token display
@@ -25,7 +37,8 @@ func (t *TokenDisplayResponse) MediaURLs() []string {
 }
 
 // MergeTokenDisplay creates a unified display response by merging metadata and enrichment source
-// Enrichment source takes precedence over metadata when both have the same field
+// Vendor fields generally take precedence. OpenSea images are resized copies,
+// so image playback prefers the original. Animated works retain the vendor poster.
 func MergeTokenDisplay(metadata *TokenMetadataResponse, enrichment *EnrichmentSourceResponse) *TokenDisplayResponse {
 	// If both are nil, return nil
 	if metadata == nil && enrichment == nil {
@@ -68,5 +81,38 @@ func MergeTokenDisplay(metadata *TokenMetadataResponse, enrichment *EnrichmentSo
 		}
 	}
 
+	if metadata != nil && metadata.ImageURL != nil && *metadata.ImageURL != "" &&
+		enrichment != nil && enrichment.Vendor == string(schema.VendorOpenSea) {
+		display.preferMetadataImage = true
+		// Each MIME field describes the source's preferred media, so a type
+		// inferred from an animation cannot describe the image fallback.
+		if metadata.AnimationURL == nil || *metadata.AnimationURL == "" {
+			display.metadataImageMIME = metadata.MimeType
+		}
+		if enrichment.AnimationURL == nil || *enrichment.AnimationURL == "" {
+			display.enrichmentImageMIME = enrichment.MimeType
+		}
+		// Animated works need the vendor poster: clients cannot infer an
+		// extensionless image's type from the animation's MIME field.
+		if (display.AnimationURL == nil || *display.AnimationURL == "") && !isSVGImage(*metadata.ImageURL, display.metadataImageMIME) {
+			display.ImageURL = metadata.ImageURL
+			display.MimeType = display.metadataImageMIME
+		}
+	}
+
 	return display
+}
+
+// isSVGImage identifies originals that current gallery clients cannot decode.
+// Reason: display.image_url also supplies gallery thumbnails; until a separate
+// raster fallback is available, replacing a vendor poster with SVG loses it.
+func isSVGImage(imageURL string, contentType *string) bool {
+	if contentType != nil {
+		mediaType, _, err := mime.ParseMediaType(*contentType)
+		if err == nil && mediaType == "image/svg+xml" {
+			return true
+		}
+	}
+	parsed, err := url.Parse(imageURL)
+	return err == nil && strings.HasSuffix(strings.ToLower(parsed.Path), ".svg")
 }

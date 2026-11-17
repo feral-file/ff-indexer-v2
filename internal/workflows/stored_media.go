@@ -24,6 +24,25 @@ func keepStoredMetadataMedia(resolved *metadata.NormalizedMetadata, stored *sche
 	}
 	resolved.Image = uri.PreferStoredGatewayURL(resolved.Image, stored.ImageURL)
 	resolved.Animation = uri.PreferStoredGatewayURL(resolved.Animation, stored.AnimationURL)
+	keepStoredOnChFSMimeType(resolved, stored)
+}
+
+// keepStoredOnChFSMimeType keeps the stored MIME type of an onchfs artwork whose type
+// can no longer be detected.
+//
+// Reason: MIME detection needs an HTTP fetch and no gateway serves onchfs, so a re-index
+// detects nothing and would erase the type detected while fxhash's gateway still worked
+// (mostly text/html for generative works).
+// Constraints: only when the stored animation is the same work — compared in canonical
+// form, so a row still holding the old gateway URL counts — and detection returned nothing.
+func keepStoredOnChFSMimeType(resolved *metadata.NormalizedMetadata, stored *schema.TokenMetadata) {
+	if resolved.MimeType != nil || stored.MimeType == nil || stored.AnimationURL == nil {
+		return
+	}
+	if !types.HasOnChFSScheme(resolved.Animation) || types.CanonicalOnChFSURI(*stored.AnimationURL) != resolved.Animation {
+		return
+	}
+	resolved.MimeType = types.StringPtr(*stored.MimeType)
 }
 
 // keepStoredEnrichmentMedia is keepStoredMetadataMedia for vendor enrichment: it

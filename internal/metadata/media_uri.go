@@ -39,20 +39,23 @@ func resolveMediaURI(ctx context.Context, resolver uri.Resolver, source string) 
 }
 
 // resolveRetiredMedia validates every retired HTTP gateway in vendor media, moves
-// Feral File CDN URLs to the current origin, and gives a bare-CID-plus-query gateway
-// URL its directory slash (the same pure rewrite, see types.NormalizeIPFSGatewayURL).
+// Feral File CDN URLs to the current origin, turns OnChFS gateway URLs back into
+// onchfs:// URIs, and gives a bare-CID-plus-query gateway URL its directory slash
+// (types.NormalizeIPFSGatewayURL).
 // Reason: vendor HTTP URLs can bypass per-vendor URI resolution, and enrichment
-// takes precedence over normalized metadata in display selection.
+// takes precedence over normalized metadata in display selection. OpenSea's
+// display_animation_url, for one, still carries fxhash's dead onchfs gateway.
 // Trade-offs: a gateway outage delays other new vendor facts until the next
 // refresh, preserving the entire existing enrichment record without an upsert.
-// The CDN move is a pure rewrite (same paths, new host), so it needs no probe.
+// The CDN move, the onchfs rewrite and the directory slash are pure rewrites, so
+// they need no probe.
 // Constraints: never overwrite migrated playable media with an unvalidated URL.
 func (e *enhancer) resolveRetiredMedia(ctx context.Context, enhanced *EnhancedMetadata) error {
 	for _, target := range []**string{&enhanced.ImageURL, &enhanced.AnimationURL} {
 		if *target == nil {
 			continue
 		}
-		if moved := types.MigrateFeralFileCDN(**target); moved != **target {
+		if moved := types.CanonicalOnChFSURI(types.MigrateFeralFileCDN(**target)); moved != **target {
 			*target = &moved
 		}
 		if slashed := types.NormalizeIPFSGatewayURL(**target); slashed != **target {

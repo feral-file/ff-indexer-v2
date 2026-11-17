@@ -846,7 +846,7 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 					case uri.HealthStatusHealthy:
 						res.healthStatus = schema.MediaHealthStatusHealthy
 						// Capture the working URL if the checker resolved an alternative gateway.
-						// This happens when the original IPFS/Arweave/OnChFS gateway URL is dead
+						// This happens when the original IPFS/Arweave gateway URL is dead
 						// but the CID is still reachable via another configured gateway.
 						if result.WorkingURL != nil && *result.WorkingURL != u {
 							res.workingURL = result.WorkingURL

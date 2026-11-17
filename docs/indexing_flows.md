@@ -171,7 +171,7 @@ Content may be IPFS, Arweave, HTTP, or data URIs; results are persisted via the 
 
 **Step 2 — Enhance (optional vendors)**
 
-- **`EnhanceTokenMetadata`** may call vendor APIs (Art Blocks, fxhash, OpenSea, …) and populate **`enrichment_sources`**; failures are **non-fatal**.
+- **`EnhanceTokenMetadata`** may call vendor APIs (Art Blocks, objkt, OpenSea, …) and populate **`enrichment_sources`**; failures are **non-fatal**.
 
 For how **`artists`** and **`did:pkh`** values are chosen in resolve vs enrich (and how API display merges them), see [`artist_did_resolution.md`](artist_did_resolution.md).
 

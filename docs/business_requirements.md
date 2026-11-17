@@ -27,7 +27,7 @@ Aligned with the current system description and architecture band **Ownership & 
 - **Multi-chain NFT indexing** — Ethereum (**ERC-721**, **ERC-1155**) and Tezos (**FA2**); chain identifiers consistent with CAIP-2-style usage in APIs.
 - **Real-time or event-driven indexing** — Processing mints, transfers, burns, metadata updates as described in the README.
 - **Metadata resolution** — From **IPFS, Arweave, ONCHFS, HTTP** as applicable.
-- **Metadata enrichment** — From agreed vendor APIs (e.g. Art Blocks, fxhash, Foundation, SuperRare, Feral File, Objkt, OpenSea) as implemented in the service.
+- **Metadata enrichment** — From agreed vendor APIs (e.g. Art Blocks, Foundation, SuperRare, Feral File, Objkt, OpenSea) as implemented in the service. fxhash closed on 2026-08-17: its stored enrichment and releases are archived (served, never refreshed).
 - **Media processing** — Integration with **Cloudflare Images and Stream** (and health-oriented follow-up such as sweeper behavior described in the README).
 - **Provenance history** — Queryable event history supporting trust and UI timelines.
 - **Dual API access** — **REST** and **GraphQL** exposing the same domain with documented equivalence.

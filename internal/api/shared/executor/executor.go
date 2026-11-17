@@ -656,24 +656,21 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 //
 // The job (Phase 1) derives token CIDs using the per-vendor strategy and fans them into
 // chunked IndexTokens jobs (Phase 2). Phase 1 is typically fast (seconds for AB/objkt,
-// seconds-to-minutes for fxhash/FF depending on list size and API latency).
+// seconds-to-minutes for FF depending on list size and API latency).
 //
 // Validation mirrors TriggerReleaseIndexingRequest.Validate and must be kept in sync
 // because GraphQL resolvers call this method directly, bypassing the DTO. Checks:
-//   - vendor must be one of artblocks|feralfile|fxhash|objkt
+//   - vendor must be one of artblocks|feralfile|objkt (fxhash is rejected: its API is gone)
 //   - exactly one of vendorReleaseID or vendorReleaseSlug must be non-empty
 //   - mintNumbers: non-empty, each >= 1, no duplicates, at most MAX_RELEASE_MINT_NUMBERS
-//   - for fxhash and feralfile: max(mintNumbers)-min(mintNumbers) <= MAX_API_VENDOR_MINT_SPAN
-//     (those vendors page the entire [min,max] interval from their API)
+//   - for feralfile: max(mintNumbers)-min(mintNumbers) <= MAX_API_VENDOR_MINT_SPAN
+//     (it pages the entire [min,max] interval from its API)
 //
 // The unique key is built from the sorted mint list so that [1,3,2] and [2,1,3] resolve
 // to the same active job and do not enqueue duplicate Phase 1 work.
 func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintNumbers []int64) (*dto.TriggerIndexingResponse, error) {
-	switch vendor {
-	case "artblocks", "feralfile", "fxhash", "objkt":
-		// valid
-	default:
-		return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendor))
+	if err := dto.ValidateReleaseIndexingVendor(vendor); err != nil {
+		return nil, err
 	}
 
 	// Normalize identifiers: trim leading/trailing whitespace before any further use.
@@ -729,11 +726,11 @@ func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, ve
 			mintMax = n
 		}
 	}
-	// Span cap for API-based vendors: fxhash and feralfile fetch the full [min,max] interval
-	// from their vendor APIs and paginate at 100 items/page. A wide sparse span like [1,50000]
-	// would force ~500 vendor API calls to index 2 mints. artblocks and objkt are deterministic
-	// and not subject to this cap. This mirrors the identical check in DTO.Validate.
-	if (vendor == "fxhash" || vendor == "feralfile") && mintMax-mintMin > constants.MAX_API_VENDOR_MINT_SPAN {
+	// Span cap for the API-based vendor: feralfile fetches the full [min,max] interval from
+	// its API and paginates at 100 items/page. A wide sparse span like [1,50000] would force
+	// ~500 vendor API calls to index 2 mints. artblocks and objkt are deterministic and not
+	// subject to this cap. This mirrors the identical check in DTO.Validate.
+	if vendor == "feralfile" && mintMax-mintMin > constants.MAX_API_VENDOR_MINT_SPAN {
 		return nil, apierrors.NewValidationError(fmt.Sprintf(
 			"mint_numbers span (%d) exceeds maximum allowed for %s (%d); split into smaller non-overlapping batches",
 			mintMax-mintMin, vendor, constants.MAX_API_VENDOR_MINT_SPAN,

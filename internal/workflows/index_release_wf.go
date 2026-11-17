@@ -22,10 +22,8 @@ package workflows
 //              start at token ID 1 by convention);
 //              CID format: tezos:mainnet:fa2:{contract}:{mint_number}
 //
-//   fxhash:    requires GetGentksByIteration API call (gentk IDs are global, not derived by math);
-//              calls the API with [min(mintNumbers), max(mintNumbers)] then filters returned
-//              gentks to only those whose iteration is in the requested mintNumbers set;
-//              CID format: tezos:mainnet:fa2:{contract}:{tokenID}
+//   fxhash is no longer supported: deriving its token IDs needed the fxhash API
+//   (GetGentksByIteration), which closed with the platform on 2026-08-17 (#173).
 //
 //   feralfile: requires GetSeriesArtworks API call (artworks sorted by index);
 //              calls the API with [min(mintNumbers), max(mintNumbers)] then filters returned
@@ -176,18 +174,12 @@ func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorR
 //
 // For objkt, the slug IS the KT1 contract address (the URL identifier equals the release ID).
 // For artblocks (Ethereum mainnet, chainID=1), the ArtBlocksClient must be configured.
-// For fxhash and feralfile, the respective clients must be configured.
+// For feralfile, the client must be configured.
 func (w *coreWorkflows) resolveVendorSlug(ctx context.Context, vendor schema.Vendor, slug string) (string, error) {
 	switch vendor {
 	case schema.VendorObjkt:
 		// For objkt, the URL identifier is the KT1 contract address, same as vendor_release_id.
 		return slug, nil
-
-	case schema.VendorFXHash:
-		if w.fxhashClient == nil {
-			return "", fmt.Errorf("fxhash client not configured: cannot resolve slug %q", slug)
-		}
-		return w.fxhashClient.ResolveSlug(ctx, slug)
 
 	case schema.VendorFeralFile:
 		if w.feralfileClient == nil {
@@ -248,9 +240,6 @@ func (w *coreWorkflows) deriveReleaseCIDs(ctx context.Context, vendor schema.Ven
 			return nil, 0, fmt.Errorf("objkt pre-check failed for %q: %w", vendorReleaseID, err)
 		}
 		return deriveObjktCIDs(vendorReleaseID, mintNumbers)
-
-	case schema.VendorFXHash:
-		return w.deriveFxhashCIDs(ctx, vendorReleaseID, mintNumbers)
 
 	case schema.VendorFeralFile:
 		return w.deriveFeralFileCIDs(ctx, vendorReleaseID, mintNumbers)
@@ -329,63 +318,6 @@ func deriveObjktCIDs(vendorReleaseID string, mintNumbers []int64) ([]domain.Toke
 		cids = append(cids, cid)
 	}
 	return cids, 0, nil
-}
-
-// deriveFxhashCIDs resolves fxhash token CIDs for an explicit mint number list via
-// GetGentksByIteration.
-//
-// fxhash gentk token IDs are global integers assigned at mint time and cannot be
-// derived from iteration numbers by math. The API call is required.
-//
-// Strategy: call GetGentksByIteration with [min(mintNumbers), max(mintNumbers)] to fetch
-// the bounding window in a single (possibly multi-page) request, then filter returned
-// gentks to only those whose iteration number is in the requested mintNumbers set.
-// This avoids N round trips for sparse lists while keeping the API surface unchanged.
-// CID format: tezos:mainnet:fa2:{contract}:{tokenID}
-func (w *coreWorkflows) deriveFxhashCIDs(ctx context.Context, vendorReleaseID string, mintNumbers []int64) ([]domain.TokenCID, int, error) {
-	if w.fxhashClient == nil {
-		return nil, 0, fmt.Errorf("fxhash client not configured: cannot index fxhash release %q", vendorReleaseID)
-	}
-
-	// fxhash always lives on Tezos mainnet; reject if the indexer is configured for another chain.
-	if err := w.validateChain(schema.VendorFXHash, domain.ChainTezosMainnet); err != nil {
-		return nil, 0, err
-	}
-
-	// Build a lookup set and compute the bounding range for a single API call.
-	wanted := make(map[int64]struct{}, len(mintNumbers))
-	mintMin, mintMax := mintNumbers[0], mintNumbers[0]
-	for _, n := range mintNumbers {
-		wanted[n] = struct{}{}
-		if n < mintMin {
-			mintMin = n
-		}
-		if n > mintMax {
-			mintMax = n
-		}
-	}
-
-	refs, err := w.fxhashClient.GetGentksByIteration(ctx, vendorReleaseID, mintMin, mintMax)
-	if err != nil {
-		return nil, 0, fmt.Errorf("fxhash GetGentksByIteration failed for %q [%d..%d]: %w", vendorReleaseID, mintMin, mintMax, err)
-	}
-
-	// Filter to only the requested iterations.
-	cids := make([]domain.TokenCID, 0, len(mintNumbers))
-	for _, ref := range refs {
-		if _, ok := wanted[ref.Iteration]; ok {
-			cid := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, ref.ContractAddress, ref.TokenID)
-			cids = append(cids, cid)
-		}
-	}
-
-	// skipped = requested count minus resolved count.
-	skipped := len(mintNumbers) - len(cids)
-	if skipped < 0 {
-		skipped = 0
-	}
-
-	return cids, skipped, nil
 }
 
 // deriveFeralFileCIDs resolves Feral File token CIDs for an explicit mint number list

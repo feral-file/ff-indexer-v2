@@ -131,7 +131,6 @@ tezos:
 vendors:
   artblocks_url: https://artblocks-mainnet.hasura.app/v1/graphql
   feralfile_url: https://feralfile.com/api
-  fxhash_url: https://api.v2.fxhash.xyz/v1/graphql
   objkt_url: https://data.objkt.com/v3/graphql
   objkt_api_key: ""
   opensea_url: https://api.opensea.io/api/v2
@@ -154,8 +153,6 @@ uri:
     - https://ipfs.filebase.io
   arweave_gateways:
     - https://arweave.net
-  onchfs_gateways:
-    - https://onchfs.fxhash2.xyz
   # Health probes read the first probe_max_bytes of each URL and validate the content
   # (declared vs sniffed type, container headers, directory-listing/error-page markers).
   # Positive values below 512 are clamped up to 512 — a smaller window cannot support
@@ -182,10 +179,6 @@ rate_limiter:
       requests_per_second: 2
       burst: 2
       max_queue_time: 5m
-    fxhash:
-      requests_per_second: 2
-      burst: 2
-      max_queue_time: 5m
 
 media_health_sweeper:
   http_timeout: 30s
@@ -202,8 +195,6 @@ media_health_sweeper:
       - https://ipfs.filebase.io
     arweave_gateways:
       - https://arweave.net
-    onchfs_gateways:
-      - https://onchfs.fxhash2.xyz
 
 # Outbound SSRF protection for media URL fetches (health sweeper + media worker when CGO enabled).
 # When enabled, loopback, RFC-private/link-local space, cloud metadata endpoints, and unsafe redirects are blocked.
@@ -315,8 +306,6 @@ render_probe:
     - {phash: "0x9f1f2f616060687d", max_distance: 6, label: kubo-error-page-500}
     - {phash: "0x9f1f3f7170706070", max_distance: 6, label: kubo-error-page-504}
     - {phash: "0xcfcf6630303899d9", max_distance: 6, label: arweave-404}
-    - {phash: "0x9c1e1e1e1e1e1e1e", max_distance: 6, label: onchfs-not-found}
-    - {phash: "0x8f0f0f0f0f078787", max_distance: 6, label: onchfs-bad-uri}
     - {phash: "0xe76f18183d697868", max_distance: 6, label: ipfs-dir-listing}
 
 transform:

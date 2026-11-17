@@ -10,7 +10,7 @@ const (
 	// MAX_RELEASE_MINT_NUMBERS is the maximum number of mint numbers that can be indexed in a
 	// single IndexRelease request. Clients must batch larger collections themselves by making
 	// multiple calls with non-overlapping mint number lists. Kept intentionally small (50) so
-	// that Phase 1 (CID derivation + child-job enqueueing) completes quickly and fxhash/FF API
+	// that Phase 1 (CID derivation + child-job enqueueing) completes quickly and FF API
 	// calls stay within a single paginated batch. Matches MAX_TOKEN_CIDS_PER_REQUEST and
 	// MAX_TOKEN_MINT_NUMBERS_FILTER for consistency.
 	MAX_RELEASE_MINT_NUMBERS = int64(50)
@@ -18,8 +18,8 @@ const (
 	// mint_numbers filter on GET /api/v1/tokens and the equivalent GraphQL field. Matches
 	// MAX_RELEASE_MINT_NUMBERS so a single IndexRelease batch maps 1:1 to a polling query.
 	MAX_TOKEN_MINT_NUMBERS_FILTER = int64(50)
-	// MAX_API_VENDOR_MINT_SPAN caps max(mint_numbers)-min(mint_numbers) for API-based vendors
-	// (fxhash, feralfile) whose CID derivation fetches the entire [min,max] interval from the
+	// MAX_API_VENDOR_MINT_SPAN caps max(mint_numbers)-min(mint_numbers) for the API-based vendor
+	// (feralfile) whose CID derivation fetches the entire [min,max] interval from the
 	// vendor API, paginated at 100 items per page. A span of 1000 limits worst-case paging to
 	// 10 vendor API calls per IndexRelease job regardless of how many mint numbers are requested.
 	// artblocks and objkt are deterministic and are not subject to this cap.

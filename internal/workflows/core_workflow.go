@@ -7,7 +7,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
@@ -60,7 +59,8 @@ type CoreWorkflows interface {
 
 	// IndexRelease derives token CIDs for a vendor release for an explicit list of 1-based
 	// mint numbers and enqueues chunked IndexTokens jobs for the derived set.
-	// vendor must be one of: artblocks, feralfile, fxhash, objkt.
+	// vendor must be one of: artblocks, feralfile, objkt (fxhash's API, which maps
+	// iterations to token IDs, closed with the platform).
 	// opensea is not supported for release indexing — OpenSea tokens are indexed via
 	// on-chain events where mint_number is derived from the actual token identifier
 	// during enrichment.
@@ -73,7 +73,6 @@ type CoreWorkflows interface {
 	//   artblocks — pure math, zero API calls (requires ArtBlocksClient only for slug resolution)
 	//   objkt     — pure math (token_number == mint_number); requires ObjktClient for
 	//               custom-contract pre-check before CIDs are built
-	//   fxhash    — calls GetGentksByIteration(min, max) then filters to mintNumbers set
 	//   feralfile — calls GetSeriesArtworks(min, max) then filters to mintNumbers set
 	//
 	// Returns an error if CID derivation or enqueueing fails; a partial enqueue
@@ -139,9 +138,6 @@ type CoreWorkflowsConfig struct {
 	BudgetedIndexingModeEnabled bool
 	// BudgetedIndexingDefaultDailyQuota is the default daily quota for budgeted indexing mode
 	BudgetedIndexingDefaultDailyQuota int
-	// FxhashClient is required for IndexRelease with vendor=fxhash.
-	// Nil disables fxhash release indexing (the job will return an error).
-	FxhashClient fxhash.Client
 	// FeralFileClient is required for IndexRelease with vendor=feralfile.
 	// Nil disables Feral File release indexing (the job will return an error).
 	FeralFileClient feralfile.Client
@@ -160,14 +156,13 @@ type coreWorkflows struct {
 	executor        CoreExecutor
 	blacklist       registry.BlacklistRegistry
 	jobQueue        jobs.JobQueue
-	fxhashClient    fxhash.Client    // may be nil if fxhash release indexing is not configured
 	feralfileClient feralfile.Client // may be nil if Feral File release indexing is not configured
 	artblocksClient artblocks.Client // may be nil; required only for artblocks slug resolution
 	objktClient     objkt.Client     // required for objkt release indexing (custom-contract pre-check)
 }
 
 // NewCoreWorkflows creates a new core workflows instance.
-// jobQueue is required. FxhashClient, FeralFileClient, and ObjktClient in config are
+// jobQueue is required. FeralFileClient and ObjktClient in config are
 // optional but must be set for IndexRelease to work with those vendors.
 func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blacklist registry.BlacklistRegistry, jobQueue jobs.JobQueue) CoreWorkflows {
 	if jobQueue == nil {
@@ -178,7 +173,6 @@ func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blackli
 		config:          config,
 		blacklist:       blacklist,
 		jobQueue:        jobQueue,
-		fxhashClient:    config.FxhashClient,
 		feralfileClient: config.FeralFileClient,
 		artblocksClient: config.ArtBlocksClient,
 		objktClient:     config.ObjktClient,

@@ -463,9 +463,9 @@ func TestTriggerReleaseIndexingRequestValidate(t *testing.T) {
 	}{
 		{"valid artblocks with id", "artblocks", "1-0xabc-78", "", []int64{1, 50, 100}, ""},
 		{"valid feralfile with id", "feralfile", "series-uuid", "", []int64{1, 2, 3}, ""},
-		{"valid fxhash with id", "fxhash", "9997", "", []int64{5, 10}, ""},
+		{"fxhash with id is rejected", "fxhash", "9997", "", []int64{5, 10}, "fxhash release indexing is no longer supported"},
 		{"valid objkt with id", "objkt", "KT1abc", "", []int64{1}, ""},
-		{"valid fxhash with slug", "fxhash", "", "industrial-park", []int64{1, 2}, ""},
+		{"fxhash with slug is rejected", "fxhash", "", "industrial-park", []int64{1, 2}, "fxhash release indexing is no longer supported"},
 		{"valid feralfile with slug", "feralfile", "", "data-pilgrims-01-769", []int64{3}, ""},
 		{"missing vendor", "", "abc", "", []int64{1}, "vendor is required"},
 		{"invalid vendor", "superrare", "abc", "", []int64{1}, "unsupported vendor"},

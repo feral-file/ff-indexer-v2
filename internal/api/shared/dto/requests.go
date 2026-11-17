@@ -102,7 +102,9 @@ func (r *TriggerMetadataIndexingRequest) Validate() error {
 // It triggers asynchronous indexing of tokens within a mint range for a given vendor release.
 // Exactly one of VendorReleaseID or VendorReleaseSlug must be provided.
 type TriggerReleaseIndexingRequest struct {
-	// Vendor identifies the source platform. Must be one of: artblocks, feralfile, fxhash, objkt.
+	// Vendor identifies the source platform. Must be one of: artblocks, feralfile, objkt.
+	// fxhash is rejected: the platform closed and its API, which maps iterations to
+	// token IDs, is gone. Its existing releases stay readable.
 	// opensea is not supported for release indexing — OpenSea tokens are indexed via
 	// on-chain events (IndexTokens path) where mint_number is derived from the actual
 	// token identifier during enrichment.
@@ -110,14 +112,12 @@ type TriggerReleaseIndexingRequest struct {
 	// VendorReleaseID is the platform-specific release key:
 	//   artblocks: "{chainID}-{contract}-{projectID}" (e.g. "1-0xa7d...-78")
 	//   feralfile: series UUID (e.g. "abc-123-...")
-	//   fxhash:    generative token ID (e.g. "9997")
 	//   objkt:     KT1 contract address (e.g. "KT1abc...") — must be a "custom" collection
 	// Mutually exclusive with VendorReleaseSlug.
 	VendorReleaseID string `json:"vendor_release_id"`
 	// VendorReleaseSlug is the human-readable URL slug from the vendor's website.
 	//   artblocks: "fidenza-by-tyler-hobbs"
 	//   feralfile: "data-pilgrims-01-769"
-	//   fxhash:    "industrial-park"
 	//   objkt:     KT1 contract address (same as vendor_release_id)
 	// Mutually exclusive with VendorReleaseID. The indexer resolves the slug to a
 	// vendor_release_id before enqueuing the job.
@@ -131,18 +131,15 @@ type TriggerReleaseIndexingRequest struct {
 // Validate validates the TriggerReleaseIndexingRequest.
 // Exactly one of vendor_release_id or vendor_release_slug must be provided.
 // mint_numbers must be non-empty, each >= 1, no duplicates, and at most MAX_RELEASE_MINT_NUMBERS entries.
-// For API-based vendors (fxhash, feralfile) the span max(mint_numbers)-min(mint_numbers) is additionally
+// For the API-based vendor (feralfile) the span max(mint_numbers)-min(mint_numbers) is additionally
 // capped at MAX_API_VENDOR_MINT_SPAN because those vendors fetch the full [min,max] interval from their
 // API and paginate it; a large sparse span would cause an avoidable number of vendor API calls.
 func (r *TriggerReleaseIndexingRequest) Validate() error {
 	if strings.TrimSpace(r.Vendor) == "" {
 		return apierrors.NewValidationError("vendor is required")
 	}
-	switch r.Vendor {
-	case "artblocks", "feralfile", "fxhash", "objkt":
-		// valid
-	default:
-		return apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", r.Vendor))
+	if err := ValidateReleaseIndexingVendor(r.Vendor); err != nil {
+		return err
 	}
 
 	hasID := strings.TrimSpace(r.VendorReleaseID) != ""
@@ -177,16 +174,33 @@ func (r *TriggerReleaseIndexingRequest) Validate() error {
 			mintMax = n
 		}
 	}
-	// Span cap for API-based vendors: derivation fetches the full [min,max] interval and
+	// Span cap for the API-based vendor: derivation fetches the full [min,max] interval and
 	// paginates at 100 items/page. Cap prevents a sparse list like [1, 50000] from forcing
 	// 500 vendor API pages to resolve 2 mints. artblocks and objkt are deterministic and exempt.
-	if (r.Vendor == "fxhash" || r.Vendor == "feralfile") && mintMax-mintMin > constants.MAX_API_VENDOR_MINT_SPAN {
+	if r.Vendor == "feralfile" && mintMax-mintMin > constants.MAX_API_VENDOR_MINT_SPAN {
 		return apierrors.NewValidationError(fmt.Sprintf(
 			"mint_numbers span (%d) exceeds maximum allowed for %s (%d); split into smaller non-overlapping batches",
 			mintMax-mintMin, r.Vendor, constants.MAX_API_VENDOR_MINT_SPAN,
 		))
 	}
 	return nil
+}
+
+// ValidateReleaseIndexingVendor accepts the vendors whose releases can be indexed by mint
+// number. Shared by Validate and the executor, which GraphQL calls directly.
+//
+// Reason: fxhash is named explicitly so a caller learns why it stopped working: deriving
+// its token IDs needs the fxhash API, which closed with the platform (issue #173). opensea
+// is unsupported by design (see TriggerReleaseIndexingRequest.Vendor).
+func ValidateReleaseIndexingVendor(vendor string) error {
+	switch vendor {
+	case "artblocks", "feralfile", "objkt":
+		return nil
+	case "fxhash":
+		return apierrors.NewValidationError("fxhash release indexing is no longer supported: fxhash closed and its API is gone; existing fxhash releases remain readable")
+	default:
+		return apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, objkt", vendor))
+	}
 }
 
 // CreateWebhookClientRequest represents the request body for creating a webhook client

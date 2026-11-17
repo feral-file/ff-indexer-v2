@@ -78,7 +78,7 @@ Examples:
 
 - **`providers.<name>.requests_per_second` / `burst` / `max_queue_time`** — Bucket size and how long a request may wait for a token before giving up.
 - **`providers.<name>.hosts`** — Destination host suffixes (e.g. `artblocks.io`, matched on a dot boundary, so it covers `api.artblocks.io` but not `notartblocks.io`). Every request any `NewHTTPClientWithSSRF` client sends to a matching host waits for that provider's bucket first: all methods, every retry attempt and every redirect hop, whether it comes from a vendor client or a generic tokenURI/media/health fetch. Every hop (the first request and each redirect, which these clients follow themselves when a limiter is configured) waits for its slot, bounded by `max_queue_time`, before that hop's own client timeout starts. Queueing never shortens a fetch's time budget, and the timeout applies per hop, so a redirect chain may take up to `(max_redirects + 1) ×` the timeout plus slot waits. Each entry needs at least one dot, and a host may belong to only one provider. Unmapped hosts are not limited.
-- **Vendor clients** (`tzkt`, `objkt`, `fxhash`, `opensea`) also call `Limiter.Do` around their API calls. A request admitted by `Do` is not charged again at the transport for the same provider, so giving those providers `hosts` does not double-count.
+- **Vendor clients** (`tzkt`, `objkt`, `opensea`) also call `Limiter.Do` around their API calls. A request admitted by `Do` is not charged again at the transport for the same provider, so giving those providers `hosts` does not double-count.
 - **429 handling** — A 429 from a mapped host pauses that whole provider for `Retry-After` (capped at 30s, 2s when absent), so other workers stop hitting a limit one of them already found. The retrying HTTP helpers also wait at least `Retry-After` before their next attempt.
 - **Queue timeout** — When a request cannot get a token within `max_queue_time` it is not sent and fails with `adapter.ErrRateLimitWait`. Media health checks record that as `transient_error`, never `broken`, because the URL was never contacted. Token metadata indexing defers instead: `IndexTokenMetadata` reschedules itself 1–3 minutes out (inline in `IndexToken`, it enqueues a delayed `IndexTokenMetadata` job), for up to 30 minutes per job before falling back to indexing without the throttled data.
 - **Defaults** — `artblocks` is limited to 5 rps (burst 5, 2m queue) on `artblocks.io`. Art Blocks publishes no numbers; its Cloudflare zone answers 429 (error 1015, `Retry-After: 6`) per client IP, so tune the rate upward in deploy config until 429s reappear.
@@ -240,7 +240,7 @@ Migrations are stored in `db/migrations/`. Apply migrations:
 psql -h localhost -U postgres -d ff_indexer -f db/migrations/001.sql
 ```
 
-**Autocommit-only migrations:** most migrations are transactional, but files using `CONCURRENTLY` (index create/drop) or per-batch commits **must run outside a transaction** — apply them with a plain `psql -f` in autocommit, and if you use a runner that auto-wraps files in `BEGIN/COMMIT`, disable wrapping for these. Current examples: `017_dedup.sql`, `030_drop_unused_indexes.sql` (35 `DROP INDEX CONCURRENTLY IF EXISTS`, no lock, re-runnable), `031.sql` (one `CREATE INDEX CONCURRENTLY`, no lock, re-runnable) and `032_feralfile_cdn_move.sql` (per-batch commits; run only after the matching code is deployed). See each file's header.
+**Autocommit-only migrations:** most migrations are transactional, but files using `CONCURRENTLY` (index create/drop) or per-batch commits **must run outside a transaction** — apply them with a plain `psql -f` in autocommit, and if you use a runner that auto-wraps files in `BEGIN/COMMIT`, disable wrapping for these. Current examples: `017_dedup.sql`, `030_drop_unused_indexes.sql` (35 `DROP INDEX CONCURRENTLY IF EXISTS`, no lock, re-runnable), `031.sql` (one `CREATE INDEX CONCURRENTLY`, no lock, re-runnable), `032_feralfile_cdn_move.sql` and `034_onchfs_canonical_uri.sql` (per-batch commits; run only after the matching code is deployed). See each file's header.
 
 **Interrupted `CREATE INDEX CONCURRENTLY`:** a cancelled or crashed concurrent build leaves an INVALID index under the target name, and a later `CREATE INDEX ... IF NOT EXISTS` skips it silently. Check with `SELECT indisvalid FROM pg_index WHERE indexrelid = '<name>'::regclass;` after any concurrent build; if it is `f`, `DROP INDEX CONCURRENTLY <name>;` and re-run the migration. `031.sql` does this check itself (via psql `\gexec`, so apply it with `psql -f`) and prints the validity at the end.
 
@@ -258,8 +258,8 @@ Some migrations introduce database constraints that application code depends on 
 6. **Resume** traffic
 
 **Exception: data backfills that depend on new code run AFTER the deploy.** A file whose
-section below says "code first" (currently `032_feralfile_cdn_move.sql` and
-`033_shared_contract_releases.sql`) rewrites data
+section below says "code first" (currently `032_feralfile_cdn_move.sql`,
+`033_shared_contract_releases.sql` and `034_onchfs_canonical_uri.sql`) rewrites data
 the old application would write back. Deploy the matching application version, confirm
 no process from the previous version is still running, and only then run the backfill.
 Ordinary schema migrations in the same release still run before the deploy.
@@ -303,6 +303,25 @@ re-enriches such a token. Sequence:
    It prints the memberships removed and the releases they belonged to.
 
 Workers may keep running during step 4. Re-running it is safe.
+
+**Migration 034 (onchfs canonical URIs) — code first, then the backfill:**
+
+`034_onchfs_canonical_uri.sql` rewrites stored OnChFS gateway URLs
+(`https://onchfs.fxhash2.xyz/<root>…`, dead since fxhash closed on 2026-08-17) to the
+`onchfs://<root>…` URI the on-chain metadata names (ff-indexer-v2 #173). The previous
+version rewrites `onchfs://` back to that gateway on every re-index. Sequence:
+
+1. Deploy the application version that contains `types.CanonicalOnChFSURI`. In the same
+   ff-deploy commit, drop `uri.onchfs_gateways` and `media_health_sweeper.uri.onchfs_gateways`
+   (the keys are no longer read; leaving them is harmless) and the `onchfs-not-found` /
+   `onchfs-bad-uri` render-probe fingerprints.
+2. Confirm no container on the previous image is left.
+3. Run it in autocommit, in one psql session:
+   `psql ... -v ON_ERROR_STOP=1 -f db/migrations/034_onchfs_canonical_uri.sql`
+4. Check the verification counts it prints at the end (all 0), then wait one media
+   health sweep: the moved rows turn healthy and the sweeper restores `is_viewable`.
+
+Workers may keep running during step 3. Re-running it is safe.
 
 **Migration 025 + the EVM credit guard — required ordering:**
 
@@ -866,7 +885,6 @@ CGO_ENABLED=1 go test -tags=integration -cover ./...
 CGO_ENABLED=1 go test -tags=integration -v ./internal/store/...
 
 # Vendor API integration tests only (live external APIs)
-go test -tags=integration ./internal/providers/vendors/fxhash/...
 go test -tags=integration ./internal/providers/vendors/objkt/...
 go test -tags=integration ./internal/providers/vendors/artblocks/...
 go test -tags=integration ./internal/providers/vendors/feralfile/...

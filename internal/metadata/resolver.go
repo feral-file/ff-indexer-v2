@@ -443,9 +443,10 @@ func (r *resolver) fetchMetadataFromURI(ctx context.Context, uri string) (map[st
 	switch {
 	case types.IsDataURI(uri):
 		return r.parseDataURI(uri)
+	// onchfs:// is not fetchable here: no gateway serves it and reading it needs a chain
+	// reader, so it falls through to the unsupported-scheme error.
 	case strings.HasPrefix(uri, "ipfs://"),
 		strings.HasPrefix(uri, "ar://"),
-		strings.HasPrefix(uri, "onchfs://"),
 		strings.HasPrefix(uri, "http://"),
 		strings.HasPrefix(uri, "https://"):
 

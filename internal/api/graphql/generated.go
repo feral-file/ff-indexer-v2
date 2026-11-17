@@ -1907,8 +1907,9 @@ type MediaAsset {
   updated_at: Time!
 }
 
-# Unified token display data: merges metadata and enrichment source (enrichment takes precedence),
-# then applies per-field health filtering via token_media_health. For each URL field
+# Unified token display data: enrichment generally takes precedence. OpenSea image playback prefers
+# the original metadata image, with enrichment as a fallback. Animated works and SVG originals retain the vendor poster. Per-field health filtering via
+# token_media_health then applies. For each URL field
 # (animation_url, image_url), only a URL with a "healthy" health row is returned; "broken" and
 # "unknown" rows suppress the URL. If no health rows exist yet for a field's source groups the
 # raw merged value for that field is returned unchanged.
@@ -2173,11 +2174,12 @@ type Mutation {
   # After Phase 1 succeeds, poll tokens(release_vendor: "...", release_vendor_slug: "...", mint_numbers: [...], include_unviewable: true, include_moderated: true)
   # with the same mint_numbers to track exactly which mints have been indexed.
   # release_vendor is required when polling by slug (slug uniqueness is scoped per vendor).
-  # vendor: one of artblocks | feralfile | fxhash | objkt (opensea not supported for release indexing)
+  # vendor: one of artblocks | feralfile | objkt (opensea not supported for release indexing;
+  #   fxhash is rejected since its API closed with the platform; its releases stay readable)
   # Provide exactly one of vendor_release_id or vendor_release_slug.
   # mint_numbers: explicit 1-based list of mint positions (required, non-empty, max 50, no duplicates).
-  #   For fxhash and feralfile: max(mint_numbers)-min(mint_numbers) must be <= 1000 (MAX_API_VENDOR_MINT_SPAN).
-  #   Those vendors fetch the full [min,max] interval from their APIs; a wide sparse span forces many
+  #   For feralfile: max(mint_numbers)-min(mint_numbers) must be <= 1000 (MAX_API_VENDOR_MINT_SPAN).
+  #   It fetches the full [min,max] interval from its API; a wide sparse span forces many
   #   API calls. artblocks and objkt are deterministic and not subject to this span cap.
   triggerReleaseIndexing(
     vendor: String!

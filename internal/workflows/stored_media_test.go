@@ -186,3 +186,60 @@ func TestEnhanceTokenMetadata_StoredSourceReadFailureStopsUpsert(t *testing.T) {
 	require.ErrorIs(t, err, readErr)
 	assert.Nil(t, result)
 }
+
+// TestResolveTokenMetadata_KeepsStoredOnChFSMimeType verifies that a re-index of an
+// onchfs work keeps the MIME type detected while fxhash's gateway still served it:
+// detection now returns nothing for onchfs, and the stored row may still hold the old
+// gateway URL of the same work.
+func TestResolveTokenMetadata_KeepsStoredOnChFSMimeType(t *testing.T) {
+	const root = "b12f18fcd51a21cc3ace5090fa808c8d4e4552d9e2239a3886b89f8ea12ff685"
+	canonical := "onchfs://" + root + "/?fxhash=oo1&fxiteration=140"
+	tests := []struct {
+		name         string
+		storedAnim   string
+		resolvedMime *string
+		wantMime     *string
+	}{
+		{"stored gateway URL of the same work", "https://onchfs.fxhash2.xyz/" + root + "/?fxhash=oo1&fxiteration=140", nil, types.StringPtr("text/html; charset=utf-8")},
+		{"stored canonical URI", canonical, nil, types.StringPtr("text/html; charset=utf-8")},
+		{"different iteration is another work", "onchfs://" + root + "/?fxhash=oo2&fxiteration=141", nil, nil},
+		{"detected type wins", canonical, types.StringPtr("image/png"), types.StringPtr("image/png")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mocks := setupTestExecutor(t)
+			defer tearDownTestExecutor(mocks)
+
+			ctx := context.Background()
+			tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "155719")
+			storedAnim := tt.storedAnim
+			storedMime := "text/html; charset=utf-8"
+			resolved := &metadata.NormalizedMetadata{
+				Animation: canonical,
+				MimeType:  tt.resolvedMime,
+				Raw:       map[string]interface{}{"name": "fixture"},
+			}
+
+			mocks.metadataResolver.EXPECT().Resolve(ctx, tokenCID).Return(resolved, nil)
+			mocks.store.EXPECT().
+				GetTokenWithMetadataByTokenCID(ctx, tokenCID.String()).
+				Return(&store.TokensWithMetadataResult{
+					Token:    &schema.Token{ID: 7, TokenCID: tokenCID.String()},
+					Metadata: &schema.TokenMetadata{TokenID: 7, AnimationURL: &storedAnim, MimeType: &storedMime},
+				}, nil)
+			mocks.metadataResolver.EXPECT().RawHash(resolved).Return([]byte("hash"), []byte(`{"name":"fixture"}`), nil)
+			mocks.clock.EXPECT().Now().Return(time.Now())
+			mocks.store.EXPECT().
+				UpsertTokenMetadata(ctx, gomock.Any()).
+				DoAndReturn(func(_ context.Context, input store.CreateTokenMetadataInput) error {
+					require.NotNil(t, input.AnimationURL)
+					assert.Equal(t, canonical, *input.AnimationURL, "the onchfs URI is stored as resolved")
+					assert.Equal(t, tt.wantMime, input.MimeType)
+					return nil
+				})
+
+			_, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
+			require.NoError(t, err)
+		})
+	}
+}

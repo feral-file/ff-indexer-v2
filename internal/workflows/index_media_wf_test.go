@@ -116,11 +116,14 @@ func TestIndexMultipleMediaWorkflow_InvalidURLs(t *testing.T) {
 		"",
 		"just-text",
 		"https://",
+		// Parses as a URL (the root reads as a host), but media processing cannot fetch
+		// it: onchfs is read from chain by the player.
+		"onchfs://b12f18fcd51a21cc3ace5090fa808c8d4e4552d9e2239a3886b89f8ea12ff685/?fxhash=oo1",
 	}
 
 	err := mw.IndexMultipleMediaWorkflow(ctx, urls)
 	require.NoError(t, err)
-	// no Enqueue: invalid URLs are filtered
+	// no Enqueue: invalid and unfetchable URLs are filtered
 }
 
 func TestIndexMultipleMediaWorkflow_MixedValidInvalidURLs(t *testing.T) {

@@ -5916,8 +5916,10 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		probedFutureURL := "https://example.com/render/probed-future.html"
 		retryDueURL := "https://example.com/render/retry-due.html"
 		stalledDueURL := "https://example.com/render/stalled-due.html"
+		onchfsURL := "onchfs://b12f18fcd51a21cc3ace5090fa808c8d4e4552d9e2239a3886b89f8ea12ff685/?fxhash=oo1"
 
 		mintTokenWithMedia(t, &htmlURL, nil)
+		mintTokenWithMedia(t, nil, &onchfsURL) // healthy animation source, like animationURL
 		mintTokenWithMedia(t, &imageURL, nil)
 		mintTokenWithMedia(t, &videoURL, nil)
 		mintTokenWithMedia(t, &brokenURL, nil)
@@ -5935,6 +5937,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		markHealthy(t, probedFutureURL, "text/html")
 		markHealthy(t, retryDueURL, "text/html")
 		markHealthy(t, stalledDueURL, "text/html")
+		markHealthy(t, onchfsURL, "")
 		errMsg := "HTTP 404"
 		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, brokenURL, MediaHealthUpdate{
 			Status:    schema.MediaHealthStatusBroken,
@@ -5974,6 +5977,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.NotContains(t, urls, videoURL, "video is excluded")
 		assert.NotContains(t, urls, brokenURL, "broken URLs are excluded")
 		assert.NotContains(t, urls, probedFutureURL, "not-yet-due URLs are excluded")
+		assert.NotContains(t, urls, onchfsURL, "onchfs is read from chain by the player, out of L1 scope")
 
 		// Ordering tiers: urgent re-probes (pending debounces, gates) before never-probed
 		// coverage, never-probed before routine rendered_ok rechecks — the corpus is far

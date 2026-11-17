@@ -22,7 +22,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
@@ -33,24 +32,6 @@ func int64Ptr(v int64) *int64 { return &v }
 // ──────────────────────────────────────────────────────────────────────────────
 // Local test fakes (avoid mocks import cycle)
 // ──────────────────────────────────────────────────────────────────────────────
-
-// fakeFxhashClient implements fxhash.Client for tests.
-type fakeFxhashClient struct {
-	gentks []fxhash.GentkRef
-	err    error
-}
-
-func (f *fakeFxhashClient) GetGentk(_ context.Context, _, _ string) (*fxhash.Gentk, error) {
-	return nil, nil
-}
-
-func (f *fakeFxhashClient) GetGentksByIteration(_ context.Context, _ string, _, _ int64) ([]fxhash.GentkRef, error) {
-	return f.gentks, f.err
-}
-
-func (f *fakeFxhashClient) ResolveSlug(_ context.Context, _ string) (string, error) {
-	return "", nil
-}
 
 // fakeFFClient implements feralfile.Client for tests.
 type fakeFFClient struct {
@@ -219,122 +200,6 @@ func TestMapFeralFileChain(t *testing.T) {
 			}
 		})
 	}
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// fxhash CID derivation
-// ──────────────────────────────────────────────────────────────────────────────
-
-func TestDeriveFxhashCIDs_Success(t *testing.T) {
-	t.Parallel()
-
-	w := &coreWorkflows{
-		config: CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
-		fxhashClient: &fakeFxhashClient{
-			gentks: []fxhash.GentkRef{
-				{ContractAddress: "KT1abc", TokenID: "42", Iteration: 1},
-				{ContractAddress: "KT1abc", TokenID: "43", Iteration: 2},
-			},
-		},
-	}
-
-	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 2})
-
-	require.NoError(t, err)
-	assert.Equal(t, 0, skipped)
-	require.Len(t, cids, 2)
-	assert.Contains(t, string(cids[0]), "KT1abc")
-	assert.Contains(t, string(cids[0]), ":42")
-	assert.Contains(t, string(cids[1]), ":43")
-
-	for _, cid := range cids {
-		chain, standard, _, _ := cid.Parse()
-		assert.Equal(t, domain.ChainTezosMainnet, chain)
-		assert.Equal(t, domain.StandardFA2, standard)
-	}
-}
-
-// TestDeriveFxhashCIDs_FiltersByIteration verifies that gentks whose iteration is
-// not in the requested mintNumbers set are excluded.
-func TestDeriveFxhashCIDs_FiltersByIteration(t *testing.T) {
-	t.Parallel()
-
-	// API returns iterations 1, 2, 3 (bounding window 1..3).
-	// We only requested mintNumbers=[1, 3], so iteration 2 should be filtered out.
-	w := &coreWorkflows{
-		config: CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
-		fxhashClient: &fakeFxhashClient{
-			gentks: []fxhash.GentkRef{
-				{ContractAddress: "KT1abc", TokenID: "10", Iteration: 1},
-				{ContractAddress: "KT1abc", TokenID: "11", Iteration: 2}, // not requested
-				{ContractAddress: "KT1abc", TokenID: "12", Iteration: 3},
-			},
-		},
-	}
-
-	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 3})
-
-	require.NoError(t, err)
-	assert.Equal(t, 0, skipped) // both requested iterations were found
-	require.Len(t, cids, 2)
-	assert.Contains(t, string(cids[0]), ":10")
-	assert.Contains(t, string(cids[1]), ":12")
-}
-
-func TestDeriveFxhashCIDs_NilClient(t *testing.T) {
-	t.Parallel()
-
-	w := &coreWorkflows{fxhashClient: nil}
-	_, _, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 2, 3})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "fxhash client not configured")
-}
-
-func TestDeriveFxhashCIDs_APIError(t *testing.T) {
-	t.Parallel()
-
-	w := &coreWorkflows{
-		config:       CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
-		fxhashClient: &fakeFxhashClient{err: errors.New("network error")},
-	}
-	_, _, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 2, 3, 4, 5})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "GetGentksByIteration failed")
-}
-
-func TestDeriveFxhashCIDs_PartialResult(t *testing.T) {
-	t.Parallel()
-
-	// API returns only iteration 1 even though we requested [1,2,3,4,5].
-	w := &coreWorkflows{
-		config: CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
-		fxhashClient: &fakeFxhashClient{
-			gentks: []fxhash.GentkRef{
-				{ContractAddress: "KT1abc", TokenID: "1", Iteration: 1},
-			},
-		},
-	}
-	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 2, 3, 4, 5})
-
-	require.NoError(t, err)
-	assert.Equal(t, 4, skipped) // 5 requested, 1 matched
-	assert.Len(t, cids, 1)
-}
-
-func TestDeriveFxhashCIDs_EmptyResult(t *testing.T) {
-	t.Parallel()
-
-	w := &coreWorkflows{
-		config:       CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
-		fxhashClient: &fakeFxhashClient{gentks: []fxhash.GentkRef{}},
-	}
-	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 2, 3})
-
-	require.NoError(t, err)
-	assert.Len(t, cids, 0)
-	assert.Equal(t, 3, skipped) // 3 requested, 0 returned
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

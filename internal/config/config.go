@@ -36,7 +36,6 @@ type LoggingConfig struct {
 type URIConfig struct {
 	IPFSGateways    []string `mapstructure:"ipfs_gateways"`
 	ArweaveGateways []string `mapstructure:"arweave_gateways"`
-	OnchfsGateways  []string `mapstructure:"onchfs_gateways"`
 	// ProbeMaxBytes caps how many body bytes a health probe reads for content validation
 	// (0 = uri.DefaultProbeMaxBytes)
 	ProbeMaxBytes int `mapstructure:"probe_max_bytes"`
@@ -188,7 +187,6 @@ type JobsConfig struct {
 type VendorsConfig struct {
 	ArtBlocksURL  string `mapstructure:"artblocks_url"`
 	FeralFileURL  string `mapstructure:"feralfile_url"`
-	FxhashURL     string `mapstructure:"fxhash_url"`
 	ObjktURL      string `mapstructure:"objkt_url"`
 	ObjktAPIKey   string `mapstructure:"objkt_api_key"`
 	OpenSeaURL    string `mapstructure:"opensea_url"`
@@ -485,9 +483,6 @@ func (c *MediaHealthSweeperConfig) EffectiveURI(root URIConfig) URIConfig {
 	}
 	if len(effective.ArweaveGateways) == 0 {
 		effective.ArweaveGateways = root.ArweaveGateways
-	}
-	if len(effective.OnchfsGateways) == 0 {
-		effective.OnchfsGateways = root.OnchfsGateways
 	}
 	if effective.ProbeMaxBytes <= 0 {
 		effective.ProbeMaxBytes = root.ProbeMaxBytes
@@ -1132,12 +1127,10 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// Vendors
 	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
 	v.SetDefault("vendors.feralfile_url", "https://feralfile.com/api")
-	v.SetDefault("vendors.fxhash_url", "https://api.v2.fxhash.xyz/v1/graphql")
 	v.SetDefault("vendors.objkt_url", "https://data.objkt.com/v3/graphql")
 	v.SetDefault("vendors.opensea_url", "https://api.opensea.io/api/v2")
 
 	// URI
-	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.feralfile.com", domain.DEFAULT_IPFS_GATEWAY})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
@@ -1203,9 +1196,6 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("rate_limiter.providers.opensea.requests_per_second", 4)
 	v.SetDefault("rate_limiter.providers.opensea.burst", 4)
 	v.SetDefault("rate_limiter.providers.opensea.max_queue_time", "15m")
-	v.SetDefault("rate_limiter.providers.fxhash.requests_per_second", 2)
-	v.SetDefault("rate_limiter.providers.fxhash.burst", 2)
-	v.SetDefault("rate_limiter.providers.fxhash.max_queue_time", "15m")
 	v.SetDefault("rate_limiter.providers.objkt.requests_per_second", 2)
 	v.SetDefault("rate_limiter.providers.objkt.burst", 2)
 	v.SetDefault("rate_limiter.providers.objkt.max_queue_time", "15m")
@@ -1340,7 +1330,6 @@ func bindAllEnvVars(v *viper.Viper) {
 		// Vendors
 		"vendors.artblocks_url",
 		"vendors.feralfile_url",
-		"vendors.fxhash_url",
 		"vendors.objkt_url",
 		"vendors.objkt_api_key",
 		"vendors.opensea_url",
@@ -1357,7 +1346,6 @@ func bindAllEnvVars(v *viper.Viper) {
 		// URI
 		"uri.ipfs_gateways",
 		"uri.arweave_gateways",
-		"uri.onchfs_gateways",
 		"uri.probe_max_bytes",
 		"uri.known_bad_page_markers",
 		// Cloudflare
@@ -1408,7 +1396,6 @@ func bindAllEnvVars(v *viper.Viper) {
 		"media_health_sweeper.worker.queue_size",
 		"media_health_sweeper.uri.ipfs_gateways",
 		"media_health_sweeper.uri.arweave_gateways",
-		"media_health_sweeper.uri.onchfs_gateways",
 		"media_health_sweeper.uri.probe_max_bytes",
 		"media_health_sweeper.uri.known_bad_page_markers",
 		// Moderation Verdict Sweeper config
@@ -1429,9 +1416,6 @@ func bindAllEnvVars(v *viper.Viper) {
 		"rate_limiter.providers.tzkt.requests_per_second",
 		"rate_limiter.providers.tzkt.burst",
 		"rate_limiter.providers.tzkt.max_queue_time",
-		"rate_limiter.providers.fxhash.requests_per_second",
-		"rate_limiter.providers.fxhash.burst",
-		"rate_limiter.providers.fxhash.max_queue_time",
 		"rate_limiter.providers.objkt.requests_per_second",
 		"rate_limiter.providers.objkt.burst",
 		"rate_limiter.providers.objkt.max_queue_time",

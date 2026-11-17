@@ -14,7 +14,7 @@ FF-Indexer v2 is a production-ready indexing service designed to capture and ind
 - **Tezos**: FA2 tokens
 - **Real-time indexing** of blockchain events (mints, transfers, burns, metadata updates)
 - **Metadata resolution** from IPFS, Arweave, ONCHFS, and HTTP sources
-- **Metadata enrichment** from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File, Objkt, OpenSea)
+- **Metadata enrichment** from vendor APIs (Art Blocks, Foundation, SuperRare, Feral File, Objkt, OpenSea); fxhash enrichment stored before fxhash closed is kept and served, never refreshed
 - **Media processing** with Cloudflare Images; **Cloudflare Stream (video)** only when `video_processing_enabled` / `FF_INDEXER_VIDEO_PROCESSING_ENABLED` is set (default off)
 - **Provenance tracking** with full blockchain event history
 - **Owner-based indexing** for wallet-based queries

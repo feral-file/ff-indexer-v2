@@ -90,7 +90,6 @@ func registerWorkerMedia(
 	uriResolverConfig := &uri.Config{
 		IPFSGateways:        wcfg.URI.IPFSGateways,
 		ArweaveGateways:     wcfg.URI.ArweaveGateways,
-		OnChFSGateways:      wcfg.URI.OnchfsGateways,
 		ProbeMaxBytes:       wcfg.URI.ProbeMaxBytes,
 		KnownBadPageMarkers: wcfg.URI.KnownBadPageMarkers,
 	}
