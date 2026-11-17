@@ -3,13 +3,19 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/oklog/ulid/v2"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 const migration035Path = "../../db/migrations/035_ipfs_directory_slash.sql"
@@ -222,6 +228,45 @@ func TestMigration035IPFSDirectorySlash(t *testing.T) {
 			"a dedupe that keeps a healthy row changes nothing")
 	})
 
+	t.Run("each viewability change enqueues the sweeper's webhook job", func(t *testing.T) {
+		// Downstream search drops a token only on token.viewability.changed; a re-index
+		// emits token.indexing.* instead, so the file must enqueue the event itself.
+		rows := strings.Split(q(`SELECT queue || '|' || unique_key || '|' || payload::text FROM jobs
+		                          WHERE kind = 'NotifyWebhookClients' ORDER BY payload->0->'data'->>'token_number'`), "\n")
+		require.Len(t, rows, 3, "one job per changed token (6, 7, 8)")
+		for i, row := range rows {
+			parts := strings.SplitN(row, "|", 3)
+			require.Len(t, parts, 3)
+			assert.Equal(t, "token_index", parts[0])
+
+			var args []webhook.WebhookEvent
+			require.NoError(t, json.Unmarshal([]byte(parts[2]), &args), "the worker decodes the payload as its job args")
+			require.Len(t, args, 1)
+			ev := args[0]
+			_, err := ulid.ParseStrict(ev.EventID)
+			require.NoError(t, err, "event_id is a ULID like the application's")
+			assert.Equal(t, "webhook-notify-"+ev.EventID, parts[1])
+			assert.Equal(t, webhook.EventTypeTokenViewabilityChanged, ev.EventType)
+			assert.WithinDuration(t, time.Now(), ev.Timestamp, 10*time.Minute)
+
+			raw, err := json.Marshal(ev.Data)
+			require.NoError(t, err)
+			var data webhook.TokenViewabilityChanged
+			require.NoError(t, json.Unmarshal(raw, &data))
+			number := fmt.Sprint(6 + i)
+			assert.Equal(t, webhook.TokenViewabilityChanged{
+				EventData: webhook.EventData{
+					TokenCID:    "tezos:mainnet:fa2:KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE:" + number,
+					Chain:       "tezos:mainnet",
+					Standard:    "fa2",
+					Contract:    "KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE",
+					TokenNumber: number,
+				},
+				IsViewable: false,
+			}, data)
+		}
+	})
+
 	t.Run("an existing slashed row wins the unique key", func(t *testing.T) {
 		assert.Equal(t, "https://ipfs.filebase.io/ipfs/QmT78zSuBmuS4z925WZfrqQ1qHaJ56DQaTfyMUF7F8ff5o/?fxhash=oo2|healthy",
 			q(`SELECT string_agg(media_url || '|' || health_status, ',') FROM token_media_health WHERE token_id = 2`))
@@ -247,8 +292,8 @@ func TestMigration035IPFSDirectorySlash(t *testing.T) {
 	})
 
 	t.Run("re-running is a no-op", func(t *testing.T) {
-		before := q(`SELECT count(*) FROM token_events`)
+		before := q(`SELECT (SELECT count(*) FROM token_events) || '|' || (SELECT count(*) FROM jobs)`)
 		runPSQLFile(t, conn, migration035Path)
-		assert.Equal(t, before, q(`SELECT count(*) FROM token_events`))
+		assert.Equal(t, before, q(`SELECT (SELECT count(*) FROM token_events) || '|' || (SELECT count(*) FROM jobs)`))
 	})
 }

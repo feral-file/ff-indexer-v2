@@ -48,7 +48,9 @@
 --         the moved row becomes broken with that gate's reason. Those tokens, and any
 --         whose bare row was dropped in favor of an existing slashed row (which may be
 --         broken or gated), get is_viewable recomputed in SQL with their
---         'viewability_changed' token events.
+--         'viewability_changed' token events and the token.viewability.changed webhook
+--         job the sweeper would enqueue (a re-index would not: it emits only
+--         token.indexing.*, which downstream search ignores).
 --         None of either existed on 2026-11-17 (L1 runs in shadow mode).
 --   Raw payloads (vendor_json, origin_json, latest_json) are left verbatim.
 --
@@ -112,6 +114,24 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
         ELSE u
     END
 $$;
+
+-- ULID (Crockford base32: 48-bit millisecond time + 80 random bits), the webhook event_id
+-- format the application uses (ulid.MustNewDefault).
+CREATE OR REPLACE FUNCTION migration_035_ulid() RETURNS text
+LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+    v_alphabet constant text := '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+    v_ms       bigint := floor(extract(epoch FROM clock_timestamp()) * 1000);
+    v_out      text := '';
+BEGIN
+    FOR i IN REVERSE 9..0 LOOP
+        v_out := v_out || substr(v_alphabet, ((v_ms >> (i * 5)) & 31)::int + 1, 1);
+    END LOOP;
+    FOR i IN 1..16 LOOP
+        v_out := v_out || substr(v_alphabet, floor(random() * 32)::int + 1, 1);
+    END LOOP;
+    RETURN v_out;
+END $$;
 
 -- Self-check against the Go test vectors (TestNormalizeIPFSGatewayURL, TestNormalizeIPFSRef)
 -- before touching data.
@@ -226,10 +246,15 @@ DECLARE
     v_unviewed bigint;
     v_total_g  bigint := 0;
     v_total_v  bigint := 0;
+    -- The queue NotifyWebhookClients jobs run on (jobs.token_queue): taken from the
+    -- latest such job so a non-default deployment is honored, else the default.
+    v_queue    text := coalesce((SELECT queue FROM jobs WHERE kind = 'NotifyWebhookClients'
+                                 ORDER BY id DESC LIMIT 1), 'token_index');
 BEGIN
     IF p_batch_size < 1 THEN
         RAISE EXCEPTION 'p_batch_size must be >= 1';
     END IF;
+    RAISE NOTICE 'migration_035: viewability webhooks go to queue %', v_queue;
 
     LOOP
         SELECT array_agg(token_id ORDER BY token_id) INTO v_ids
@@ -410,12 +435,32 @@ BEGIN
                 UPDATE tokens t SET is_viewable = nv.new_viewable
                 FROM nv
                 WHERE t.id = nv.id AND t.is_viewable <> nv.new_viewable
-                RETURNING t.id, nv.new_viewable
+                RETURNING t.id, t.token_cid, t.chain, t.standard, t.contract_address, t.token_number,
+                          nv.new_viewable, migration_035_ulid() AS event_id
+            ), ev AS (
+                INSERT INTO token_events (token_id, event_type, owner_address, occurred_at, metadata, created_at)
+                SELECT id, 'viewability_changed', NULL, clock_timestamp(),
+                       jsonb_build_object('is_viewable', new_viewable), clock_timestamp()
+                FROM upd
             )
-            INSERT INTO token_events (token_id, event_type, owner_address, occurred_at, metadata, created_at)
-            SELECT id, 'viewability_changed', NULL, clock_timestamp(),
-                   jsonb_build_object('is_viewable', new_viewable), clock_timestamp()
-            FROM upd;
+            -- The token.viewability.changed webhook, enqueued exactly as the sweeper's
+            -- triggerWebhook does (same job kind, queue, unique key and payload), so
+            -- subscribers such as search drop or restore the token.
+            INSERT INTO jobs (queue, kind, payload, unique_key)
+            SELECT v_queue, 'NotifyWebhookClients',
+                   jsonb_build_array(jsonb_build_object(
+                       'event_id', u.event_id,
+                       'event_type', 'token.viewability.changed',
+                       'timestamp', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+                       'data', jsonb_build_object(
+                           'token_cid', u.token_cid,
+                           'chain', u.chain::text,
+                           'standard', u.standard::text,
+                           'contract', u.contract_address,
+                           'token_number', u.token_number,
+                           'is_viewable', u.new_viewable))),
+                   'webhook-notify-' || u.event_id
+            FROM upd u;
             GET DIAGNOSTICS v_unviewed = ROW_COUNT;
             v_total_g := v_total_g + coalesce(array_length(v_gated, 1), 0);
             v_total_v := v_total_v + v_unviewed;
@@ -453,5 +498,6 @@ UNION ALL SELECT 'media_render_probes', count(*) FROM media_render_probes
 UNION ALL SELECT 'media_assets (conflicts left on purpose)', count(*) FROM media_assets
     WHERE migration_035_is_bare(source_url);
 
+DROP FUNCTION migration_035_ulid();
 DROP FUNCTION migration_035_slash(text);
 DROP FUNCTION migration_035_is_bare(text);
