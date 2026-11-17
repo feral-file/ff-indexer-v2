@@ -168,8 +168,9 @@ media survives the rewrite: re-index keeps the stored host and adds only the sla
 (`PreferStoredGatewayURL`), and media-asset lookups for a slashed URL fall back to the asset
 stored under its bare alias (`types.BareIPFSGatewayURL`, `mediaAssetLookupURLs`), so tokens
 on either shape share one asset (`media_assets` allows one row per provider asset, so it is
-neither copied nor moved by the upserts). A health-check promotion still moves the asset
-(`EquivalentIPFSReference` in `repointMediaAsset`). The bare shape itself is never kept.
+neither copied nor moved by the upserts). A health-check promotion moves both same-host forms
+together (`ipfsURLForms` in `UpdateMediaURLAndPropagate`): every token on either form follows
+the promoted URL, and the asset moves with them, the exact form's own asset first. The bare shape itself is never kept.
 A file CID with a trailing slash is still served by the gateways in use. Measured
 2026-11-06 on a shared 23-work playlist: 3 of its 4 fxhash works carried the bare shape
 and rendered blank (white, black, light gray) on an FF1 while passing every byte check;
