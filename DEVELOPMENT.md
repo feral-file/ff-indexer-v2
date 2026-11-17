@@ -337,7 +337,9 @@ same), so no work stops displaying while it runs. Sequence:
 3. Size it with the read-only count in the file header. Expect about one token event per
    rewritten row.
 4. Run it in autocommit, in one psql session:
-   `psql ... -v ON_ERROR_STOP=1 -f db/migrations/035_ipfs_directory_slash.sql`
+   `psql ... -v ON_ERROR_STOP=1 -v token_queue=token_index -f db/migrations/035_ipfs_directory_slash.sql`.
+   `token_queue` is required and must equal the deployment's `jobs.token_queue`: the file
+   enqueues its viewability webhooks there.
 5. Check the verification counts it prints at the end. Every count is 0, except
    `media_assets` rows intentionally left on a bare URL. The last progress notice reports
    "recomputed N tokens, viewability changed M": tokens moved onto a slashed URL that L1

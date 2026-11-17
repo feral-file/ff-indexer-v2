@@ -14,11 +14,119 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	pgdriver "gorm.io/driver/postgres"
+	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 const migration035Path = "../../db/migrations/035_ipfs_directory_slash.sql"
+
+// runMigration035 runs the file as the runbook does, with the default token queue.
+func runMigration035(t *testing.T, conn string) string {
+	t.Helper()
+	out, err := migration035Cmd(conn, "-v", "token_queue=token_index").CombinedOutput()
+	require.NoError(t, err, string(out))
+	return string(out)
+}
+
+// migration035Cmd builds the runbook's psql invocation with extra arguments.
+func migration035Cmd(conn string, extra ...string) *exec.Cmd {
+	args := append([]string{conn, "-X", "-q", "-v", "ON_ERROR_STOP=1"}, extra...)
+	args = append(args, "-f", migration035Path)
+	return exec.Command("psql", args...) //nolint:gosec // G204: test-only, fixed binary, test-controlled args
+}
+
+// newMigration035DB creates a throwaway database with the schema and the given fixture.
+func newMigration035DB(t *testing.T, fixture string) (conn, dbName string) {
+	t.Helper()
+	if _, err := exec.LookPath("psql"); err != nil {
+		t.Skip("psql not available")
+	}
+	dbName = fmt.Sprintf("m035_%d", time.Now().UnixNano())
+	require.NoError(t, testDB.Exec("CREATE DATABASE "+dbName).Error)
+	t.Cleanup(func() { testDB.Exec("DROP DATABASE IF EXISTS " + dbName) })
+	conn = dsnForDatabase(t, testDSN, dbName)
+	runPSQLFile(t, conn, schemaPath)
+	runPSQL(t, conn, fixture)
+	return conn, dbName
+}
+
+// migration035OneToken is a single gentk token on the bare shape, healthy.
+const migration035OneToken = `
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, is_viewable)
+VALUES (1, 'tezos:mainnet:fa2:KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE:1', 'tezos:mainnet', 'fa2', 'KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE', '1', true);
+INSERT INTO token_metadata (token_id, animation_url, animation_url_hash)
+VALUES (1, 'https://ipfs.filebase.io/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon?fxhash=oo1',
+        md5('https://ipfs.filebase.io/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon?fxhash=oo1'));
+INSERT INTO token_media_health (token_id, media_url, media_url_hash, media_source, health_status)
+VALUES (1, 'https://ipfs.filebase.io/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon?fxhash=oo1',
+        md5('https://ipfs.filebase.io/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon?fxhash=oo1'), 'metadata_animation', 'healthy');
+`
+
+// TestMigration035RequiresTokenQueue pins that the file refuses to run without the
+// deployment's jobs.token_queue, before touching any row: a guessed queue would leave its
+// viewability webhooks unclaimed.
+func TestMigration035RequiresTokenQueue(t *testing.T) {
+	conn, _ := newMigration035DB(t, migration035OneToken)
+	out, err := migration035Cmd(conn).CombinedOutput()
+	require.Error(t, err)
+	assert.Contains(t, string(out), "pass -v token_queue=")
+	assert.Equal(t, "0", runPSQL(t, conn, `SELECT count(*) FROM token_metadata WHERE animation_url LIKE '%/?%'`), "nothing was rewritten")
+}
+
+// TestMigration035ConcurrentPromotionDoesNotDeadlock replays the interleaving of a live
+// gateway promotion (UpdateMediaURLAndPropagate: gate lock, health rows, then
+// token_metadata) against the backfill. The promotion holds the token's health row while
+// the backfill starts, then updates token_metadata. The backfill must wait on the health
+// row without holding token_metadata, so neither side is chosen as a deadlock victim.
+func TestMigration035ConcurrentPromotionDoesNotDeadlock(t *testing.T) {
+	conn, dbName := newMigration035DB(t, migration035OneToken)
+	db, err := gorm.Open(pgdriver.Open(conn), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	const bare = "https://ipfs.filebase.io/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon?fxhash=oo1"
+	const promoted = "https://ipfs.feralfile.com/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon/?fxhash=oo1"
+
+	promotion := db.Begin()
+	require.NoError(t, promotion.Exec("SET LOCAL lock_timeout = '20s'").Error)
+	require.NoError(t, promotion.Exec("SELECT pg_advisory_xact_lock(hashtext(md5(?)))", promoted).Error)
+	require.NoError(t, promotion.Exec(`UPDATE token_media_health SET media_url = ?, media_url_hash = md5(?)
+		WHERE media_url_hash = md5(?)`, promoted, promoted, bare).Error)
+
+	type result struct {
+		out []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := migration035Cmd(conn, "-v", "token_queue=token_index").CombinedOutput()
+		done <- result{out, err}
+	}()
+
+	// Wait until the backfill is blocked on the promotion's lock.
+	require.Eventually(t, func() bool {
+		var waiting int64
+		testDB.Raw(`SELECT count(*) FROM pg_stat_activity WHERE datname = ? AND wait_event_type = 'Lock'`, dbName).Scan(&waiting)
+		return waiting > 0
+	}, 30*time.Second, 50*time.Millisecond, "the backfill never reached the promotion's lock")
+
+	err = promotion.Exec(`UPDATE token_metadata SET animation_url = ?, animation_url_hash = md5(?)
+		WHERE animation_url_hash = md5(?) AND animation_url IS NOT NULL`, promoted, promoted, bare).Error
+	require.NoError(t, err, "the promotion must not be chosen as a deadlock victim")
+	require.NoError(t, promotion.Commit().Error)
+
+	res := <-done
+	require.NoError(t, res.err, string(res.out))
+	assert.NotContains(t, string(res.out), "deadlock", "no retry was needed")
+	assert.Equal(t, promoted+"|"+promoted,
+		runPSQL(t, conn, `SELECT m.animation_url || '|' || h.media_url FROM token_metadata m
+		                  JOIN token_media_health h USING (token_id) WHERE token_id = 1`),
+		"the promotion's URL stands; the backfill finds nothing left to rewrite")
+}
 
 // migration035Fixture seeds one case per behavior the backfill must preserve, using the
 // row shapes of the three blank fxhash works on the PR #178 playlist. Token ids are fixed
@@ -146,7 +254,7 @@ func TestMigration035IPFSDirectorySlash(t *testing.T) {
 
 	runPSQLFile(t, conn, schemaPath)
 	runPSQL(t, conn, migration035Fixture)
-	runPSQLFile(t, conn, migration035Path)
+	runMigration035(t, conn)
 
 	q := func(sql string) string { return runPSQL(t, conn, sql) }
 	const slashed = "https://ipfs.filebase.io/ipfs/QmUuKiWb5BBK5dERnfZBRebDrtxxkvwFrNYZGs7uwbwSon/?fxhash=ooCaGyZk"
@@ -293,7 +401,7 @@ func TestMigration035IPFSDirectorySlash(t *testing.T) {
 
 	t.Run("re-running is a no-op", func(t *testing.T) {
 		before := q(`SELECT (SELECT count(*) FROM token_events) || '|' || (SELECT count(*) FROM jobs)`)
-		runPSQLFile(t, conn, migration035Path)
+		runMigration035(t, conn)
 		assert.Equal(t, before, q(`SELECT (SELECT count(*) FROM token_events) || '|' || (SELECT count(*) FROM jobs)`))
 	})
 }

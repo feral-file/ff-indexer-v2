@@ -66,12 +66,19 @@
 -- This file does its own transaction control (COMMIT per batch). It must run OUTSIDE an
 -- explicit BEGIN, in one psql session (the work list is a temp table):
 --
---   psql ... -v ON_ERROR_STOP=1 -f db/migrations/035_ipfs_directory_slash.sql
+--   psql ... -v ON_ERROR_STOP=1 -v token_queue=<jobs.token_queue> \
+--       -f db/migrations/035_ipfs_directory_slash.sql
 --
--- Workers can keep running. New code never writes the bare shape, so the only races are
--- the ones 034 documents: CreateMediaAsset inserting the target key (the move retries),
--- and a render job still running against a bare URL re-creating its probe row (the final
--- pass deletes it).
+-- token_queue is required and must be the deployment's jobs.token_queue (default
+-- token_index): the viewability webhooks this file enqueues run on that queue.
+--
+-- Workers can keep running. New code never writes the bare shape. Each batch takes its
+-- locks in UpdateMediaURLAndPropagate's order (URL gate locks, health rows, token_metadata,
+-- enrichment_sources), so a concurrent gateway promotion cannot deadlock with it, and the
+-- batch retries on any other lock conflict (deadlock, lock or serialization failure) up
+-- to 10 times. The other races are the ones 034 documents: CreateMediaAsset inserting the
+-- target key (the move retries), and a render job still running against a bare URL
+-- re-creating its probe row (the final pass deletes it).
 --
 -- Sizing (2026-11-17): 44,563 token_metadata rows (42,287 animation, 2,340 image),
 -- 1,868 enrichment rows (1,650 objkt, 218 opensea), 46,508 health rows over 44,887 tokens
@@ -95,6 +102,14 @@
 -- touches nothing already moved and emits no duplicate events. Fresh installs: no-op.
 
 \set ON_ERROR_STOP on
+
+-- Required: the queue the deployment's token worker polls (config jobs.token_queue; the
+-- default is token_index). Viewability webhooks are enqueued on it; a wrong value leaves
+-- them unclaimed.
+\if :{?token_queue}
+\else
+DO $$ BEGIN RAISE EXCEPTION 'migration_035: pass -v token_queue=<jobs.token_queue>, e.g. -v token_queue=token_index'; END $$;
+\endif
 
 -- Bare predicate and rewrite; must match types.NormalizeIPFSGatewayURL exactly (same host,
 -- the "/" inserted between the CID and its "?" or "#", everything else kept verbatim).
@@ -227,7 +242,7 @@ CREATE TEMP TABLE migration_035_tokens AS
 CREATE UNIQUE INDEX ON migration_035_tokens (token_id);
 ANALYZE migration_035_tokens;
 
-CREATE OR REPLACE PROCEDURE migration_035_move_tokens(p_batch_size int DEFAULT 100)
+CREATE OR REPLACE PROCEDURE migration_035_move_tokens(p_queue text, p_batch_size int DEFAULT 100)
 LANGUAGE plpgsql AS $$
 DECLARE
     v_last     bigint := 0;
@@ -246,15 +261,16 @@ DECLARE
     v_unviewed bigint;
     v_total_g  bigint := 0;
     v_total_v  bigint := 0;
-    -- The queue NotifyWebhookClients jobs run on (jobs.token_queue): taken from the
-    -- latest such job so a non-default deployment is honored, else the default.
-    v_queue    text := coalesce((SELECT queue FROM jobs WHERE kind = 'NotifyWebhookClients'
-                                 ORDER BY id DESC LIMIT 1), 'token_index');
+    v_recomputed bigint;
+    v_attempt  int;
 BEGIN
     IF p_batch_size < 1 THEN
         RAISE EXCEPTION 'p_batch_size must be >= 1';
     END IF;
-    RAISE NOTICE 'migration_035: viewability webhooks go to queue %', v_queue;
+    IF coalesce(p_queue, '') = '' THEN
+        RAISE EXCEPTION 'migration_035: the jobs.token_queue value is required (-v token_queue=...)';
+    END IF;
+    RAISE NOTICE 'migration_035: viewability webhooks go to queue % (must equal jobs.token_queue)', p_queue;
 
     LOOP
         SELECT array_agg(token_id ORDER BY token_id) INTO v_ids
@@ -263,208 +279,233 @@ BEGIN
         EXIT WHEN v_ids IS NULL;
         v_last := v_ids[array_length(v_ids, 1)];
 
-        -- Enrichment: rewrite + one 'enrichment_updated' event per changed token.
-        WITH src AS (
-            SELECT token_id, vendor, image_url AS oi, animation_url AS oa,
-                   migration_035_slash(image_url) AS ni,
-                   migration_035_slash(animation_url) AS na
-            FROM enrichment_sources
-            WHERE token_id = ANY (v_ids)
-              AND (migration_035_is_bare(image_url) OR migration_035_is_bare(animation_url))
-            FOR UPDATE
-        ), upd AS (
-            UPDATE enrichment_sources e
-            SET image_url          = s.ni,
-                image_url_hash     = CASE WHEN s.ni IS NULL OR s.ni = '' THEN NULL ELSE md5(s.ni) END,
-                animation_url      = s.na,
-                animation_url_hash = CASE WHEN s.na IS NULL OR s.na = '' THEN NULL ELSE md5(s.na) END
-            FROM src s
-            WHERE e.token_id = s.token_id
-              AND (s.oi IS DISTINCT FROM s.ni OR s.oa IS DISTINCT FROM s.na)
-            RETURNING e.token_id
-        )
-        INSERT INTO token_events (token_id, event_type, owner_address, occurred_at, metadata, created_at)
-        SELECT s.token_id, 'enrichment_updated', NULL, clock_timestamp(),
-               jsonb_build_object(
-                   'vendor', s.vendor::text,
-                   'changed_fields', to_jsonb(array_remove(ARRAY[
-                       CASE WHEN s.oi IS DISTINCT FROM s.ni THEN 'image_url' END,
-                       CASE WHEN s.oa IS DISTINCT FROM s.na THEN 'animation_url' END], NULL))),
-               clock_timestamp()
-        FROM src s JOIN upd u USING (token_id);
-        GET DIAGNOSTICS v_enriched = ROW_COUNT;
+        -- One batch per transaction, retried on lock conflicts with live writers (the
+        -- subtransaction rolls the batch back; COMMIT follows only a clean run).
+        v_attempt := 0;
+        LOOP
+            BEGIN
+                v_unviewed := 0;
+                v_recomputed := 0;
+                -- Media health. Serialize against writers on every target URL (lockURLGate), in
+                -- hash order to avoid deadlocks.
+                SELECT array_agg(t ORDER BY t) INTO v_targets
+                FROM (SELECT DISTINCT md5(migration_035_slash(media_url)) AS t
+                      FROM token_media_health
+                      WHERE token_id = ANY (v_ids) AND migration_035_is_bare(media_url)) s;
+                IF v_targets IS NOT NULL THEN
+                    FOREACH v_target IN ARRAY v_targets LOOP
+                        PERFORM pg_advisory_xact_lock(hashtext(v_target));
+                    END LOOP;
+                END IF;
+                v_targets := NULL;
+                -- Then the bare health rows, in id order, before any metadata row: the same
+                -- order as UpdateMediaURLAndPropagate (gate lock, health, token_metadata,
+                -- enrichment_sources), so a concurrent gateway promotion cannot deadlock with
+                -- this batch. Other writers are covered by the retry around the batch.
+                PERFORM 1 FROM token_media_health
+                WHERE token_id = ANY (v_ids) AND migration_035_is_bare(media_url)
+                ORDER BY id FOR UPDATE;
 
-        -- Token metadata: rewrite + one 'metadata_updated' event per changed token.
-        WITH src AS (
-            SELECT token_id, image_url AS oi, animation_url AS oa,
-                   migration_035_slash(image_url) AS ni,
-                   migration_035_slash(animation_url) AS na
-            FROM token_metadata
-            WHERE token_id = ANY (v_ids)
-              AND (migration_035_is_bare(image_url) OR migration_035_is_bare(animation_url))
-            FOR UPDATE
-        ), upd AS (
-            UPDATE token_metadata m
-            SET image_url          = s.ni,
-                image_url_hash     = CASE WHEN s.ni IS NULL OR s.ni = '' THEN NULL ELSE md5(s.ni) END,
-                animation_url      = s.na,
-                animation_url_hash = CASE WHEN s.na IS NULL OR s.na = '' THEN NULL ELSE md5(s.na) END
-            FROM src s
-            WHERE m.token_id = s.token_id
-              AND (s.oi IS DISTINCT FROM s.ni OR s.oa IS DISTINCT FROM s.na)
-            RETURNING m.token_id
-        )
-        INSERT INTO token_events (token_id, event_type, owner_address, occurred_at, metadata, created_at)
-        SELECT s.token_id, 'metadata_updated', NULL, clock_timestamp(),
-               jsonb_build_object(
-                   'changed_fields', to_jsonb(array_remove(ARRAY[
-                       CASE WHEN s.oi IS DISTINCT FROM s.ni THEN 'image_url' END,
-                       CASE WHEN s.oa IS DISTINCT FROM s.na THEN 'animation_url' END], NULL))),
-               clock_timestamp()
-        FROM src s JOIN upd u USING (token_id);
-        GET DIAGNOSTICS v_meta = ROW_COUNT;
+                -- Keep one row per (token, source, target) for the unique key: an existing slashed
+                -- row (written by a re-index on the new code) wins, then the lowest id among bare
+                -- rows that converge. The deleted row may have been the token's only healthy one
+                -- (the kept slashed row can be broken or gated), so its token is recomputed below.
+                WITH deduped AS (
+                DELETE FROM token_media_health h
+                USING (
+                    SELECT id, row_number() OVER (PARTITION BY token_id, media_source, target
+                                                  ORDER BY is_target DESC, id) AS rn
+                    FROM (SELECT id, token_id, media_source,
+                                 md5(migration_035_slash(media_url)) AS target, false AS is_target
+                          FROM token_media_health
+                          WHERE token_id = ANY (v_ids) AND migration_035_is_bare(media_url)
+                          UNION ALL
+                          SELECT id, token_id, media_source, media_url_hash, true
+                          FROM token_media_health
+                          WHERE token_id = ANY (v_ids) AND NOT migration_035_is_bare(media_url)) c
+                ) d
+                WHERE h.id = d.id AND d.rn > 1
+                RETURNING h.token_id
+                )
+                SELECT array_agg(DISTINCT token_id) INTO v_deduped FROM deduped;
 
-        -- Media health. Serialize against writers on every target URL (lockURLGate), in
-        -- hash order to avoid deadlocks.
-        SELECT array_agg(t ORDER BY t) INTO v_targets
-        FROM (SELECT DISTINCT md5(migration_035_slash(media_url)) AS t
-              FROM token_media_health
-              WHERE token_id = ANY (v_ids) AND migration_035_is_bare(media_url)) s;
-        IF v_targets IS NOT NULL THEN
-            FOREACH v_target IN ARRAY v_targets LOOP
-                PERFORM pg_advisory_xact_lock(hashtext(v_target));
-            END LOOP;
-        END IF;
-        v_targets := NULL;
+                -- Move in place, keeping the L0 verdict (same bytes). A render gate on the bare
+                -- URL judged the query-less render, so such a row is reset for a prompt re-check.
+                WITH moved AS (
+                    UPDATE token_media_health h
+                    SET media_url       = migration_035_slash(h.media_url),
+                        media_url_hash  = md5(migration_035_slash(h.media_url)),
+                        health_status   = CASE WHEN h.failure_reason LIKE 'render\_%' THEN 'unknown'::media_health_status ELSE h.health_status END,
+                        failure_reason  = CASE WHEN h.failure_reason LIKE 'render\_%' THEN NULL ELSE h.failure_reason END,
+                        last_error      = CASE WHEN h.failure_reason LIKE 'render\_%' THEN NULL ELSE h.last_error END,
+                        last_checked_at = CASE WHEN h.failure_reason LIKE 'render\_%' THEN 'epoch'::timestamptz ELSE h.last_checked_at END
+                    WHERE h.token_id = ANY (v_ids) AND migration_035_is_bare(h.media_url)
+                    RETURNING h.id
+                )
+                SELECT array_agg(id), count(*) INTO v_moved, v_health FROM moved;
 
-        -- Keep one row per (token, source, target) for the unique key: an existing slashed
-        -- row (written by a re-index on the new code) wins, then the lowest id among bare
-        -- rows that converge. The deleted row may have been the token's only healthy one
-        -- (the kept slashed row can be broken or gated), so its token is recomputed below.
-        WITH deduped AS (
-        DELETE FROM token_media_health h
-        USING (
-            SELECT id, row_number() OVER (PARTITION BY token_id, media_source, target
-                                          ORDER BY is_target DESC, id) AS rn
-            FROM (SELECT id, token_id, media_source,
-                         md5(migration_035_slash(media_url)) AS target, false AS is_target
-                  FROM token_media_health
-                  WHERE token_id = ANY (v_ids) AND migration_035_is_bare(media_url)
-                  UNION ALL
-                  SELECT id, token_id, media_source, media_url_hash, true
-                  FROM token_media_health
-                  WHERE token_id = ANY (v_ids) AND NOT migration_035_is_bare(media_url)) c
-        ) d
-        WHERE h.id = d.id AND d.rn > 1
-        RETURNING h.token_id
-        )
-        SELECT array_agg(DISTINCT token_id) INTO v_deduped FROM deduped;
+                -- A gate the SLASHED URL already holds does travel (store.activeRenderGate: every
+                -- writer that creates or moves health rows must consult it). After #178 deploys,
+                -- L1 can gate a slashed URL before this backfill reaches a token still on the
+                -- bare one. The probe row is the authority and is locked as activeRenderGate
+                -- locks it; the reason comes from a sibling health row, else from the verdict.
+                WITH gate AS (
+                    SELECT p.media_url_hash, p.last_error,
+                           coalesce((SELECT s.failure_reason FROM token_media_health s
+                                     WHERE s.media_url_hash = p.media_url_hash
+                                       AND s.failure_reason LIKE 'render\_%' LIMIT 1),
+                                    CASE p.verdict WHEN 'known_bad_fingerprint' THEN 'render_known_bad'
+                                                   WHEN 'stalled' THEN 'render_stalled'
+                                                   ELSE 'render_blank' END) AS reason
+                    FROM media_render_probes p
+                    WHERE p.health_gated
+                      AND p.media_url_hash IN (SELECT media_url_hash FROM token_media_health WHERE id = ANY (v_moved))
+                    FOR UPDATE OF p
+                ), inherited AS (
+                    UPDATE token_media_health h
+                    SET health_status  = 'broken',
+                        failure_reason = g.reason,
+                        last_error     = g.last_error
+                    FROM gate g
+                    WHERE h.id = ANY (v_moved) AND h.media_url_hash = g.media_url_hash
+                    RETURNING h.token_id
+                )
+                SELECT array_agg(DISTINCT token_id) INTO v_gated FROM inherited;
+                -- Recompute every token whose health rows changed in a way that can move
+                -- is_viewable: an inherited gate, or a deduplicated row.
+                SELECT array_agg(DISTINCT x) INTO v_gated
+                FROM unnest(coalesce(v_gated, '{}') || coalesce(v_deduped, '{}')) x;
 
-        -- Move in place, keeping the L0 verdict (same bytes). A render gate on the bare
-        -- URL judged the query-less render, so such a row is reset for a prompt re-check.
-        WITH moved AS (
-            UPDATE token_media_health h
-            SET media_url       = migration_035_slash(h.media_url),
-                media_url_hash  = md5(migration_035_slash(h.media_url)),
-                health_status   = CASE WHEN h.failure_reason LIKE 'render\_%' THEN 'unknown'::media_health_status ELSE h.health_status END,
-                failure_reason  = CASE WHEN h.failure_reason LIKE 'render\_%' THEN NULL ELSE h.failure_reason END,
-                last_error      = CASE WHEN h.failure_reason LIKE 'render\_%' THEN NULL ELSE h.last_error END,
-                last_checked_at = CASE WHEN h.failure_reason LIKE 'render\_%' THEN 'epoch'::timestamptz ELSE h.last_checked_at END
-            WHERE h.token_id = ANY (v_ids) AND migration_035_is_bare(h.media_url)
-            RETURNING h.id
-        )
-        SELECT array_agg(id), count(*) INTO v_moved, v_health FROM moved;
-
-        -- A gate the SLASHED URL already holds does travel (store.activeRenderGate: every
-        -- writer that creates or moves health rows must consult it). After #178 deploys,
-        -- L1 can gate a slashed URL before this backfill reaches a token still on the
-        -- bare one. The probe row is the authority and is locked as activeRenderGate
-        -- locks it; the reason comes from a sibling health row, else from the verdict.
-        WITH gate AS (
-            SELECT p.media_url_hash, p.last_error,
-                   coalesce((SELECT s.failure_reason FROM token_media_health s
-                             WHERE s.media_url_hash = p.media_url_hash
-                               AND s.failure_reason LIKE 'render\_%' LIMIT 1),
-                            CASE p.verdict WHEN 'known_bad_fingerprint' THEN 'render_known_bad'
-                                           WHEN 'stalled' THEN 'render_stalled'
-                                           ELSE 'render_blank' END) AS reason
-            FROM media_render_probes p
-            WHERE p.health_gated
-              AND p.media_url_hash IN (SELECT media_url_hash FROM token_media_health WHERE id = ANY (v_moved))
-            FOR UPDATE OF p
-        ), inherited AS (
-            UPDATE token_media_health h
-            SET health_status  = 'broken',
-                failure_reason = g.reason,
-                last_error     = g.last_error
-            FROM gate g
-            WHERE h.id = ANY (v_moved) AND h.media_url_hash = g.media_url_hash
-            RETURNING h.token_id
-        )
-        SELECT array_agg(DISTINCT token_id) INTO v_gated FROM inherited;
-        -- Recompute every token whose health rows changed in a way that can move
-        -- is_viewable: an inherited gate, or a deduplicated row.
-        SELECT array_agg(DISTINCT x) INTO v_gated
-        FROM unnest(coalesce(v_gated, '{}') || coalesce(v_deduped, '{}')) x;
-
-        -- Tokens that inherited a gate or lost a deduplicated row: recompute is_viewable exactly as
-        -- BatchUpdateTokensViewability does (healthy, ungated animation; else no
-        -- animation and a healthy, ungated image) and record its token event. The
-        -- token.viewability.changed webhook is enqueued by application code only; see
-        -- "Migration 035" in DEVELOPMENT.md.
-        IF v_gated IS NOT NULL THEN
-            WITH nv AS (
-                SELECT t.id, t.is_viewable AS old_viewable,
-                       (EXISTS (SELECT 1 FROM token_media_health tmh
-                                WHERE tmh.token_id = t.id AND tmh.health_status = 'healthy'
-                                  AND tmh.media_source IN ('metadata_animation', 'enrichment_animation')
-                                  AND NOT EXISTS (SELECT 1 FROM media_render_probes p
-                                                  WHERE p.media_url_hash = tmh.media_url_hash AND p.health_gated))
-                        OR (NOT EXISTS (SELECT 1 FROM token_media_health tmh
-                                        WHERE tmh.token_id = t.id
-                                          AND tmh.media_source IN ('metadata_animation', 'enrichment_animation'))
-                            AND EXISTS (SELECT 1 FROM token_media_health tmh
+                -- Tokens that inherited a gate or lost a deduplicated row: recompute is_viewable exactly as
+                -- BatchUpdateTokensViewability does (healthy, ungated animation; else no
+                -- animation and a healthy, ungated image), with its token event and webhook job.
+                IF v_gated IS NOT NULL THEN
+                    WITH nv AS (
+                        SELECT t.id, t.is_viewable AS old_viewable,
+                               (EXISTS (SELECT 1 FROM token_media_health tmh
                                         WHERE tmh.token_id = t.id AND tmh.health_status = 'healthy'
-                                          AND tmh.media_source IN ('metadata_image', 'enrichment_image')
+                                          AND tmh.media_source IN ('metadata_animation', 'enrichment_animation')
                                           AND NOT EXISTS (SELECT 1 FROM media_render_probes p
-                                                          WHERE p.media_url_hash = tmh.media_url_hash AND p.health_gated)))
-                       ) AS new_viewable
-                FROM tokens t
-                WHERE t.id = ANY (v_gated)
-            ), upd AS (
-                UPDATE tokens t SET is_viewable = nv.new_viewable
-                FROM nv
-                WHERE t.id = nv.id AND t.is_viewable <> nv.new_viewable
-                RETURNING t.id, t.token_cid, t.chain, t.standard, t.contract_address, t.token_number,
-                          nv.new_viewable, migration_035_ulid() AS event_id
-            ), ev AS (
+                                                          WHERE p.media_url_hash = tmh.media_url_hash AND p.health_gated))
+                                OR (NOT EXISTS (SELECT 1 FROM token_media_health tmh
+                                                WHERE tmh.token_id = t.id
+                                                  AND tmh.media_source IN ('metadata_animation', 'enrichment_animation'))
+                                    AND EXISTS (SELECT 1 FROM token_media_health tmh
+                                                WHERE tmh.token_id = t.id AND tmh.health_status = 'healthy'
+                                                  AND tmh.media_source IN ('metadata_image', 'enrichment_image')
+                                                  AND NOT EXISTS (SELECT 1 FROM media_render_probes p
+                                                                  WHERE p.media_url_hash = tmh.media_url_hash AND p.health_gated)))
+                               ) AS new_viewable
+                        FROM tokens t
+                        WHERE t.id = ANY (v_gated)
+                    ), upd AS (
+                        UPDATE tokens t SET is_viewable = nv.new_viewable
+                        FROM nv
+                        WHERE t.id = nv.id AND t.is_viewable <> nv.new_viewable
+                        RETURNING t.id, t.token_cid, t.chain, t.standard, t.contract_address, t.token_number,
+                                  nv.new_viewable, migration_035_ulid() AS event_id
+                    ), ev AS (
+                        INSERT INTO token_events (token_id, event_type, owner_address, occurred_at, metadata, created_at)
+                        SELECT id, 'viewability_changed', NULL, clock_timestamp(),
+                               jsonb_build_object('is_viewable', new_viewable), clock_timestamp()
+                        FROM upd
+                    )
+                    -- The token.viewability.changed webhook, enqueued exactly as the sweeper's
+                    -- triggerWebhook does (same job kind, queue, unique key and payload), so
+                    -- subscribers such as search drop or restore the token.
+                    INSERT INTO jobs (queue, kind, payload, unique_key)
+                    SELECT p_queue, 'NotifyWebhookClients',
+                           jsonb_build_array(jsonb_build_object(
+                               'event_id', u.event_id,
+                               'event_type', 'token.viewability.changed',
+                               'timestamp', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+                               'data', jsonb_build_object(
+                                   'token_cid', u.token_cid,
+                                   'chain', u.chain::text,
+                                   'standard', u.standard::text,
+                                   'contract', u.contract_address,
+                                   'token_number', u.token_number,
+                                   'is_viewable', u.new_viewable))),
+                           'webhook-notify-' || u.event_id
+                    FROM upd u;
+                    GET DIAGNOSTICS v_unviewed = ROW_COUNT;
+                    v_recomputed := coalesce(array_length(v_gated, 1), 0);
+                END IF;
+                -- Token metadata: rewrite + one 'metadata_updated' event per changed token.
+                WITH src AS (
+                    SELECT token_id, image_url AS oi, animation_url AS oa,
+                           migration_035_slash(image_url) AS ni,
+                           migration_035_slash(animation_url) AS na
+                    FROM token_metadata
+                    WHERE token_id = ANY (v_ids)
+                      AND (migration_035_is_bare(image_url) OR migration_035_is_bare(animation_url))
+                    FOR UPDATE
+                ), upd AS (
+                    UPDATE token_metadata m
+                    SET image_url          = s.ni,
+                        image_url_hash     = CASE WHEN s.ni IS NULL OR s.ni = '' THEN NULL ELSE md5(s.ni) END,
+                        animation_url      = s.na,
+                        animation_url_hash = CASE WHEN s.na IS NULL OR s.na = '' THEN NULL ELSE md5(s.na) END
+                    FROM src s
+                    WHERE m.token_id = s.token_id
+                      AND (s.oi IS DISTINCT FROM s.ni OR s.oa IS DISTINCT FROM s.na)
+                    RETURNING m.token_id
+                )
                 INSERT INTO token_events (token_id, event_type, owner_address, occurred_at, metadata, created_at)
-                SELECT id, 'viewability_changed', NULL, clock_timestamp(),
-                       jsonb_build_object('is_viewable', new_viewable), clock_timestamp()
-                FROM upd
-            )
-            -- The token.viewability.changed webhook, enqueued exactly as the sweeper's
-            -- triggerWebhook does (same job kind, queue, unique key and payload), so
-            -- subscribers such as search drop or restore the token.
-            INSERT INTO jobs (queue, kind, payload, unique_key)
-            SELECT v_queue, 'NotifyWebhookClients',
-                   jsonb_build_array(jsonb_build_object(
-                       'event_id', u.event_id,
-                       'event_type', 'token.viewability.changed',
-                       'timestamp', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
-                       'data', jsonb_build_object(
-                           'token_cid', u.token_cid,
-                           'chain', u.chain::text,
-                           'standard', u.standard::text,
-                           'contract', u.contract_address,
-                           'token_number', u.token_number,
-                           'is_viewable', u.new_viewable))),
-                   'webhook-notify-' || u.event_id
-            FROM upd u;
-            GET DIAGNOSTICS v_unviewed = ROW_COUNT;
-            v_total_g := v_total_g + coalesce(array_length(v_gated, 1), 0);
-            v_total_v := v_total_v + v_unviewed;
-        END IF;
+                SELECT s.token_id, 'metadata_updated', NULL, clock_timestamp(),
+                       jsonb_build_object(
+                           'changed_fields', to_jsonb(array_remove(ARRAY[
+                               CASE WHEN s.oi IS DISTINCT FROM s.ni THEN 'image_url' END,
+                               CASE WHEN s.oa IS DISTINCT FROM s.na THEN 'animation_url' END], NULL))),
+                       clock_timestamp()
+                FROM src s JOIN upd u USING (token_id);
+                GET DIAGNOSTICS v_meta = ROW_COUNT;
+
+                -- Enrichment: rewrite + one 'enrichment_updated' event per changed token.
+                WITH src AS (
+                    SELECT token_id, vendor, image_url AS oi, animation_url AS oa,
+                           migration_035_slash(image_url) AS ni,
+                           migration_035_slash(animation_url) AS na
+                    FROM enrichment_sources
+                    WHERE token_id = ANY (v_ids)
+                      AND (migration_035_is_bare(image_url) OR migration_035_is_bare(animation_url))
+                    FOR UPDATE
+                ), upd AS (
+                    UPDATE enrichment_sources e
+                    SET image_url          = s.ni,
+                        image_url_hash     = CASE WHEN s.ni IS NULL OR s.ni = '' THEN NULL ELSE md5(s.ni) END,
+                        animation_url      = s.na,
+                        animation_url_hash = CASE WHEN s.na IS NULL OR s.na = '' THEN NULL ELSE md5(s.na) END
+                    FROM src s
+                    WHERE e.token_id = s.token_id
+                      AND (s.oi IS DISTINCT FROM s.ni OR s.oa IS DISTINCT FROM s.na)
+                    RETURNING e.token_id
+                )
+                INSERT INTO token_events (token_id, event_type, owner_address, occurred_at, metadata, created_at)
+                SELECT s.token_id, 'enrichment_updated', NULL, clock_timestamp(),
+                       jsonb_build_object(
+                           'vendor', s.vendor::text,
+                           'changed_fields', to_jsonb(array_remove(ARRAY[
+                               CASE WHEN s.oi IS DISTINCT FROM s.ni THEN 'image_url' END,
+                               CASE WHEN s.oa IS DISTINCT FROM s.na THEN 'animation_url' END], NULL))),
+                       clock_timestamp()
+                FROM src s JOIN upd u USING (token_id);
+                GET DIAGNOSTICS v_enriched = ROW_COUNT;
+
+
+                EXIT;
+            EXCEPTION WHEN deadlock_detected OR lock_not_available OR serialization_failure THEN
+                v_attempt := v_attempt + 1;
+                IF v_attempt >= 10 THEN
+                    RAISE;
+                END IF;
+                RAISE NOTICE 'migration_035: batch through token_id % hit % (%), retry %',
+                    v_last, SQLSTATE, SQLERRM, v_attempt;
+                PERFORM pg_sleep(0.2 * v_attempt);
+            END;
+        END LOOP;
+        v_total_g := v_total_g + v_recomputed;
+        v_total_v := v_total_v + v_unviewed;
         v_moved := NULL;
         v_gated := NULL;
         v_deduped := NULL;
@@ -478,8 +519,8 @@ BEGIN
     END LOOP;
 END $$;
 
-CALL migration_035_move_tokens();
-DROP PROCEDURE migration_035_move_tokens(int);
+CALL migration_035_move_tokens(:'token_queue');
+DROP PROCEDURE migration_035_move_tokens(text, int);
 DROP TABLE migration_035_tokens;
 
 -- 4. Render probes, final pass: drop bare rows written by in-flight render jobs.
