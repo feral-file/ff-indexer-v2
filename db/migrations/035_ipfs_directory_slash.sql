@@ -45,8 +45,10 @@
 --         becomes 'unknown' and is backdated for a prompt re-check. A gate the SLASHED
 --         URL already holds (L1 can gate it after #178 deploys, before this file reaches
 --         a token still on the bare URL) does travel, as store.activeRenderGate requires:
---         the moved row becomes broken with that gate's reason, and the token's
---         is_viewable is recomputed in SQL with its 'viewability_changed' token event.
+--         the moved row becomes broken with that gate's reason. Those tokens, and any
+--         whose bare row was dropped in favor of an existing slashed row (which may be
+--         broken or gated), get is_viewable recomputed in SQL with their
+--         'viewability_changed' token events.
 --         None of either existed on 2026-11-17 (L1 runs in shadow mode).
 --   Raw payloads (vendor_json, origin_json, latest_json) are left verbatim.
 --
@@ -220,6 +222,7 @@ DECLARE
     v_target   text;
     v_moved    bigint[];
     v_gated    bigint[];
+    v_deduped  bigint[];
     v_unviewed bigint;
     v_total_g  bigint := 0;
     v_total_v  bigint := 0;
@@ -311,7 +314,9 @@ BEGIN
 
         -- Keep one row per (token, source, target) for the unique key: an existing slashed
         -- row (written by a re-index on the new code) wins, then the lowest id among bare
-        -- rows that converge.
+        -- rows that converge. The deleted row may have been the token's only healthy one
+        -- (the kept slashed row can be broken or gated), so its token is recomputed below.
+        WITH deduped AS (
         DELETE FROM token_media_health h
         USING (
             SELECT id, row_number() OVER (PARTITION BY token_id, media_source, target
@@ -325,7 +330,10 @@ BEGIN
                   FROM token_media_health
                   WHERE token_id = ANY (v_ids) AND NOT migration_035_is_bare(media_url)) c
         ) d
-        WHERE h.id = d.id AND d.rn > 1;
+        WHERE h.id = d.id AND d.rn > 1
+        RETURNING h.token_id
+        )
+        SELECT array_agg(DISTINCT token_id) INTO v_deduped FROM deduped;
 
         -- Move in place, keeping the L0 verdict (same bytes). A render gate on the bare
         -- URL judged the query-less render, so such a row is reset for a prompt re-check.
@@ -369,8 +377,12 @@ BEGIN
             RETURNING h.token_id
         )
         SELECT array_agg(DISTINCT token_id) INTO v_gated FROM inherited;
+        -- Recompute every token whose health rows changed in a way that can move
+        -- is_viewable: an inherited gate, or a deduplicated row.
+        SELECT array_agg(DISTINCT x) INTO v_gated
+        FROM unnest(coalesce(v_gated, '{}') || coalesce(v_deduped, '{}')) x;
 
-        -- Tokens that inherited a gate: recompute is_viewable exactly as
+        -- Tokens that inherited a gate or lost a deduplicated row: recompute is_viewable exactly as
         -- BatchUpdateTokensViewability does (healthy, ungated animation; else no
         -- animation and a healthy, ungated image) and record its token event. The
         -- token.viewability.changed webhook is enqueued by application code only; see
@@ -410,11 +422,12 @@ BEGIN
         END IF;
         v_moved := NULL;
         v_gated := NULL;
+        v_deduped := NULL;
 
         v_total_e := v_total_e + v_enriched;
         v_total_m := v_total_m + v_meta;
         v_total_h := v_total_h + v_health;
-        RAISE NOTICE 'migration_035: through token_id % | enrichment % | metadata % | health % (totals % / % / %; inherited gates % tokens, viewability changed %)',
+        RAISE NOTICE 'migration_035: through token_id % | enrichment % | metadata % | health % (totals % / % / %; recomputed % tokens, viewability changed %)',
             v_last, v_enriched, v_meta, v_health, v_total_e, v_total_m, v_total_h, v_total_g, v_total_v;
         COMMIT;
     END LOOP;

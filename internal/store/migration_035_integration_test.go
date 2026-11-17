@@ -20,7 +20,7 @@ const migration035Path = "../../db/migrations/035_ipfs_directory_slash.sql"
 const migration035Fixture = `
 INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number)
 SELECT i, 'tezos:mainnet:fa2:KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE:' || i, 'tezos:mainnet', 'fa2', 'KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE', i::text
-FROM generate_series(1, 7) i;
+FROM generate_series(1, 8) i;
 
 -- T1: gentk work. On-chain animation_url is the bare shape, the objkt enrichment repeats
 -- it. The metadata row is healthy (the probe followed the redirect, as in production);
@@ -107,7 +107,21 @@ VALUES (7, 'https://ipfs.filebase.io/ipfs/QmNsX6YWEtKB87XHNrg357MMQREAShYcVD6qPs
 INSERT INTO media_render_probes (media_url_hash, media_url, verdict, health_gated, last_error)
 VALUES (md5('https://ipfs.filebase.io/ipfs/QmNsX6YWEtKB87XHNrg357MMQREAShYcVD6qPsT31N6sbP/?seed=7'),
         'https://ipfs.filebase.io/ipfs/QmNsX6YWEtKB87XHNrg357MMQREAShYcVD6qPsT31N6sbP/?seed=7', 'blank', true, 'blank frame');
-UPDATE tokens SET is_viewable = true WHERE id IN (1, 6, 7);
+-- T8: a healthy bare animation row next to an existing slashed row that is broken and
+-- gated (a re-index on the new code wrote it, then L1 gated it). Dedupe keeps the slashed
+-- row, so the token loses its only healthy animation and must be recomputed.
+INSERT INTO token_media_health (token_id, media_url, media_url_hash, media_source, health_status, failure_reason, last_error)
+VALUES (8, 'https://ipfs.filebase.io/ipfs/QmXdAGaiPKVYZageZKA21i1u9iG6smLAHeLk4e1D1LW5jY?tokenHash=oo8',
+        md5('https://ipfs.filebase.io/ipfs/QmXdAGaiPKVYZageZKA21i1u9iG6smLAHeLk4e1D1LW5jY?tokenHash=oo8'),
+        'metadata_animation', 'healthy', NULL, NULL),
+       (8, 'https://ipfs.filebase.io/ipfs/QmXdAGaiPKVYZageZKA21i1u9iG6smLAHeLk4e1D1LW5jY/?tokenHash=oo8',
+        md5('https://ipfs.filebase.io/ipfs/QmXdAGaiPKVYZageZKA21i1u9iG6smLAHeLk4e1D1LW5jY/?tokenHash=oo8'),
+        'metadata_animation', 'broken', 'render_blank', 'blank frame');
+INSERT INTO media_render_probes (media_url_hash, media_url, verdict, health_gated, last_error)
+VALUES (md5('https://ipfs.filebase.io/ipfs/QmXdAGaiPKVYZageZKA21i1u9iG6smLAHeLk4e1D1LW5jY/?tokenHash=oo8'),
+        'https://ipfs.filebase.io/ipfs/QmXdAGaiPKVYZageZKA21i1u9iG6smLAHeLk4e1D1LW5jY/?tokenHash=oo8', 'blank', true, 'blank frame');
+-- Viewability as BatchUpdateTokensViewability last left it.
+UPDATE tokens SET is_viewable = true WHERE id IN (1, 2, 6, 7, 8);
 `
 
 // TestMigration035IPFSDirectorySlash runs db/migrations/035_ipfs_directory_slash.sql
@@ -191,8 +205,21 @@ func TestMigration035IPFSDirectorySlash(t *testing.T) {
 			"with no sibling, the reason derives from the probe verdict")
 		assert.Equal(t, "6|false,7|false", q(`SELECT string_agg(id || '|' || is_viewable, ',' ORDER BY id) FROM tokens WHERE id IN (6, 7)`))
 		assert.Equal(t, `6|{"is_viewable": false}`+"\n"+`7|{"is_viewable": false}`,
-			q(`SELECT token_id || '|' || metadata::text FROM token_events WHERE event_type = 'viewability_changed' ORDER BY token_id`))
+			q(`SELECT token_id || '|' || metadata::text FROM token_events
+			   WHERE event_type = 'viewability_changed' AND token_id IN (6, 7) ORDER BY token_id`))
 		assert.Equal(t, "t", q(`SELECT is_viewable FROM tokens WHERE id = 1`), "tokens without an inherited gate are not recomputed")
+	})
+
+	t.Run("a token whose healthy bare row is deduplicated away is recomputed", func(t *testing.T) {
+		assert.Equal(t, "https://ipfs.filebase.io/ipfs/QmXdAGaiPKVYZageZKA21i1u9iG6smLAHeLk4e1D1LW5jY/?tokenHash=oo8|broken|render_blank",
+			q(`SELECT string_agg(media_url || '|' || health_status || '|' || failure_reason, ',') FROM token_media_health WHERE token_id = 8`))
+		assert.Equal(t, `false|{"is_viewable": false}`,
+			q(`SELECT t.is_viewable || '|' || e.metadata::text FROM tokens t
+			   JOIN token_events e ON e.token_id = t.id AND e.event_type = 'viewability_changed' WHERE t.id = 8`))
+		assert.Equal(t, "true|0",
+			q(`SELECT (SELECT is_viewable FROM tokens WHERE id = 2) || '|' ||
+			          (SELECT count(*) FROM token_events WHERE token_id = 2 AND event_type = 'viewability_changed')`),
+			"a dedupe that keeps a healthy row changes nothing")
 	})
 
 	t.Run("an existing slashed row wins the unique key", func(t *testing.T) {

@@ -340,8 +340,9 @@ same), so no work stops displaying while it runs. Sequence:
    `psql ... -v ON_ERROR_STOP=1 -f db/migrations/035_ipfs_directory_slash.sql`
 5. Check the verification counts it prints at the end. Every count is 0, except
    `media_assets` rows intentionally left on a bare URL. The last progress notice reports
-   "inherited gates N tokens, viewability changed M": a token moved onto a slashed URL
-   that L1 had already gated. Their `is_viewable` and `viewability_changed` token events
+   "recomputed N tokens, viewability changed M": tokens moved onto a slashed URL that L1
+   had already gated, or whose bare row was dropped in favor of an existing slashed row.
+   Their `is_viewable` and `viewability_changed` token events
    are written by the file, but the `token.viewability.changed` webhook is enqueued only
    by application code, so if M > 0 re-index those tokens to notify subscribers (0
    expected while L1 runs in shadow mode). Spot-check one of the
