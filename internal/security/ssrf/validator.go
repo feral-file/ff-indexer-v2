@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+
+	"golang.org/x/net/idna"
 )
 
 // ErrBlocked indicates the URL target failed SSRF policy checks.
@@ -90,9 +92,10 @@ func NewValidatorWithResolver(resolver Resolver, opts Options) *Validator {
 // Hostnames are normalized: ASCII lowercasing and removal of trailing root-label dots (FQDN form),
 // so e.g. metadata.google.internal. matches the same hostname block rules as metadata.google.internal.
 //
-// Known limitation (DNS rebinding / TOCTOU): this pre-request resolution is not reused at TCP dial
-// time by the default [net/http] transport, which may resolve the hostname again. Callers that need
-// stronger binding must implement connect-time controls separately (not done here yet).
+// DNS rebinding / TOCTOU: this pre-request resolution is not reused at TCP dial time by the
+// [net/http] transport, which resolves the hostname again. This check alone is therefore not
+// binding; clients must also dial through GuardedDialContext, which applies the IP policy to the
+// address the socket connects to.
 func (v *Validator) ValidateHTTPURL(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -162,14 +165,25 @@ func (v *Validator) hostAllowlisted(host string) bool {
 	return false
 }
 
-// canonicalHost normalizes a URL host for policy checks: trim space, ASCII lowercasing, and strip
-// trailing root-label dots so FQDN and usual forms match the same rules.
+// canonicalHost normalizes a host for policy checks: trim space, strip trailing root-label
+// dots, and convert to the lowercase ASCII (punycode) form the HTTP transport dials.
+//
+// Reason: the same name reaches the policy in two spellings. URL validation sees the host
+// as written ("bücher.example"), while the HTTP transport dials its IDNA ASCII form
+// ("xn--bcher-kva.example"). Allowlist entries and blocked names must match both, so every
+// comparison is made on the ASCII form.
+// Constraints: a host IDNA cannot convert (an IP literal with a zone, an invalid label) is
+// kept lowercased as written, so it still fails or matches on its literal spelling.
 func canonicalHost(host string) string {
-	h := strings.ToLower(strings.TrimSpace(host))
-	for strings.HasSuffix(h, ".") {
-		h = strings.TrimSuffix(h, ".")
+	h := strings.TrimSpace(host)
+	// IDNA runs on the host as written, as the transport does. Lowercasing first would
+	// change the name for letters whose Unicode lowercase differs from their IDNA mapping
+	// ("İ" lowercases to "i" but maps to "i̇"). It also runs before the dots are trimmed,
+	// because it maps the Unicode full stops to ".".
+	if ascii, err := idna.Lookup.ToASCII(h); err == nil && ascii != "" {
+		h = ascii
 	}
-	return h
+	return strings.TrimRight(strings.ToLower(h), ".")
 }
 
 func (v *Validator) ipAllowlisted(ip netip.Addr) bool {

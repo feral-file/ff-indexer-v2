@@ -77,6 +77,13 @@ type SSRFValidator interface {
 	ValidateHTTPURL(ctx context.Context, rawURL string) error
 }
 
+// SSRFDialGuard is implemented by validators that can enforce their IP policy at
+// connect time. newUnderlyingHTTPClient installs it on the transport when the validator
+// provides it, closing the gap between the URL check and the dial (DNS rebinding).
+type SSRFDialGuard interface {
+	GuardedDialContext(base *net.Dialer) func(ctx context.Context, network, address string) (net.Conn, error)
+}
+
 type ssrfRoundTripper struct {
 	next http.RoundTripper
 	v    SSRFValidator
@@ -84,11 +91,10 @@ type ssrfRoundTripper struct {
 
 // RoundTrip validates req.URL before delegating to the underlying transport.
 //
-// Known limitation (DNS rebinding / TOCTOU): ValidateHTTPURL may resolve the hostname
-// here, but the standard transport typically resolves again at dial time. A malicious
-// or flaky resolver could return different addresses between those two steps, so the
-// connected peer is not cryptographically tied to the pre-check. Documented deliberately
-// until we pin dials to validated addresses or adopt another connect-time policy.
+// DNS rebinding / TOCTOU: ValidateHTTPURL resolves the hostname here and the transport
+// resolves it again at dial time, so this check does not bind the connected peer. The
+// binding check is the transport's dialer (see SSRFDialGuard), which applies the same IP
+// policy to the address the socket connects to.
 func (t *ssrfRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err := t.v.ValidateHTTPURL(req.Context(), req.URL.String()); err != nil {
 		return nil, err
@@ -119,7 +125,12 @@ func newUnderlyingHTTPClient(timeout time.Duration, v SSRFValidator, maxRedirect
 	}
 	rt := http.DefaultTransport
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
-		rt = transport.Clone()
+		cloned := transport.Clone()
+		if guard, ok := v.(SSRFDialGuard); ok {
+			// Same dialer settings as http.DefaultTransport.
+			cloned.DialContext = guard.GuardedDialContext(&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
+		}
+		rt = cloned
 	}
 	// Every hop is paced earlier, in RealHTTPClient.doPaced, so queueing never counts
 	// against Client.Timeout; the round tripper turns 429s into provider pauses.
@@ -153,8 +164,8 @@ func NewHTTPClient(timeout time.Duration) HTTPClient {
 //
 // If v is nil, behavior matches NewHTTPClient: no validation and DefaultTransport redirect policy.
 //
-// Known limitation: validation runs before each RoundTrip, but the default transport may resolve
-// the host again at dial time; see the ssrfRoundTripper.RoundTrip comment in this file.
+// When v also implements SSRFDialGuard (ssrf.Validator does), the transport checks the IP each
+// connection reaches, so a hostname that resolves differently at dial time is still refused.
 //
 // Pass WithHostRateLimiter to pace requests by destination host (see http_ratelimit.go).
 func NewHTTPClientWithSSRF(timeout time.Duration, v SSRFValidator, maxRedirects int, opts ...HTTPClientOption) HTTPClient {
