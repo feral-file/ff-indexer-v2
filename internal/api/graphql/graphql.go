@@ -2,6 +2,7 @@ package graphql
 
 import (
 	"context"
+	"strings"
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
@@ -58,83 +59,108 @@ func NewHandler(debug bool, exec executor.Executor, authCfg middleware.AuthConfi
 	return h, nil
 }
 
-// authMiddleware authenticates GraphQL mutations using the shared authentication logic
-// Only applies authentication to mutations that require it
+// mutationAuth is the credential a mutation field demands.
+type mutationAuth int
+
+const (
+	// mutationPublic needs no credential.
+	mutationPublic mutationAuth = iota
+	// mutationAuthenticated accepts a JWT or an API key.
+	mutationAuthenticated
+	// mutationAPIKeyOnly accepts an API key and rejects a JWT.
+	mutationAPIKeyOnly
+)
+
+// mutationAuthPolicy mirrors the REST routes' authentication (docs/api_design.md).
+// A mutation field missing from this table is treated as mutationAPIKeyOnly, so a new
+// mutation is closed until its policy is stated here.
+var mutationAuthPolicy = map[string]mutationAuth{
+	"triggerTokenIndexing":    mutationPublic,
+	"triggerMetadataIndexing": mutationPublic,
+	"triggerReleaseIndexing":  mutationPublic,
+	"triggerAddressIndexing":  mutationAuthenticated,
+	"createWebhookClient":     mutationAPIKeyOnly,
+}
+
+// requiredMutationAuth returns the strictest credential demanded by the mutation
+// fields the operation will execute, and the field that demands it.
+//
+// Reason: the previous check read only the operation's top-level fields, so a mutation
+// wrapped in an inline or named fragment skipped authentication entirely, and it stopped
+// at the first match, so a JWT-accepting field listed first hid an API-key-only one.
+// Trade-offs: fields are collected with gqlgen's own CollectFields, the function the
+// executor uses, so this check sees exactly the fields that will run (fragments expanded,
+// aliases resolved to the schema name, @skip/@include applied) at the cost of depending
+// on that helper. Unlisted fields fail closed rather than open.
+// Constraints: introspection meta fields ("__typename") are never resolvers and stay
+// public.
+func requiredMutationAuth(opctx *graphql.OperationContext) (mutationAuth, string) {
+	required, demandedBy := mutationPublic, ""
+	for _, field := range graphql.CollectFields(opctx, opctx.Operation.SelectionSet, []string{"Mutation"}) {
+		if strings.HasPrefix(field.Name, "__") {
+			continue
+		}
+		policy, listed := mutationAuthPolicy[field.Name]
+		if !listed {
+			policy = mutationAPIKeyOnly
+		}
+		if policy > required {
+			required, demandedBy = policy, field.Name
+		}
+	}
+	return required, demandedBy
+}
+
+// authMiddleware authenticates GraphQL mutations with the shared authentication logic.
+// Queries are public; a mutation operation must satisfy the strictest policy among the
+// fields it executes (see requiredMutationAuth), or none of its fields run.
 func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
 	opctx := graphql.GetOperationContext(ctx)
+	if opctx.Operation == nil || opctx.Operation.Operation != ast.Mutation {
+		return next(ctx)
+	}
 
-	// Only authenticate specific mutations that require authentication
-	if opctx.Operation != nil && opctx.Operation.Operation == ast.Mutation {
-		// Check if this is a mutation that requires authentication
-		requiresAuth := false
-		requiresAPIKeyOnly := false
-		mutationName := ""
+	required, mutationName := requiredMutationAuth(opctx)
+	if required == mutationPublic {
+		return next(ctx)
+	}
 
-		if opctx.Operation.SelectionSet != nil {
-			for _, selection := range opctx.Operation.SelectionSet {
-				if field, ok := selection.(*ast.Field); ok {
-					mutationName = field.Name
-					if field.Name == "triggerAddressIndexing" {
-						requiresAuth = true
-						break
-					}
-					// createWebhookClient requires API key only
-					if field.Name == "createWebhookClient" {
-						requiresAuth = true
-						requiresAPIKeyOnly = true
-						break
-					}
-				}
-			}
+	authHeader := ""
+	if opctx.Headers != nil {
+		authHeader = opctx.Headers.Get("Authorization")
+	}
+	result := middleware.Authenticate(authHeader, h.authConfig)
+	if !result.Success {
+		logger.WarnCtx(ctx, "GraphQL mutation authentication failed",
+			zap.Error(result.Error),
+			zap.String("operation", mutationName),
+		)
+		return func(ctx context.Context) *graphql.Response {
+			return graphql.ErrorResponse(ctx, "Authentication required for this mutation")
 		}
-
-		if requiresAuth {
-			// Get Authorization header from the HTTP request
-			authHeader := ""
-			if opctx.Headers != nil {
-				authHeader = opctx.Headers.Get("Authorization")
-			}
-
-			// Authenticate using the shared authentication logic
-			result := middleware.Authenticate(authHeader, h.authConfig)
-
-			if !result.Success {
-				logger.WarnCtx(ctx, "GraphQL mutation authentication failed",
-					zap.Error(result.Error),
-					zap.String("operation", mutationName),
-				)
-				return func(ctx context.Context) *graphql.Response {
-					return graphql.ErrorResponse(ctx, "Authentication required for this mutation")
-				}
-			}
-
-			// For API key-only mutations, verify it's not JWT
-			if requiresAPIKeyOnly && result.AuthType != "apikey" {
-				logger.WarnCtx(ctx, "GraphQL mutation requires API key authentication only",
-					zap.String("operation", mutationName),
-					zap.String("auth_type", result.AuthType),
-				)
-				return func(ctx context.Context) *graphql.Response {
-					return graphql.ErrorResponse(ctx, "This mutation requires API key authentication only (JWT not accepted)")
-				}
-			}
-
-			// Store authentication info in context for resolvers to access
-			ctx = context.WithValue(ctx, middleware.AUTH_TYPE_KEY, result.AuthType)
-			if result.Claims != nil {
-				ctx = context.WithValue(ctx, middleware.JWT_CLAIMS_KEY, result.Claims)
-			}
-			if result.AuthSubject != "" {
-				ctx = context.WithValue(ctx, middleware.AUTH_SUBJECT_KEY, result.AuthSubject)
-			}
-
-			logger.DebugCtx(ctx, "GraphQL mutation authentication successful",
-				zap.String("operation", mutationName),
-				zap.String("auth_type", result.AuthType),
-			)
+	}
+	if required == mutationAPIKeyOnly && result.AuthType != "apikey" {
+		logger.WarnCtx(ctx, "GraphQL mutation requires API key authentication only",
+			zap.String("operation", mutationName),
+			zap.String("auth_type", result.AuthType),
+		)
+		return func(ctx context.Context) *graphql.Response {
+			return graphql.ErrorResponse(ctx, "This mutation requires API key authentication only (JWT not accepted)")
 		}
 	}
 
+	// Store authentication info in context for resolvers to access
+	ctx = context.WithValue(ctx, middleware.AUTH_TYPE_KEY, result.AuthType)
+	if result.Claims != nil {
+		ctx = context.WithValue(ctx, middleware.JWT_CLAIMS_KEY, result.Claims)
+	}
+	if result.AuthSubject != "" {
+		ctx = context.WithValue(ctx, middleware.AUTH_SUBJECT_KEY, result.AuthSubject)
+	}
+	logger.DebugCtx(ctx, "GraphQL mutation authentication successful",
+		zap.String("operation", mutationName),
+		zap.String("auth_type", result.AuthType),
+	)
 	return next(ctx)
 }
 
