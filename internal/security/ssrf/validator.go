@@ -90,9 +90,10 @@ func NewValidatorWithResolver(resolver Resolver, opts Options) *Validator {
 // Hostnames are normalized: ASCII lowercasing and removal of trailing root-label dots (FQDN form),
 // so e.g. metadata.google.internal. matches the same hostname block rules as metadata.google.internal.
 //
-// Known limitation (DNS rebinding / TOCTOU): this pre-request resolution is not reused at TCP dial
-// time by the default [net/http] transport, which may resolve the hostname again. Callers that need
-// stronger binding must implement connect-time controls separately (not done here yet).
+// DNS rebinding / TOCTOU: this pre-request resolution is not reused at TCP dial time by the
+// [net/http] transport, which resolves the hostname again. This check alone is therefore not
+// binding; clients must also dial through GuardedDialContext, which applies the IP policy to the
+// address the socket connects to.
 func (v *Validator) ValidateHTTPURL(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
