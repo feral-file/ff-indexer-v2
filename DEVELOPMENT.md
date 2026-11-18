@@ -323,6 +323,36 @@ version rewrites `onchfs://` back to that gateway on every re-index. Sequence:
 
 Workers may keep running during step 3. Re-running it is safe.
 
+**Migration 035 (IPFS directory slash) — code first, then the backfill:**
+
+`035_ipfs_directory_slash.sql` rewrites stored bare-CID-plus-query IPFS gateway URLs
+(`<gw>/ipfs/<cid>?fxhash=…`, `?edition_number=…`, `?seed=…`, …) to `<gw>/ipfs/<cid>/?…`.
+Most gateways redirect the bare shape to `<cid>/` and drop the query, so those works render
+without their seed (ff-indexer-v2 #178). The previous version resolves `ipfs://<cid>?q` back
+to the bare shape on every re-index. Health verdicts move with the URL (the bytes are the
+same), so no work stops displaying while it runs. Sequence:
+
+1. Deploy the application version that contains `types.NormalizeIPFSGatewayURL` (#178).
+2. Confirm no container on the previous image is left.
+3. Size it with the read-only count in the file header. Expect about one token event per
+   rewritten row.
+4. Run it in autocommit, in one psql session:
+   `psql ... -v ON_ERROR_STOP=1 -v token_queue=token_index -f db/migrations/035_ipfs_directory_slash.sql`.
+   `token_queue` is required and must equal the deployment's `jobs.token_queue`: the file
+   enqueues its viewability webhooks there.
+5. Check the verification counts it prints at the end. Every count is 0, except
+   `media_assets` rows intentionally left on a bare URL. The last progress notice reports
+   "recomputed N tokens, viewability changed M": tokens moved onto a slashed URL that L1
+   had already gated, or whose bare row was dropped in favor of an existing slashed row.
+   For each of the M changes the file writes `is_viewable`, a `viewability_changed`
+   token event and the `token.viewability.changed` webhook job (same kind, queue and
+   payload as the sweeper's), so no follow-up is needed; 0 is expected while L1 runs in
+   shadow mode. Spot-check one of the
+   2026-11-17 playlist tokens (`KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE:261209`): its
+   `display.animation_url` ends in `/?fxhash=…` and it draws on an FF1.
+
+Workers may keep running during step 4. Re-running it is safe.
+
 **Migration 025 + the EVM credit guard — required ordering:**
 
 The Ethereum credit guard (`ethereum.full_provenance_disabled`, with
