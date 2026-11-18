@@ -3,6 +3,8 @@ package ssrf
 import (
 	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"testing"
 	"time"
@@ -196,5 +198,35 @@ func loopbackResolver(t *testing.T) *net.Resolver {
 		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "udp", pc.LocalAddr().String())
 		},
+	}
+}
+
+// TestAllowlistedUnicodeDomainThroughHTTPTransport sends real requests, so the hostname
+// is converted by net/http itself before it reaches the dial guard. "İ" is the case where
+// lowercasing before IDNA yields a different name than the one the transport dials.
+func TestAllowlistedUnicodeDomainThroughHTTPTransport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(t, err)
+	base := &net.Dialer{Timeout: 2 * time.Second, Resolver: loopbackResolver(t)}
+
+	for _, host := range []string{"İ.review.example", "bücher.review.example", "BÜCHER.Review.Example", "Plain.Review.Example"} {
+		v := NewValidatorWithResolver(staticResolver{"127.0.0.1"}, Options{AllowDomains: []string{host}})
+		client := &http.Client{Transport: &http.Transport{DialContext: v.GuardedDialContext(base)}, Timeout: 5 * time.Second}
+		target := "http://" + net.JoinHostPort(host, port) + "/"
+
+		require.NoError(t, v.ValidateHTTPURL(context.Background(), target), host)
+		resp, err := client.Get(target)
+		require.NoError(t, err, host)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusNoContent, resp.StatusCode, host)
+
+		// The same name is refused at dial time when it is not allowlisted.
+		blocked := &http.Client{Transport: &http.Transport{DialContext: NewValidator(Options{}).GuardedDialContext(base)}, Timeout: 5 * time.Second}
+		_, err = blocked.Get(target)
+		require.ErrorIs(t, err, ErrBlocked, host)
 	}
 }

@@ -166,7 +166,7 @@ func (v *Validator) hostAllowlisted(host string) bool {
 }
 
 // canonicalHost normalizes a host for policy checks: trim space, strip trailing root-label
-// dots, and convert to the lowercase ASCII (punycode) form.
+// dots, and convert to the lowercase ASCII (punycode) form the HTTP transport dials.
 //
 // Reason: the same name reaches the policy in two spellings. URL validation sees the host
 // as written ("bücher.example"), while the HTTP transport dials its IDNA ASCII form
@@ -175,12 +175,15 @@ func (v *Validator) hostAllowlisted(host string) bool {
 // Constraints: a host IDNA cannot convert (an IP literal with a zone, an invalid label) is
 // kept lowercased as written, so it still fails or matches on its literal spelling.
 func canonicalHost(host string) string {
-	h := strings.ToLower(strings.TrimSpace(host))
-	// Converted before the dots are trimmed: IDNA also maps the Unicode full stops to ".".
+	h := strings.TrimSpace(host)
+	// IDNA runs on the host as written, as the transport does. Lowercasing first would
+	// change the name for letters whose Unicode lowercase differs from their IDNA mapping
+	// ("İ" lowercases to "i" but maps to "i̇"). It also runs before the dots are trimmed,
+	// because it maps the Unicode full stops to ".".
 	if ascii, err := idna.Lookup.ToASCII(h); err == nil && ascii != "" {
 		h = ascii
 	}
-	return strings.TrimRight(h, ".")
+	return strings.TrimRight(strings.ToLower(h), ".")
 }
 
 func (v *Validator) ipAllowlisted(ip netip.Addr) bool {
