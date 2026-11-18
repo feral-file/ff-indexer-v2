@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+
+	"golang.org/x/net/idna"
 )
 
 // ErrBlocked indicates the URL target failed SSRF policy checks.
@@ -163,14 +165,22 @@ func (v *Validator) hostAllowlisted(host string) bool {
 	return false
 }
 
-// canonicalHost normalizes a URL host for policy checks: trim space, ASCII lowercasing, and strip
-// trailing root-label dots so FQDN and usual forms match the same rules.
+// canonicalHost normalizes a host for policy checks: trim space, strip trailing root-label
+// dots, and convert to the lowercase ASCII (punycode) form.
+//
+// Reason: the same name reaches the policy in two spellings. URL validation sees the host
+// as written ("bücher.example"), while the HTTP transport dials its IDNA ASCII form
+// ("xn--bcher-kva.example"). Allowlist entries and blocked names must match both, so every
+// comparison is made on the ASCII form.
+// Constraints: a host IDNA cannot convert (an IP literal with a zone, an invalid label) is
+// kept lowercased as written, so it still fails or matches on its literal spelling.
 func canonicalHost(host string) string {
 	h := strings.ToLower(strings.TrimSpace(host))
-	for strings.HasSuffix(h, ".") {
-		h = strings.TrimSuffix(h, ".")
+	// Converted before the dots are trimmed: IDNA also maps the Unicode full stops to ".".
+	if ascii, err := idna.Lookup.ToASCII(h); err == nil && ascii != "" {
+		h = ascii
 	}
-	return h
+	return strings.TrimRight(h, ".")
 }
 
 func (v *Validator) ipAllowlisted(ip netip.Addr) bool {
