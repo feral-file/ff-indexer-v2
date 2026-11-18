@@ -65,7 +65,7 @@ Design rules:
 
 - Declare **`security`** on every route that requires auth; do not rely on prose alone.
 - **Least surprise:** **`POST /api/v1/webhooks/clients` accepts API key only** (not JWT). If a new endpoint requires a single scheme, state it explicitly in the description and security list.
-- **GraphQL:** Mirror REST policy — authenticated mutations must match REST (e.g. address indexing requires the same credentials as `POST /api/v1/tokens/addresses/index`).
+- **GraphQL:** Mirror REST policy — authenticated mutations must match REST (e.g. address indexing requires the same credentials as `POST /api/v1/tokens/addresses/index`). Every mutation field has an explicit entry in `mutationAuthPolicy` (`internal/api/graphql/graphql.go`); an operation must satisfy the strictest policy among the fields it executes, however they are written (aliases, inline or named fragments), and a field without an entry requires an API key.
 
 ## Pagination, filtering, and sorting
 
